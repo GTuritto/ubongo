@@ -4,14 +4,14 @@ Last updated: 2026-05-09
 
 ## Overall
 
-Phase 0 (skeleton) complete on `phase-0-skeleton` branch, awaiting user merge. v0.1 scope is multi-agent + self-improving + CLI; see [UBONGO_BUILD.md](UBONGO_BUILD.md).
+Phase 0 (skeleton) merged. Phase 1 (CLI REPL + one-shot, echo only) complete on `phase-1-cli-echo` branch, awaiting user merge. v0.1 scope is multi-agent + self-improving + CLI; see [UBONGO_BUILD.md](UBONGO_BUILD.md).
 
 ## Phase Tracker
 
 | # | Tier | Phase | Branch | Status |
 | --- | --- | --- | --- | --- |
 | 0 | Foundation | Skeleton | `phase-0-skeleton` | Complete (2026-05-09) |
-| 1 | Foundation | CLI REPL + One-Shot (echo) | `phase-1-cli-echo` | Not started |
+| 1 | Foundation | CLI REPL + One-Shot (echo) | `phase-1-cli-echo` | Complete (2026-05-09) |
 | 2 | Foundation | LLM Integration | `phase-2-llm` | Not started |
 | 3 | Foundation | Tone Classifier + Auto Routing | `phase-3-classifier` | Not started |
 | 4 | Foundation | SQLite Memory + Compaction | `phase-4-memory` | Not started |

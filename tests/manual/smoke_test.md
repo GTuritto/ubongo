@@ -15,25 +15,27 @@ Each section's scenarios are run in order. If a scenario fails, the phase is not
 
 ## Phase 0 — Skeleton
 
-*(Populated when Phase 0 is implemented.)*
-
-Stub:
-
-1. `uv run python -m ubongo` exits cleanly with a JSON startup line on stderr.
-2. With `OPENROUTER_API_KEY` removed from `.env`, the same command exits with a clear error and rc 1.
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 0.1 | Cold start | `uv run python -m ubongo` (with `OPENROUTER_API_KEY` set in `.env`); pipe `/exit` to stdin so the REPL exits | One JSON line on stderr with `event="startup"`, `level="INFO"`, ISO8601 `ts`, redacted config summary. rc 0. |
+| 0.2 | Missing API key | Move `.env` aside (`mv .env .env.bak`); `unset OPENROUTER_API_KEY`; `uv run python -m ubongo`; restore `.env` | rc 1; stderr: `Error: OPENROUTER_API_KEY not set. Copy .env.example to .env and fill it in.`; no traceback. |
+| 0.3 | Hierarchical context assembly | `uv run python -c "from ubongo.context import build_system_prompt; print(build_system_prompt('architect'))"` | Output begins with `# UBONGO.md` body, blank line, then architect persona body (frontmatter stripped). |
+| 0.4 | Log structure | `uv run python -m ubongo 2>&1 1>/dev/null \| jq .` (pipe `/exit` to stdin) | Valid JSON; has `event`, `level`, `ts`. `OPENROUTER_API_KEY` value is not present in the output. |
 
 ## Phase 1 — CLI REPL + One-Shot (echo)
 
-*(Populated when Phase 1 is implemented.)*
-
-Stub:
-
-1. `python -m ubongo` opens a REPL prompt.
-2. Typing `hello` echoes `[architect] hello`.
-3. `/casual` then `hello` echoes `[casual] hello`.
-4. `/auto` then `hello` echoes `[architect] hello` (default).
-5. `/exit` quits cleanly.
-6. `python -m ubongo send "hi" --persona casual` prints `[casual] hi` and exits.
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1.1 | REPL banner + default echo | `uv run python -m ubongo`; type `hello` | First line: `Ubongo REPL ready. /exit to quit.` Then a `>` prompt. Echo: `[architect] hello`. |
+| 1.2 | Persona switch | After 1.1: `/casual`, then `hello` | `Switched to casual.` then `[casual] hello`. |
+| 1.3 | `/auto` reverts to default | After 1.2: `/auto`, then `hello` | `Auto routing not yet active (Phase 3); using default persona: architect.` then `[architect] hello`. |
+| 1.4 | `/exit` clean quit | type `/exit` | `Goodbye.` rc 0. |
+| 1.5 | One-shot with `--persona` | `uv run python -m ubongo send "hello" --persona operator` | stdout: `[operator] hello`. rc 0. |
+| 1.6 | One-shot default persona | `uv run python -m ubongo send "hi"` | stdout: `[architect] hi`. rc 0. |
+| 1.7 | Unknown slash command | In REPL: `/foo` | `Unknown command: /foo. Try /architect, /operator, /casual, /auto, /exit.` Loop continues. |
+| 1.8 | One-shot bad persona | `uv run python -m ubongo send "x" --persona bogus` | stderr: `Error: unknown persona 'bogus'. Choose from: architect, operator, casual.` rc 1. |
+| 1.9 | EOF (Ctrl+D) | In REPL: press Ctrl+D | `Goodbye.` rc 0. |
+| 1.10 | Pytest passes | `uv run pytest tests/test_repl.py` | All tests pass. |
 
 ## Phase 2 — LLM Integration
 
