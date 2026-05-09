@@ -1,0 +1,51 @@
+models:
+  classifier: openrouter/qwen/qwen-2.5-7b-instruct
+  default: openrouter/anthropic/claude-sonnet-4.5
+  casual: openrouter/anthropic/claude-haiku-4.5
+  compaction: openrouter/anthropic/claude-haiku-4.5
+  evaluator: openrouter/anthropic/claude-sonnet-4.5
+  critic: openrouter/anthropic/claude-sonnet-4.5
+  coding: openrouter/anthropic/claude-sonnet-4.5
+  evolution_generator: openrouter/anthropic/claude-sonnet-4.5
+
+api_keys:
+  openrouter:
+    env: OPENROUTER_API_KEY
+
+memory:
+  recall_turns: 10
+  session_timeout_minutes: 30
+  compaction:
+    strategy: default
+    trigger_at_turns: 30
+  embeddings:
+    enabled: true
+    model: openrouter/openai/text-embedding-3-small
+    recall_top_k: 5
+
+vault:
+  path: ./vault
+  daily_notes_subdir: daily
+
+governance:
+  approval_required_on:
+    - destructive
+    - irreversible_high_risk
+  confidence_threshold_for_auto: 0.7
+
+evolution:
+  enabled: true
+  max_calls_per_hour: 30
+  population_size: 8
+  generations_per_run: 3
+  cron: null
+  fitness_weights:
+    success_rate: 0.40
+    cost_inverse: 0.15
+    latency_inverse: 0.10
+    hallucination_inverse: 0.20
+    user_correction_inverse: 0.15
+
+logging:
+  level: INFO
+  format: json
