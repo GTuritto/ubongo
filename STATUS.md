@@ -4,13 +4,13 @@ Last updated: 2026-05-09
 
 ## Overall
 
-Specification complete. **No code yet.** Project is currently 100% documentation. v0.1 scope is multi-agent + self-improving + CLI; see [UBONGO_BUILD.md](UBONGO_BUILD.md).
+Phase 0 (skeleton) complete on `phase-0-skeleton` branch, awaiting user merge. v0.1 scope is multi-agent + self-improving + CLI; see [UBONGO_BUILD.md](UBONGO_BUILD.md).
 
 ## Phase Tracker
 
 | # | Tier | Phase | Branch | Status |
 | --- | --- | --- | --- | --- |
-| 0 | Foundation | Skeleton | `phase-0-skeleton` | Not started |
+| 0 | Foundation | Skeleton | `phase-0-skeleton` | Complete (2026-05-09) |
 | 1 | Foundation | CLI REPL + One-Shot (echo) | `phase-1-cli-echo` | Not started |
 | 2 | Foundation | LLM Integration | `phase-2-llm` | Not started |
 | 3 | Foundation | Tone Classifier + Auto Routing | `phase-3-classifier` | Not started |
@@ -37,7 +37,7 @@ Each phase is built on its own branch. Don't start Phase N+1 until Phase N's tes
 
 ## Lines of Code
 
-0 / ~15,000 soft target (excluding tests).
+240 / ~15,000 soft target (excluding tests). Phase 0: skeleton + config + context loader + JSON logger + CLI entry.
 
 ## v0.1 Acceptance Criteria
 
