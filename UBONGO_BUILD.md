@@ -1,356 +1,326 @@
-# Ubongo - Build Specification
+# Ubongo — Build Specification (v0.1: Multi-Agent + Self-Improving, CLI-First)
 
-This document is the build spec for Ubongo. It is structured as phased releases with explicit acceptance criteria. v0.1 ships a useful, working system. v0.2 and v0.3 are sketched so that v0.1 makes structural choices that don't have to be undone later, but they are not part of the v0.1 build.
+This document is the build spec for Ubongo v0.1. Phased releases with explicit acceptance criteria. v0.1 ships a working personal AI mind: a hand-rolled multi-agent runtime with continuous, GP-driven self-improvement, accessed through a local CLI. Telegram remains v0.2.
 
-Build v0.1 first. Use it for two weeks. Then reassess what's actually missing before starting v0.2.
+Build phase by phase. Each phase ships a system that's manually testable end-to-end. Don't move to phase N+1 until N's testing plan and smoke test pass.
+
+**Workflow rule:** every phase is implemented on a dedicated git branch (`phase-N-<short-name>`). No commits to `main` from a phase in progress. The user reviews and merges the branch into `main` after the phase's testing plan and smoke test pass.
 
 ## What Ubongo Is
 
-A personal, mood-aware AI assistant that lives in Telegram. One user (Giuseppe). Runs locally or on a small box (laptop, Pi 5). Adapts persona and model to the kind of conversation you're having. Capabilities are organized as composable skills with progressive disclosure. Outbound messages flow through a notification queue with a policy engine that respects quiet hours and ad-hoc holds. Extension points are named events so v0.2+ behavior plugs in without rewriting the core loop.
+A personal, mood-aware AI mind for one user (Giuseppe), running locally as a CLI. It is **a multi-agent orchestration platform** and **a self-improving runtime** in the same package. Inside, a **Master Agent** orchestrates a fleet of disposable **worker agents** (Research, Coding, Evaluator, Repair, Memory, Critic, Execution, Persona) across six execution modes (sequential, parallel, competitive, collaborative, debate, speculative). A **governance layer** evaluates risk, confidence, and reversibility per turn and gates risky actions through human approval. A **continuous self-improvement loop** uses Genetic Programming over prompts, routing rules, tool chains, and retry strategies — generations run autonomously, evaluation is sandboxed, promotions require user approval. Memory is SQLite-canonical with an Obsidian-compatible Markdown vault projection; embeddings (sqlite-vec) and graph relationships ride alongside.
+
+The CLI is the v0.1 channel: REPL primary, one-shot for scripting. Telegram comes in v0.2.
 
 ## What Ubongo Is Not (v0.1)
 
-- A multi-agent orchestration platform
-- A multi-channel system (no Slack, no WhatsApp, no Discord, no web UI)
-- A self-improving runtime
-- A production system
-- A SaaS product
+- A multi-channel system. v0.1 is CLI-only. Telegram is deferred to v0.2; Slack, WhatsApp, Discord, web UI, voice are not on the roadmap.
+- A production system or SaaS product.
+- A multi-user or team tool.
+- A distributed system. Single process, single machine.
 
-If a feature in the original PRD is not explicitly listed below, it is out of scope for v0.1. This includes: Master Agent, worker agents (Research/Coding/Evaluator/Repair/Execution), parallel agent execution, debate mode, speculative execution, Genetic Programming, runtime self-modification, prompt evolution, sandboxing, embedding-based memory recall, semantic search, observability dashboards, and approval gates beyond text confirmation.
+If a feature is not explicitly listed in the phased build plan below, it is out of scope for v0.1.
 
 ## Core Design Decisions
 
-1. **Single channel: Telegram.** Bot API is first-class, no daemon, no linked device. CLI may be added in v0.2.
-2. **Router, not orchestrator.** A function that picks a persona, optionally one skill, and a model. No agent lifecycle, no spawning, no shutdown.
-3. **Personas are configuration.** Markdown files containing system prompts. Personas define *voice*. Identity boilerplate is in a single global file (`UBONGO.md`), not duplicated across personas.
-4. **Skills are configuration with progressive disclosure.** Folders with a `SKILL.md` and supporting prompts. Skills define *capabilities*. Only descriptions are loaded at startup; bodies load on activation. Personas and skills compose: any persona can run any skill.
-5. **Hierarchical context loading.** System prompt for any turn is built by concatenating, in order: global context (`UBONGO.md`), active persona (`personas/<name>.md`), active skill body (if any). Closer-to-task layers come last.
-6. **Memory: SQLite canonical, Markdown projected.** Conversation logs and structured facts live in SQLite. A daily notes Markdown file is generated for human inspection in Obsidian. Vault is write-only in v0.1.
-7. **Compaction is a swappable function.** v0.1 ships a default (last N turns verbatim, prior history collapsed into a summary). The seam exists so v0.2 can swap in topic-aware or persona-specific strategies without touching memory storage.
-8. **Models via OpenRouter.** Single API key, every model behind one interface, routed through LiteLLM. No Ollama in v0.1.
-9. **All outbound messages flow through a notification queue.** Even synchronous responses to user messages technically pass through the queue, though they're delivered immediately at `urgent` priority. Proactive messages (when the scheduler exists) use the same path with no special-casing.
-10. **Policy engine governs delivery.** Quiet hours, ad-hoc holds, hold-until-ack, and per-message urgency are first-class concepts.
-11. **Extension points are named events.** The bot's main loop emits events at well-defined points (`before_classify`, `after_classify`, `before_recall`, `after_recall`, `before_llm`, `after_llm`, `before_send`, `after_send`). v0.1 has only default handlers; v0.2+ adds handlers without modifying the core loop.
-12. **Tool discipline.** v0.1 exposes zero tools to the LLM. When tools are added (v0.2+), prefer CLI scripts invoked via a single `bash` tool over first-class tool definitions. New first-class tools require justification.
-13. **Configuration in YAML, secrets in `.env`.** Code reads config; config never contains secrets; secrets are loaded from environment at startup.
-14. **One user.** Hardcode the allowed Telegram user ID in config. Reject everything else.
+1. **Single channel: CLI.** REPL plus one-shot. Telegram is v0.2.
+2. **Master Agent orchestrates.** Not a router-then-LLM sequence; a real orchestrator that classifies, plans a workflow, dispatches workers, gates output, and composes the response.
+3. **Worker agents are disposable.** Spawn per turn (or per workflow), execute, return results, dissolve. Durable intelligence lives in memory, workflows, policies, and the evolution lineage — not in agents.
+4. **Hand-rolled orchestration.** Pure Python: classes, `asyncio` for parallel, an event bus for decoupling. No LangGraph, no Temporal, no Ray.
+5. **Personas are voice; skills are capability; agents are role.** A Persona Agent wears a voice (Architect / Operator / Casual). A worker agent does a job (Research, Critic, etc.). A skill is a progressive-disclosure unit of capability that any agent can invoke.
+6. **Hierarchical context.** System prompts are assembled per turn from `UBONGO.md` (global) + active persona + active skill body + worker-specific frame. Closer-to-task layers come last.
+7. **SQLite canonical, Markdown projected, embeddings indexed, graph linked.** Conversation logs and structured facts live in SQLite. Daily-note Markdown projects out of SQLite for human readability. `sqlite-vec` indexes messages and vault notes for semantic recall. Vault-note links create a graph; the Master Agent can traverse it.
+8. **Models via OpenRouter through LiteLLM.** Different models for different agents and decisions: small fast model for classification, strong model for architect, cheap model for casual, etc.
+9. **All outbound messages flow through the queue.** Even synchronous CLI responses. The seam supports proactive output (v0.3) and Telegram delivery (v0.2) without restructuring.
+10. **Governance is first-class.** Decision matrix evaluates Intent + Risk + Confidence + Context + Preferences + Reversibility per turn. High-risk actions gate through user approval.
+11. **Self-improvement is continuous and approved.** GP loop runs in the background, generates and evaluates variants, persists lineage. Promotions to production require user approval via `/improvements`.
+12. **Named events** are the extension surface. `before_classify`, `after_classify`, `before_plan`, `after_plan`, `before_execute`, `after_execute`, `before_govern`, `after_govern`, `before_compose`, `after_compose`, `before_send`, `after_send`, plus per-agent `agent_started`, `agent_completed`, `agent_failed`. Future behavior plugs in as event handlers.
+13. **Configuration in YAML, secrets in `.env`.** Code reads config; config never contains secrets.
+14. **Local-first, single-user.** No auth in CLI. When Telegram lands in v0.2, the `allowed_user_ids` allowlist comes back.
+15. **Per-phase branches.** Implementation phases (0 through 21) each get a dedicated git branch; user reviews and merges to `main` only after the phase's testing plan and smoke test pass.
 
 ## Tech Stack
 
 | Layer | Technology | Why |
-|---|---|---|
-| Language | Python 3.11+ | Ecosystem, LiteLLM, fast iteration |
-| Bot | python-telegram-bot (v21+) | Mature, async, well-documented |
+| --- | --- | --- |
+| Language | Python 3.11+ | Ecosystem, asyncio, fast iteration |
 | LLM routing | LiteLLM | Provider abstraction without lock-in |
 | Model provider | OpenRouter | Single key, every model, easy A/B |
-| Storage | SQLite (stdlib) | Single-user, zero-ops, sufficient |
+| Storage | SQLite (stdlib) | Single-user, zero-ops |
+| Vector index | `sqlite-vec` | Semantic recall over messages and vault, in the same DB |
 | Config | YAML + Markdown | Editable without touching code |
 | Secrets | python-dotenv | Standard `.env` loading |
 | Tests | pytest | Standard |
 | Package management | uv | Fast, modern |
+| CLI parsing | stdlib argparse | No new dep |
 
-No FastAPI, no Redis, no Qdrant, no LangGraph, no Docker for v0.1. If you find yourself reaching for them, stop and justify.
+No FastAPI, no Redis, no Docker, no LangGraph, no Temporal, no Ray, no Kubernetes. `python-telegram-bot` is added in v0.2 when the Telegram channel ships.
 
 ## Architecture
 
-```
-Telegram message
-    |
-    v
-auth check (allowlist)
+### The Core Loop
+
+```text
+CLI input (REPL stdin or argv)
     |
     v   [event: before_classify]
-classifier (small model via OpenRouter, JSON output)
-    |   -> {intent, tone, task_type, skill?, confidence}
+Master Agent.classify(message, context)
+    |   -> Classification(intent, tone, task_type, suggested_skill, risk, confidence)
     v   [event: after_classify]
-router (deterministic mapping)
-    |   -> (persona, skill?, model)
-    v   [event: before_recall]
-memory recall (SQLite, last N turns + compacted older history)
-    |   [event: after_recall]
-    v
-prompt assembly (UBONGO.md + persona.md + skill.md? + history)
-    |   [event: before_llm]
-    v
-LLM call (LiteLLM -> OpenRouter -> chosen model)
-    |   [event: after_llm]
-    v
-enqueue response in notification queue (urgency=urgent)
+Master Agent.plan(classification, context)
+    |   -> Workflow(agents, execution_mode, persona, model_overrides)
+    v   [event: before_execute]
+Workflow Runner.execute(workflow, context)
+    |   -> spawn agents per mode (sequential/parallel/etc.)
+    |   -> route messages between agents
+    |   -> aggregate results (Evaluator picks/merges)
+    v   [event: after_execute]
+Governance.gate(workflow_result, classification, context)
+    |   -> Action(auto / ask_clarification / require_approval / reject)
+    v   [event: before_compose]
+Persona Agent.compose(workflow_result, persona, history)
+    |   -> final user-facing text
+    v   [event: after_compose]
+enqueue(content, urgency='urgent', source='response')
     |
-    v   [event: before_send] (policy engine runs as a handler here)
-delivery worker checks policy, sends to Telegram
+    v   [event: before_send]
+dequeue + print to stdout
     |   [event: after_send]
     v
-memory write (SQLite + Markdown daily note)
+Memory Agent.write(turn) -> SQLite + vault + embeddings
 ```
 
-For proactive messages (v0.3+), the flow starts at "enqueue" and skips the user-message path. Same delivery worker, same policy engine, same `before_send` handlers.
+For proactive messages (v0.3+) the flow starts at `enqueue`. The same workflow runner, governance gate, and persona composer apply. The GP loop runs in parallel, on its own asyncio task, hitting OpenRouter at low priority.
+
+### The Master Agent
+
+`src/ubongo/master.py`. Methods:
+
+- `classify(message, context) -> Classification`. Single LLM call to the classifier model. JSON output with intent, tone, task_type, suggested_skill, risk, confidence. Falls back to default classification on parse failure.
+- `plan(classification, context) -> Workflow`. Reads `routing.yaml` and `workflows.yaml`. Picks agents (which workers + which persona), execution mode, model overrides. Returns a `Workflow` object.
+- `execute(workflow, context) -> WorkflowResult`. Delegates to the Workflow Runner.
+- `decide(...) -> Decision`. Implements the decision matrix. v0.1 default: `auto` for everything until Phase 14 lands the rules.
+- `handle(message) -> Response`. End-to-end orchestration: classify → plan → execute → governance → compose → enqueue → memory. This is what the REPL/oneshot calls.
+
+### Worker Agents
+
+Each implements the `Agent` protocol (`src/ubongo/agents/base.py`):
+
+```python
+class Agent(Protocol):
+    name: str
+    role: str
+    default_model: str
+
+    async def run(self, input: AgentInput, context: Context) -> AgentResult: ...
+```
+
+Workers are disposable: instantiated for a workflow, run once, return a `AgentResult`, dissolve. State that needs to persist goes through the Memory Agent.
+
+| Worker | Purpose | v0.1 backend |
+| --- | --- | --- |
+| Research Agent | Retrieval + synthesis | LLM-only retrieval over conversation memory and vault. Web/calendar/email skills are v0.2+. |
+| Coding Agent | Code generation, refactoring, review | Strong coding model. |
+| Evaluator Agent | Validates output; produces confidence score | LLM-as-judge with criteria: correctness, completeness, hallucination signals. |
+| Repair Agent | Detects and recovers failed workflows | Phase 13 logic: retry with different model, replace stuck agent, rollback. |
+| Memory Agent | Single writer to durable memory | All persistence flows through here: messages, summaries, facts, vault, embeddings, lineage. |
+| Critic Agent | Contrarian / brutal analysis | Argues against the prevailing answer. Used in debate mode and as a Master-Agent-summoned challenger when confidence is borderline. |
+| Execution Agent | Runs shell scripts and external APIs | Constrained-bash skill in Phase 11; sandboxed in Phase 15. |
+| Persona Agents | Voice for the user-facing surface | Architect / Operator / Casual; assemble the final response from worker output. |
+
+### Execution Modes
+
+`src/ubongo/runner.py` implements all six:
+
+1. **Sequential.** A → B → C. Default for simple workflows.
+2. **Parallel.** A | B | C, results aggregated by Evaluator. `asyncio.gather`.
+3. **Competitive.** Same input, multiple agents, Evaluator picks the best output.
+4. **Collaborative.** Each agent owns a subtask; results merged structurally (e.g., Research handles facts, Critic handles risks, both merged into a brief).
+5. **Debate.** Two agents argue opposing positions for N rounds; Critic synthesizes the resolution.
+6. **Speculative.** Cheap fast agent runs first; strong agent validates in the background. User sees the cheap result; if validation contradicts, the system corrects within the same session via a follow-up message.
+
+Mode selection lives in `routing.yaml` and is overridable per workflow type. The GP loop can evolve the mode-selection rules.
+
+### Governance Layer
+
+`src/ubongo/governance/`.
+
+- **Risk evaluation** (`risk.py`): per-workflow risk tag (`low`, `medium`, `high`, `destructive`). Initial rules read from `governance.yaml`.
+- **Confidence** (`confidence.py`): from the Evaluator Agent's score. Threshold-based.
+- **Reversibility** (`reversibility.py`): declared per skill in its frontmatter (`reversibility: reversible | irreversible`).
+- **Decision matrix** (`decision.py`): given Intent, Risk, Confidence, Context, Preferences, Reversibility → Action ∈ {auto, ask_clarification, require_approval, reject}.
+- **Approval** (`approval.py`): for `require_approval`, the CLI prompts the user with the proposed action and a one-line rationale; user types `yes` / `no` / `why` to confirm, reject, or expand.
+
+### Self-Improvement (GP Loop)
+
+`src/ubongo/evolution/`.
+
+- **Generation** (`generator.py`): given a target (prompt / routing rule / tool chain / retry strategy), emit N variants. Variant strategies: paraphrase, prune, expand, recombine, perturb-temperature.
+- **Sandbox evaluation** (`sandbox.py`): run a candidate against the held-out conversation sample. Sample is curated and anonymized from prior sessions. Each candidate produces a `EvaluationResult` (per-sample scores).
+- **Fitness** (`fitness.py`): weighted sum of normalized success_rate, cost_inverse, latency_inverse, hallucination_inverse, user_correction_inverse. Weights live in `settings.yaml` and can themselves be evolved.
+- **Selection + lineage** (`selection.py`, `lineage.py`): top variants survive. `evolution_lineage` table records parent → child edges, fitness scores, and timestamps.
+- **Promotion** (`promotion.py`): top candidates are queued in `pending_promotions`; user approves via `/improvements`. Approved variants replace the live target; old version is preserved and reachable.
+- **Loop** (`loop.py`): asyncio task runs at low priority, throttled by `evolution.max_calls_per_hour` in `settings.yaml`. Triggered manually with `/evolve <target>` or scheduled by `evolution.cron`.
 
 ## File Structure
 
-```
+```text
 ubongo/
   pyproject.toml
   README.md
-  CLAUDE.md                    # context for future Claude Code sessions
+  CLAUDE.md
+  STATUS.md
+  UBONGO_VISION.md
+  UBONGO_BUILD.md            # this file
   .env.example
-  .gitignore                   # includes /vault, *.db, .env
+  .gitignore
+  Plans/                     # archived plan-mode plans
 
   config/
-    UBONGO.md                  # global identity and instructions (hierarchical root)
-    settings.yaml              # general config
-    routing.yaml               # tone/intent -> persona/skill rules
-    urgency.yaml               # urgency assignment rules (used in v0.3)
+    UBONGO.md                # global identity (hierarchical root)
+    settings.yaml
+    routing.yaml             # tone/intent -> workflow rules
+    workflows.yaml           # named workflow templates (which agents, which mode)
+    governance.yaml          # risk rules, decision-matrix thresholds
+    urgency.yaml             # urgency assignment (used in v0.3)
     personas/
-      architect.md             # voice-specific overlay only
+      architect.md
       operator.md
       casual.md
     skills/
       summarize-conversation/
         SKILL.md
-        prompts/
-          summarize.md
+        prompts/summarize.md
+      constrained-bash/
+        SKILL.md
+        prompts/run.md
 
   src/ubongo/
     __init__.py
-    __main__.py                # entry point: python -m ubongo
-    bot.py                     # Telegram handlers, main loop, event dispatch
-    events.py                  # named event registry and dispatcher
-    classifier.py              # tone/intent/skill classification
-    router.py                  # persona + skill + model selection
-    llm.py                     # LiteLLM wrapper
-    context.py                 # hierarchical context loader (UBONGO.md + persona + skill)
-    personas.py                # persona loading
-    skills.py                  # skill registry: descriptions at startup, bodies on demand
-    config.py                  # config loading, env var resolution
+    __main__.py              # entry: python -m ubongo
+    repl.py                  # interactive REPL
+    oneshot.py               # one-shot send command
+    config.py
+    context.py
+    logging.py
+    events.py                # named-event dispatcher
+    llm.py                   # LiteLLM wrapper
+    master.py                # Master Agent
+    classifier.py
+    router.py                # internal helper used by Master Agent.plan
+    runner.py                # workflow runner (six modes)
+    composer.py              # Persona Agent / response composition
+    skills.py                # skill registry, progressive disclosure
+
+    agents/
+      __init__.py
+      base.py                # Agent protocol, AgentInput/Result
+      research.py
+      coding.py
+      evaluator.py
+      repair.py
+      memory.py
+      critic.py
+      execution.py
+      personas.py            # Architect, Operator, Casual
+
+    governance/
+      __init__.py
+      risk.py
+      confidence.py
+      reversibility.py
+      decision.py
+      approval.py
+
+    evolution/
+      __init__.py
+      generator.py
+      sandbox.py
+      fitness.py
+      selection.py
+      lineage.py
+      promotion.py
+      loop.py
+
     delivery/
       __init__.py
-      queue.py                 # notification queue (enqueue, dequeue)
-      policy.py                # delivery policy engine (a before_send handler)
-      worker.py                # background delivery loop
-      catchup.py               # catch-up summarizer
-      commands.py              # /hold, /resume, /quiet, /queue
+      queue.py               # minimal SQLite-backed outbound queue
+
     memory/
       __init__.py
       schema.sql
-      store.py                 # SQLite operations
-      compaction.py            # swappable compaction function (default impl in v0.1)
-      vault.py                 # Markdown daily notes projection
+      store.py               # SQLite operations
+      compaction.py          # swappable compaction
+      vault.py               # Markdown projection
+      embeddings.py          # sqlite-vec wrapper
+      graph.py               # vault-link graph
 
   tests/
+    __init__.py
+    conftest.py
     test_classifier.py
-    test_router.py
-    test_skills.py
-    test_context.py
-    test_events.py
-    test_memory.py
-    test_compaction.py
+    test_master.py
+    test_runner.py
+    test_agents_research.py
+    test_agents_evaluator.py
+    test_governance_decision.py
+    test_evolution_generator.py
+    test_evolution_fitness.py
+    test_evolution_lineage.py
+    test_memory_store.py
+    test_memory_compaction.py
+    test_memory_embeddings.py
     test_delivery_queue.py
-    test_delivery_policy.py
+    test_skills.py
+    test_events.py
 
-  vault/                       # gitignored, generated daily notes
+    manual/
+      smoke_test.md          # cumulative manual playbook
+      fixtures/
+        sample_conversations.json   # held-out eval set for GP
+
+  vault/                     # gitignored; daily notes + ingested user pages
 ```
-
-## Personas (v0.1)
-
-Three personas. More can come later. Each lives in `config/personas/<name>.md` and contains *only* voice-specific instructions. Identity boilerplate (who Giuseppe is, communication preferences, formatting rules) lives in `config/UBONGO.md` and is loaded for every persona.
-
-**Architect.** Deep technical reasoning. Used for system design, RFCs, code architecture, technical tradeoffs. Calm, structured, willing to push back. Heavy model.
-
-**Operator.** Fast execution. Used for "do X" requests, status checks, quick lookups. Terse, direct, action-oriented. Heavy model but with low max_tokens.
-
-**Casual.** Friendly conversation. Used for low-stakes chat, brainstorming, venting, end-of-day decompression. Warm, less structured. Lighter model is fine.
-
-Example `config/UBONGO.md` (the global file, loaded for every turn):
-
-```markdown
-# Ubongo Global Context
-
-You are Ubongo, Giuseppe Turitto's personal AI assistant.
-
-## About Giuseppe
-- Senior Engineering Manager at Kiwi.com, based in Madrid.
-- Originally Venezuelan, lived in NYC, now in Madrid.
-- 20+ years in software, 10+ in engineering leadership.
-- Working on a leadership book ("Still Human") and several side projects.
-
-## Communication Defaults
-- Direct. Skip hedging and filler.
-- Assume strong technical and management foundations.
-- Push back when you see gaps in reasoning.
-- Default to prose over bullet points unless he asks for a list.
-- No em-dashes.
-- No emojis unless he uses them first.
-- Minimal markdown in conversation.
-
-## Memory
-You have access to memory of past conversations and a structured fact store.
-Use it. Do not narrate retrieval.
-```
-
-Example `config/personas/architect.md` (voice overlay only, no identity boilerplate):
-
-```markdown
----
-name: architect
-default_model: openrouter/anthropic/claude-sonnet-4.5
-max_tokens: 4096
----
-
-You are in Architect mode. Help Giuseppe with deep technical reasoning:
-system design, architecture decisions, code structure, tradeoff analysis.
-
-In this mode:
-- Take time to think before answering complex design questions.
-- Make tradeoffs explicit; never present a recommendation without naming what
-  it costs.
-- When the user proposes an architecture, identify at least one assumption
-  worth challenging before agreeing.
-- Use prose paragraphs. Reserve lists for genuinely list-shaped content.
-```
-
-The system prompt for an Architect-mode turn is `UBONGO.md` body + `architect.md` body, concatenated. If a skill is active, its body is appended after.
-
-## Skills with Progressive Disclosure
-
-Skills are reusable capabilities, separate from persona voice. Any persona can invoke any skill. A skill is a folder under `config/skills/` with this shape:
-
-```
-config/skills/<skill-name>/
-  SKILL.md             # frontmatter (always loaded) + body (loaded on activation)
-  prompts/             # optional, named prompt templates
-    <name>.md
-  references/          # optional, static reference material
-    <name>.md
-```
-
-`SKILL.md` frontmatter:
-
-```yaml
----
-name: summarize-conversation
-description: Produce a brief summary of the current conversation session. Activates on /summary or when the user asks to summarize what's been discussed.
-trigger:
-  commands: ["/summary"]
-  intents: []
-default_urgency: normal       # used when this skill produces proactive output (v0.3+)
-default_persona: operator     # optional preferred persona; router can override
----
-```
-
-**Progressive disclosure.** At startup, the skill registry indexes each skill by name, description, and trigger metadata only. The body of `SKILL.md` is *not* loaded into memory. When the router selects a skill (by command match, intent match in the classifier output, or `/skill <name>`), the body is read from disk and appended to the system prompt for that turn only.
-
-This matters because:
-
-- The classifier sees the full list of skill *descriptions* and can include a `skill` field in its JSON output, naming a relevant skill from a possibly large library.
-- The system prompt for each turn only includes the body of skills that are actually being used, not the entire skill catalog.
-- Token cost scales with active skills, not registered skills. You can have 50 skills loaded without paying tokens for 49 of them on every turn.
-
-**Skill resolution order:**
-
-1. Explicit command (`/summary` -> `summarize-conversation`).
-2. `skill` field in classifier JSON output (if non-null and matches a registered skill).
-3. Manual selection via `/skill <name>` for the next message.
-
-A message can have zero or one skill active in v0.1. Multi-skill composition is v0.2+.
-
-**v0.1 ships exactly one skill: `summarize-conversation`.** The point in v0.1 is to validate the skills infrastructure and progressive disclosure, not to ship a library.
 
 ## Hierarchical Context Loader
 
-Implemented in `context.py`. Single function `build_system_prompt(persona_name, skill_name=None) -> str` that:
+`src/ubongo/context.py`. Function `build_system_prompt(persona_name, skill_name=None, agent_role=None) -> str`:
 
-1. Reads `config/UBONGO.md` body.
-2. Reads `config/personas/<persona_name>.md` body (skipping frontmatter).
-3. If `skill_name` is provided, reads `config/skills/<skill_name>/SKILL.md` body (skipping frontmatter), prefixed with `## Active Skill: <name>`.
-4. Concatenates with double newlines between sections.
-5. Returns the assembled string.
+1. Read `config/UBONGO.md` body (cached).
+2. Read `config/personas/<persona>.md` body (skipping frontmatter).
+3. If `skill_name` is provided, read the skill body and prefix with `## Active Skill: <name>`.
+4. If `agent_role` is provided, append a short role-frame stanza describing the agent's posture.
+5. Concatenate with double newlines.
 
-Caching: persona files and `UBONGO.md` are cached in memory at startup and on `/reload`. Skill bodies are read on demand and cached per skill name (cleared on `/reload`).
-
-This means changing `UBONGO.md` updates every persona's behavior on next `/reload` without editing three files. Adding a new persona means writing only the voice-specific overlay, not duplicating identity.
+Caching: `UBONGO.md` and persona files at startup and on `/reload`. Skill bodies on demand, cached per skill, cleared on `/reload`. Worker role frames at startup.
 
 ## Named Events
 
-Implemented in `events.py`. Simple synchronous dispatcher:
-
-```python
-class EventBus:
-    def on(self, event: str, handler: Callable) -> None: ...
-    def emit(self, event: str, payload: dict) -> dict: ...   # returns possibly-modified payload
-```
-
-Handlers receive a payload dict and return a (possibly modified) payload. Multiple handlers per event run in registration order. Default handlers ship in v0.1; v0.2+ adds handlers without modifying the bot loop.
-
-**v0.1 events and their default handlers:**
+`src/ubongo/events.py`. Synchronous-by-default dispatcher. v0.1 events:
 
 | Event | Payload | Default handler |
-|---|---|---|
-| `before_classify` | `{message, session}` | none (passthrough) |
-| `after_classify` | `{message, session, classification}` | none (passthrough) |
-| `before_recall` | `{session, max_turns}` | none (passthrough) |
-| `after_recall` | `{session, history}` | compaction (if history > N) |
-| `before_llm` | `{system_prompt, messages, model}` | none (passthrough) |
-| `after_llm` | `{response, tokens_in, tokens_out, model}` | memory write |
-| `before_send` | `{queue_item, now}` | policy engine (decides deliver/hold) |
-| `after_send` | `{queue_item, telegram_message_id}` | vault projection |
-
-The bot loop calls `events.emit(...)` at each point and uses the returned payload. This is the seam for everything in v0.2+:
-
-- Embedding-based recall: `after_recall` handler that augments `history` with semantically relevant past messages.
-- Fact extraction: `after_llm` handler that runs over the user message and proposes facts to store.
-- Redaction: `before_send` handler that scrubs sensitive content.
-- Audit logging: handlers on every event writing to a structured log.
-
-For v0.1, the only non-passthrough handlers are compaction (`after_recall`), memory write (`after_llm`), policy engine (`before_send`), and vault projection (`after_send`). All others are stubs that return the payload unchanged. The point of registering them in v0.1 is so the architecture is in place.
-
-## Tone Classifier with Skill Selection
-
-This is the part that has to actually work. v0.1 design:
-
-**Single LLM call** to a small model via OpenRouter (e.g., `openrouter/qwen/qwen-2.5-7b-instruct` or `openrouter/meta-llama/llama-3.2-3b-instruct`). Prompt asks for structured JSON:
-
-```json
-{
-  "intent": "technical|work|casual|research|notification_control|other",
-  "tone": "neutral|focused|frustrated|playful",
-  "task_type": "question|discussion|command|venting",
-  "skill": null,
-  "confidence": 0.0
-}
-```
-
-The classifier prompt includes the list of available skill names and descriptions so the model can suggest one in the `skill` field, or `null` if none applies. This is how progressive disclosure connects to routing without an extra LLM call.
-
-`notification_control` as an intent: messages like "hold notifications for 2 hours" or "stop bothering me until 6pm" are routed to the delivery commands handler in Phase 7, not to a normal LLM response.
-
-**Routing rules** (`config/routing.yaml`):
-
-```yaml
-rules:
-  - match: { intent: notification_control }
-    handler: delivery_command       # bypass normal LLM flow
-  - match: { intent: technical }
-    persona: architect
-  - match: { intent: work, task_type: command }
-    persona: operator
-  - match: { intent: casual }
-    persona: casual
-  - match: { tone: frustrated }
-    persona: casual
-default:
-  persona: architect
-```
-
-**Hysteresis.** Within a single session (messages within 30 minutes of each other), the persona only switches if the new classification has confidence > 0.7 AND differs from the active persona. This prevents whiplash from a single offhand message.
-
-**Manual override.** Slash commands `/architect`, `/operator`, `/casual` force the persona for the current session. `/auto` returns to automatic routing.
-
-**Failure mode.** If classification fails or returns malformed JSON, fall back to the default persona with no skill. Log the failure. Never block on classifier failure.
+| --- | --- | --- |
+| `before_classify` | `{message, session}` | passthrough |
+| `after_classify` | `{message, session, classification}` | passthrough |
+| `before_plan` | `{classification, session}` | passthrough |
+| `after_plan` | `{workflow}` | passthrough |
+| `before_execute` | `{workflow, context}` | passthrough |
+| `after_execute` | `{workflow_result}` | passthrough |
+| `before_govern` | `{workflow_result, classification}` | passthrough |
+| `after_govern` | `{decision, action}` | passthrough |
+| `before_compose` | `{workflow_result, persona}` | passthrough |
+| `after_compose` | `{response, persona}` | passthrough |
+| `before_send` | `{queue_item, now}` | passthrough (policy engine in v0.2) |
+| `after_send` | `{queue_item, output_id}` | vault projection, memory write |
+| `agent_started` | `{agent, input}` | log |
+| `agent_completed` | `{agent, result}` | log |
+| `agent_failed` | `{agent, exception}` | log + repair trigger (Phase 13) |
+| `evolution_generation` | `{target, generation, candidates}` | persist to lineage |
+| `evolution_promotion` | `{target, candidate, fitness}` | queue for `/improvements` |
 
 ## Memory Model
 
-**SQLite as canonical store.** Schema:
+SQLite schema (`memory/schema.sql`):
 
 ```sql
 CREATE TABLE conversations (
@@ -363,23 +333,20 @@ CREATE TABLE conversations (
 CREATE TABLE messages (
   id INTEGER PRIMARY KEY,
   conversation_id INTEGER NOT NULL REFERENCES conversations(id),
-  role TEXT NOT NULL,           -- user | assistant | system
+  role TEXT NOT NULL,
   content TEXT NOT NULL,
   timestamp TIMESTAMP NOT NULL,
-  persona TEXT,
-  skill TEXT,
-  model TEXT,
-  tokens_in INTEGER,
-  tokens_out INTEGER
+  persona TEXT, agent TEXT, skill TEXT, model TEXT,
+  tokens_in INTEGER, tokens_out INTEGER
 );
 
 CREATE TABLE summaries (
   id INTEGER PRIMARY KEY,
-  conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+  conversation_id INTEGER NOT NULL,
   covers_from_message_id INTEGER NOT NULL,
   covers_to_message_id INTEGER NOT NULL,
   content TEXT NOT NULL,
-  strategy TEXT NOT NULL,       -- name of the compaction function used
+  strategy TEXT NOT NULL,
   created_at TIMESTAMP NOT NULL
 );
 
@@ -393,137 +360,134 @@ CREATE TABLE sessions (
 
 CREATE TABLE facts (
   id INTEGER PRIMARY KEY,
-  subject TEXT NOT NULL,
-  predicate TEXT NOT NULL,
-  object TEXT NOT NULL,
+  subject TEXT, predicate TEXT, object TEXT,
   source_message_id INTEGER REFERENCES messages(id),
-  created_at TIMESTAMP NOT NULL,
-  importance INTEGER DEFAULT 0
+  importance INTEGER DEFAULT 0,
+  created_at TIMESTAMP NOT NULL
 );
--- facts table is created in v0.1 but population is v0.2+
+
+CREATE TABLE workflow_runs (
+  id INTEGER PRIMARY KEY,
+  conversation_id INTEGER NOT NULL,
+  message_id INTEGER NOT NULL,
+  classification JSON NOT NULL,
+  workflow JSON NOT NULL,
+  execution_mode TEXT NOT NULL,
+  started_at TIMESTAMP NOT NULL,
+  ended_at TIMESTAMP,
+  outcome TEXT NOT NULL CHECK (outcome IN ('success', 'failure', 'repaired'))
+);
+
+CREATE TABLE agent_runs (
+  id INTEGER PRIMARY KEY,
+  workflow_run_id INTEGER NOT NULL REFERENCES workflow_runs(id),
+  agent TEXT NOT NULL,
+  model TEXT,
+  input JSON, output JSON,
+  confidence REAL,
+  tokens_in INTEGER, tokens_out INTEGER, latency_ms INTEGER,
+  outcome TEXT NOT NULL,
+  started_at TIMESTAMP NOT NULL,
+  ended_at TIMESTAMP
+);
+
+CREATE TABLE governance_decisions (
+  id INTEGER PRIMARY KEY,
+  workflow_run_id INTEGER NOT NULL REFERENCES workflow_runs(id),
+  intent TEXT, risk TEXT, confidence REAL, reversibility TEXT,
+  action TEXT NOT NULL,
+  approval_response TEXT,
+  decided_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE evolution_lineage (
+  id INTEGER PRIMARY KEY,
+  target TEXT NOT NULL,
+  parent_id INTEGER REFERENCES evolution_lineage(id),
+  generation INTEGER NOT NULL,
+  variant_text TEXT NOT NULL,
+  variant_metadata JSON,
+  created_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE evolution_evaluations (
+  id INTEGER PRIMARY KEY,
+  lineage_id INTEGER NOT NULL REFERENCES evolution_lineage(id),
+  sample_set TEXT NOT NULL,
+  success_rate REAL, cost REAL, latency_ms REAL,
+  hallucination_rate REAL, user_correction_rate REAL,
+  fitness REAL NOT NULL,
+  evaluated_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE pending_promotions (
+  id INTEGER PRIMARY KEY,
+  lineage_id INTEGER NOT NULL REFERENCES evolution_lineage(id),
+  target TEXT NOT NULL,
+  proposed_at TIMESTAMP NOT NULL,
+  decided_at TIMESTAMP,
+  decision TEXT CHECK (decision IN ('approved', 'rejected'))
+);
+
+CREATE TABLE active_evolutions (
+  target TEXT PRIMARY KEY,
+  lineage_id INTEGER NOT NULL REFERENCES evolution_lineage(id),
+  promoted_at TIMESTAMP NOT NULL
+);
 
 CREATE TABLE notification_queue (
   id INTEGER PRIMARY KEY,
   content TEXT NOT NULL,
   urgency TEXT NOT NULL CHECK (urgency IN ('low', 'normal', 'urgent')),
-  source TEXT,                  -- 'response' | 'skill:<name>' | 'job:<name>'
-  source_skill TEXT,
+  source TEXT,
   created_at TIMESTAMP NOT NULL,
   deliver_after TIMESTAMP,
   delivered_at TIMESTAMP,
   expires_at TIMESTAMP,
-  metadata TEXT                 -- JSON blob
+  metadata JSON
 );
 
-CREATE TABLE delivery_policy (
-  id INTEGER PRIMARY KEY,
-  type TEXT NOT NULL CHECK (type IN ('hold', 'hold_until_ack', 'quiet_hours_override')),
-  until TIMESTAMP,
-  urgency_threshold TEXT NOT NULL CHECK (urgency_threshold IN ('low', 'normal', 'urgent')),
+CREATE TABLE vault_links (
+  source_path TEXT NOT NULL,
+  target_path TEXT NOT NULL,
+  link_type TEXT NOT NULL,
   created_at TIMESTAMP NOT NULL,
-  source TEXT,
-  active BOOLEAN DEFAULT TRUE
+  PRIMARY KEY (source_path, target_path, link_type)
 );
+
+-- vec_messages and vec_vault are sqlite-vec virtual tables, created in Phase 20.
 
 CREATE INDEX idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX idx_summaries_conversation ON summaries(conversation_id);
 CREATE INDEX idx_queue_undelivered ON notification_queue(delivered_at) WHERE delivered_at IS NULL;
-CREATE INDEX idx_policy_active ON delivery_policy(active) WHERE active = TRUE;
+CREATE INDEX idx_workflow_runs_conv ON workflow_runs(conversation_id);
+CREATE INDEX idx_agent_runs_workflow ON agent_runs(workflow_run_id);
+CREATE INDEX idx_lineage_target_gen ON evolution_lineage(target, generation);
+CREATE INDEX idx_pending_undecided ON pending_promotions(decided_at) WHERE decided_at IS NULL;
 ```
 
-**Recall and compaction.** `memory/compaction.py` defines a swappable function:
-
-```python
-def compact(history: list[Message], target_turns: int) -> tuple[Optional[Summary], list[Message]]:
-    """
-    Given a full message history and a target number of recent turns to keep
-    verbatim, return (summary_of_older, recent_turns).
-    Default v0.1 implementation: simple recency split with single-paragraph summary
-    of everything older than `target_turns`.
-    """
-```
-
-The default v0.1 implementation runs a small LLM call to summarize older messages into one paragraph. The summary is persisted in the `summaries` table so the same range isn't re-summarized on every turn. Recall returns: existing summary (if any) + the most recent N=10 messages.
-
-This is the seam for v0.2+ to swap in topic-aware compaction (split history by topic shift, summarize each topic separately) or persona-specific compaction (architect persona preserves code blocks verbatim, casual persona summarizes aggressively) without touching `store.py`.
-
-**Markdown projection.** A daily note at `vault/daily/YYYY-MM-DD.md` containing chronological conversation log with timestamps, persona, and content. Written by a default `after_send` handler.
-
-```markdown
-# 2026-05-07
-
-## 09:14 [architect]
-**You:** [message]
-**Ubongo:** [response]
-
-## 11:32 [casual]
-...
-```
-
-The system reads from SQLite, never from Markdown. Bidirectional sync is v0.2+.
-
-## Notification Queue and Delivery Policy
-
-Every outbound Telegram message goes through the queue, even direct responses to user messages. This is structural, not optional. When v0.3 adds the scheduler, proactive messages use the same delivery path. If you start by sending some messages directly and others via the queue, you'll have to migrate every send site later. Build it once.
-
-The policy engine is a `before_send` event handler. v0.2+ can add additional `before_send` handlers (redaction, format adjustment, urgency boosting based on rules) without modifying the worker.
-
-**Synchronous responses** are enqueued with `urgency=urgent` and `deliver_after=NOW()`. The delivery worker picks them up immediately. To the user, this feels instant.
-
-**Proactive messages** (v0.3+) are enqueued with their declared urgency and an optional `deliver_after`. The worker decides when they go.
-
-**The policy engine.** Given a queued message and the current state, answers: "can this be delivered now?" using:
-
-1. The message's urgency.
-2. Active overrides in the `delivery_policy` table.
-3. Quiet hours from `config/settings.yaml`.
-4. Current time in the configured timezone.
-
-A message is delivered iff its urgency meets or exceeds the highest currently active threshold.
-
-**Slash commands:**
-
-- `/hold 3h` — hold all non-urgent for 3 hours.
-- `/hold until 18:00` — hold until 6pm today.
-- `/hold` — `hold_until_ack`, no expiry.
-- `/resume` — clear all active holds. Trigger catch-up summarization.
-- `/queue` — list queued items by urgency.
-- `/quiet` — show current quiet hours.
-- `/quiet 22-08` — change quiet hours (runtime override).
-- `/quiet off` — disable quiet hours.
-
-**Natural language detection.** When the classifier returns `intent: notification_control`, the message is routed to a small handler that interprets the instruction and applies it via the same code paths as the slash commands. The handler confirms in plain language. Ambiguous phrasing falls back to suggesting slash commands.
-
-**Catch-up on release.** When `/resume` runs (or a hold expires) and >= `summarize_threshold` items are pending, summarize them via an LLM call using the casual persona. Mark the underlying items delivered.
-
-**Hold-until-ack safety.** If a `hold_until_ack` has been active for more than `hold_until_ack_warning_hours` (default 24), the worker sends a single urgent ping asking whether to keep holding.
-
-**Worker loop.** Asyncio task in the same process as the bot. Wakes every `worker_poll_seconds` (default 30). Also wakes immediately when an item is enqueued at `urgent`.
-
-**Expiry.** Items with `expires_at` in the past are dropped without delivery and logged.
+The Memory Agent is the only writer to durable memory. Other agents return their findings; Memory Agent commits.
 
 ## Tool Discipline
 
-v0.1 exposes zero tools to the LLM. The LLM produces text; the bot sends text. No tool calling, no function calling.
+v0.1 exposes a small, curated tool surface to agents:
 
-When tools are added in v0.2+:
+- **Constrained-bash skill** (Phase 11, sandboxed Phase 15): Execution Agent invokes shell scripts via this skill. Filesystem allowlist, env restriction, timeout.
+- **Memory access**: indirect, through Memory Agent. No direct DB access from worker agents.
+- **Vault read**: Research and Memory agents can read vault files.
 
-1. **Default to CLI scripts.** A new capability is a CLI binary or Python script with a README. The agent (when given tool access) uses a single `bash` tool to invoke it. The README is read on demand.
-2. **First-class tools require justification.** A new entry in the LLM's tool list must justify why it can't be a CLI script. Acceptable reasons include latency-critical paths, structured output the LLM needs to reason about across turns, or required side-effect isolation.
-3. **Tool descriptions are tax.** Every tool definition costs tokens on every turn it's available. Audit the tool list quarterly; remove unused tools.
-
-This discipline is borrowed from Pi (the agent toolkit). The argument: progressive disclosure for capabilities, same as for skills. You'll have ten tools eventually if you're not careful, and most of them won't earn the context cost.
+When new capabilities arrive in v0.2+, prefer **CLI scripts invoked through the constrained-bash skill** over first-class tool definitions.
 
 ## Configuration Files
 
 ### `.env.example`
 
-```
-# Required
+```dotenv
+# Required (v0.1)
 OPENROUTER_API_KEY=
-TELEGRAM_BOT_TOKEN=
 
-# Optional, for future phases
+# Optional, for future phases (v0.2+)
+TELEGRAM_BOT_TOKEN=
 GOOGLE_CALENDAR_CLIENT_ID=
 GOOGLE_CALENDAR_CLIENT_SECRET=
 GMAIL_CLIENT_ID=
@@ -535,14 +499,15 @@ REDDIT_CLIENT_SECRET=
 ### `config/settings.yaml`
 
 ```yaml
-telegram:
-  allowed_user_ids: [123456789]   # set to your Telegram numeric ID
-
 models:
-  default: openrouter/anthropic/claude-sonnet-4.5
   classifier: openrouter/qwen/qwen-2.5-7b-instruct
+  default: openrouter/anthropic/claude-sonnet-4.5
   casual: openrouter/anthropic/claude-haiku-4.5
   compaction: openrouter/anthropic/claude-haiku-4.5
+  evaluator: openrouter/anthropic/claude-sonnet-4.5
+  critic: openrouter/anthropic/claude-sonnet-4.5
+  coding: openrouter/anthropic/claude-sonnet-4.5
+  evolution_generator: openrouter/anthropic/claude-sonnet-4.5
 
 api_keys:
   openrouter:
@@ -552,27 +517,35 @@ memory:
   recall_turns: 10
   session_timeout_minutes: 30
   compaction:
-    strategy: default              # name of registered compaction function
-    trigger_at_turns: 30           # compact when total turns exceed this
+    strategy: default
+    trigger_at_turns: 30
+  embeddings:
+    enabled: true
+    model: openrouter/openai/text-embedding-3-small
+    recall_top_k: 5
 
 vault:
   path: ./vault
   daily_notes_subdir: daily
 
-delivery:
-  quiet_hours:
-    enabled: true
-    start: "23:00"
-    end: "07:00"
-    timezone: "Europe/Madrid"
-    urgency_threshold: urgent
-  default_urgency_threshold: normal
-  hold_until_ack_warning_hours: 24
-  worker_poll_seconds: 30
-  catchup:
-    summarize: true
-    summarize_persona: casual
-    summarize_threshold: 2
+governance:
+  approval_required_on:
+    - destructive
+    - irreversible_high_risk
+  confidence_threshold_for_auto: 0.7
+
+evolution:
+  enabled: true
+  max_calls_per_hour: 30
+  population_size: 8
+  generations_per_run: 3
+  cron: null
+  fitness_weights:
+    success_rate: 0.40
+    cost_inverse: 0.15
+    latency_inverse: 0.10
+    hallucination_inverse: 0.20
+    user_correction_inverse: 0.15
 
 logging:
   level: INFO
@@ -581,276 +554,848 @@ logging:
 
 ### `config/routing.yaml`
 
-See "Tone Classifier" section above.
+```yaml
+rules:
+  - match: { intent: technical }
+    workflow: technical_deep
+  - match: { intent: work, task_type: command }
+    workflow: quick_action
+  - match: { intent: casual }
+    workflow: casual_reply
+  - match: { tone: frustrated }
+    workflow: supportive_reply
+  - match: { intent: research }
+    workflow: research_brief
+  - match: { intent: coding }
+    workflow: coding_session
+  - match: { task_type: high_stakes_decision }
+    workflow: debate_then_synthesize
+default_workflow: casual_reply
+```
 
-### `config/urgency.yaml` (used in v0.3+, included in v0.1 as empty stub)
+### `config/workflows.yaml`
 
 ```yaml
-rules: []
+workflows:
+  technical_deep:
+    persona: architect
+    agents: [research, evaluator, persona]
+    mode: sequential
+    risk: low
+  quick_action:
+    persona: operator
+    agents: [persona]
+    mode: sequential
+    risk: low
+  casual_reply:
+    persona: casual
+    agents: [persona]
+    mode: sequential
+    risk: low
+  supportive_reply:
+    persona: casual
+    agents: [persona]
+    mode: sequential
+    risk: low
+  research_brief:
+    persona: architect
+    agents: [research, critic, evaluator, persona]
+    mode: collaborative
+    risk: low
+  coding_session:
+    persona: architect
+    agents: [coding, evaluator, persona]
+    mode: sequential
+    risk: medium
+  debate_then_synthesize:
+    persona: architect
+    agents: [research, critic, evaluator, persona]
+    mode: debate
+    risk: medium
+  speculative_brief:
+    persona: operator
+    agents: [research_cheap, research_strong, evaluator, persona]
+    mode: speculative
+    risk: low
+```
+
+### `config/governance.yaml`
+
+```yaml
+risk_rules:
+  - skill: constrained-bash
+    risk: medium
+  - intent: notification_control
+    risk: low
+  - tool: any_external_write
+    risk: high
+  - destructive_keywords: ["delete", "drop", "rm -rf", "force push"]
+    risk: destructive
+
+decision_thresholds:
+  auto_max_risk: low
+  approval_min_risk: high
+  reject_below_confidence: 0.2
 ```
 
 ## CLAUDE.md (for future Claude Code sessions)
 
-The project ships with a `CLAUDE.md` at the root containing:
+The project ships [CLAUDE.md](CLAUDE.md) at the root. It contains the project description, what's in scope and out, current phase status (pointing at [STATUS.md](STATUS.md)), conventions (prose over bullets, no em-dashes, no emojis, direct tone), and architectural rules (Master Agent orchestrates, every outbound message through the queue, secrets only in `.env`, new behavior as event handlers, new capabilities default to CLI scripts invoked via the constrained-bash skill, every implementation phase on its own branch with merge gated by user approval).
 
-- One-paragraph project description.
-- "What Ubongo Is Not" (verbatim from this doc).
-- Current phase status.
-- Pointer to this build spec.
-- Convention notes: prose over bullets, no em-dashes, no emojis, direct tone (Giuseppe's preferences, baked into the project).
-- Architectural rules: every outbound message goes through the queue; secrets only in `.env`; new capabilities ship as skills, not as `bot.py` modifications; new behavior ships as event handlers, not as core-loop edits; new tools default to CLI scripts.
+---
 
 ## Phased Build Plan
 
-Each phase ships a working system. Don't move to phase N+1 until N is verified.
+22 phases organized into 6 tiers. Each phase ends with a working, end-to-end-testable system. The cumulative manual playbook lives at `tests/manual/smoke_test.md` and grows as phases land.
 
-### Phase 0: Project Skeleton and Hierarchical Context
+**Branch workflow:** for each phase N, create branch `phase-N-<short-name>` off the latest `main`. All commits for that phase land on the branch. The user reviews when the testing plan and smoke test pass; merging to `main` is the user's call. Don't start phase N+1 until phase N is merged.
 
-**Goal:** Working Python project with config loading, hierarchical context assembly, and structured logging.
+### Tier 1 — Foundation (Phases 0–7)
 
-**Tasks:**
-- Initialize project with `uv init` and `pyproject.toml`.
-- Create the file structure above.
-- Write `.env.example` with required vars.
-- Write `config/settings.yaml`, `config/UBONGO.md`, and stubs for `routing.yaml` and `urgency.yaml`.
-- Write README.md with setup instructions.
-- Write CLAUDE.md with project context.
-- Implement `config.py`: load YAML, resolve env vars referenced in config, validate required fields at startup.
-- Implement `context.py`: hierarchical loader that concatenates `UBONGO.md` + persona file + optional skill body.
-- Implement `events.py`: EventBus with `on(event, handler)` and `emit(event, payload) -> payload`.
-- Set up structured JSON logging to stderr.
+These phases reach a working single-agent CLI that classifies, routes, persists, projects to vault, runs skills, and queues all output. By the end of Tier 1, the substrate for the multi-agent runtime in Tier 2 is ready.
 
-**Acceptance:** `uv run python -m ubongo` starts, loads config, prints "Ubongo starting" with config summary (no secrets in the log), exits cleanly on Ctrl-C. Calling `context.build_system_prompt("architect")` returns the concatenation of `UBONGO.md` + `architect.md`. Registering a handler on a stub event and emitting it returns the modified payload.
+### Phase 0 — Skeleton
 
-### Phase 1: Telegram Echo Bot with Persona Switching
+**Branch:** `phase-0-skeleton`
 
-**Goal:** Bot responds to messages from the allowed user. Slash commands switch personas. Stub responses, no LLM yet.
+**Goal:** A `uv run python -m ubongo` invocation that loads config, sets up structured logging, and exits cleanly. Pure scaffolding.
 
-**Tasks:**
-- Implement `bot.py` with python-telegram-bot.
-- Reject any message from a non-allowed user (silent drop, log it).
-- Handle text messages: echo back with current persona name.
-- Handle `/architect`, `/operator`, `/casual`, `/auto`, `/start`, `/help`.
-- Active persona stored in-process for now; SQLite in Phase 4.
+**Sub-phases:**
 
-**Acceptance:** Send "hello" from your allowed account, get `[architect] hello`. Send `/casual`, send "hello", get `[casual] hello`. Send from another account, get nothing.
+- **0a — Project init.** `uv init`; `pyproject.toml` with deps (`litellm`, `python-dotenv`, `pyyaml`, `pytest`, `sqlite-vec`); `uv sync` works.
+- **0b — Config loading.** `config.py` reads `settings.yaml`, resolves env-var refs, validates required fields.
+- **0c — Hierarchical context loader.** `context.py` provides `build_system_prompt(persona, skill=None, agent_role=None)`.
+- **0d — Structured JSON logging.** `logging.py`; configurable level; one startup log line with config summary (no secrets).
+- **0e — CLI entry.** `__main__.py` with argparse; default action prints startup line; `send` subcommand parsed but no-op.
 
-### Phase 2: LLM Integration via OpenRouter with Hierarchical Prompts
+**Files touched:** `pyproject.toml`, `src/ubongo/__init__.py`, `src/ubongo/__main__.py`, `src/ubongo/config.py`, `src/ubongo/context.py`, `src/ubongo/logging.py`, `config/settings.yaml`, `config/UBONGO.md`, `config/personas/{architect,operator,casual}.md`, `.env.example`.
 
-**Goal:** Real LLM responses through LiteLLM and OpenRouter. System prompts assembled via the hierarchical loader.
+**Testing plan:**
 
-**Tasks:**
-- Implement `personas.py`: load persona files (frontmatter + body) at startup.
-- Implement `llm.py`: thin wrapper around LiteLLM. Function `complete(system_prompt, messages, model, max_tokens) -> CompletionResult`.
-- Wire bot to: build system prompt via `context.build_system_prompt(persona)`, call LLM, return response.
-- Wire `before_llm` and `after_llm` events (passthrough handlers in v0.1).
-- Handle LLM errors: retry once with exponential backoff, then send a polite error message.
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Cold start | `uv run python -m ubongo` | JSON startup line; rc 0. |
+| 2 | Missing API key | unset `OPENROUTER_API_KEY`; run | rc 1; clear error pointing at the missing var. |
+| 3 | Context assembly | `python -c "from ubongo.context import build_system_prompt; print(build_system_prompt('architect'))"` | UBONGO.md body, blank line, architect.md body. |
+| 4 | Log structure | Capture stderr; pipe to `jq .` | Valid JSON. Has `event`, `level`, `ts`. No secrets. |
 
-**Acceptance:** Send a technical question with `/architect`, get a real Architect-style response. Send a casual message with `/casual`, get a real Casual-style response. The personas feel different. Editing `UBONGO.md` and restarting changes behavior across all personas.
+**End-to-end manual smoke test:** N/A for Phase 0 (no user-facing surface yet). The smoke playbook starts in Phase 1.
 
-### Phase 3: Tone Classifier and Auto Routing
+**Acceptance:** all 4 scenarios pass; merge `phase-0-skeleton` → `main` after user approval.
 
-**Goal:** In `/auto` mode, the system classifies each message and picks the persona. Manual overrides still work.
+### Phase 1 — CLI REPL + One-Shot (echo mode)
 
-**Tasks:**
-- Implement `classifier.py`: function takes message, returns structured result. Use LiteLLM with the classifier model. JSON output mode if supported; defensive parsing otherwise. Classifier prompt includes empty skill list for now (skills come in Phase 6).
-- Implement `router.py`: load `config/routing.yaml`, apply rules, return persona. Apply hysteresis logic.
-- Wire into bot via `before_classify` and `after_classify` events (passthrough handlers).
-- Log classifier output and routing decision for every message.
+**Branch:** `phase-1-cli-echo`
 
-**Acceptance:** In `/auto` mode, "help me design a circuit breaker" routes to architect. "ugh today sucked" routes to casual. Five technical messages then one casual within a minute does not flip persona unless confidence is high.
+**Goal:** REPL accepts input and echoes back with current persona name. One-shot mode runs a single turn and exits. Slash commands switch personas. No LLM yet.
 
-### Phase 4: SQLite Conversation Memory with Swappable Compaction
+**Sub-phases:**
 
-**Goal:** Conversations persist across restarts. Recall returns recent turns plus a compaction summary for older history.
+- **1a — REPL loop** (`repl.py`): prompt `> `; read line; dispatch.
+- **1b — One-shot command** (`oneshot.py`): parse `send "<msg>" [--persona <name>]`; run one turn; exit.
+- **1c — Slash command parser**: `/architect`, `/operator`, `/casual`, `/auto`, `/exit`. Active persona stored in-process.
+- **1d — Echo response**: output `[<persona>] <input>` for any text turn.
+- **1e — `__main__.py` dispatch**: no args → REPL; `send <msg>` → one-shot.
 
-**Tasks:**
-- Implement `memory/schema.sql`. Run migrations on startup (simple `CREATE IF NOT EXISTS`).
-- Implement `memory/store.py`: start/get/end conversations, append messages, get session state, get last N messages, persist summaries.
-- Define "session": same user, time gap < 30 minutes since last message.
-- Implement `memory/compaction.py`: register a default compaction function. Trigger when total session turns exceed `compaction.trigger_at_turns`. Persist resulting summary in the `summaries` table.
-- Wire `after_recall` event with the compaction handler.
-- Wire `after_llm` event with the memory write handler.
-- Move active persona / override state from in-process dict to `sessions` table.
+**Files touched:** `src/ubongo/repl.py`, `src/ubongo/oneshot.py`, `src/ubongo/__main__.py`.
 
-**Acceptance:** Multi-turn conversation. Restart the bot. Continue; bot remembers last 10 turns plus a summary of older turns. Wait 31 minutes; next message starts a new session. Replace the default compaction function with a stub returning a fixed string; verify recall uses the stub.
+**Testing plan:**
 
-### Phase 5: Markdown Vault Projection
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | REPL echo | start REPL; type "hello" | `[architect] hello` |
+| 2 | Persona switch | `/casual`; type "hello" | `[casual] hello` |
+| 3 | `/auto` | after `/casual`, type `/auto`; "hello" | `[architect] hello` (default) |
+| 4 | One-shot | `python -m ubongo send "hello" --persona operator` | `[operator] hello`; rc 0. |
+| 5 | `/exit` | type `/exit` | clean exit, rc 0. |
 
-**Goal:** Daily notes generated in Obsidian-compatible format, written by an `after_send` handler.
+**End-to-end smoke test (initialize `tests/manual/smoke_test.md`):**
 
-**Tasks:**
-- Implement `memory/vault.py`: function `append_to_daily_note(date, user_message, bot_response, persona)`.
-- Register as default `after_send` handler.
-- Verify rendering in Obsidian.
-- README notes that user can `git init` inside `vault/` for projection history.
+1. `python -m ubongo`. Confirm startup log + REPL prompt.
+2. Try `/architect`, `/operator`, `/casual` and a message after each.
+3. `/exit`.
+4. `python -m ubongo send "hi" --persona casual` returns `[casual] hi`.
 
-**Acceptance:** After a day of use, `vault/daily/2026-MM-DD.md` exists with a clean log. Open in Obsidian; renders correctly. Disabling the handler stops vault writes; re-enabling resumes them.
+**Acceptance:** all 5 scenarios pass; merge after approval.
 
-### Phase 6: Skills with Progressive Disclosure
+### Phase 2 — LLM Integration
 
-**Goal:** Skills can be defined as folders. Descriptions load at startup; bodies load on demand. Classifier can suggest a skill in its JSON output. v0.1 ships one skill.
+**Branch:** `phase-2-llm`
 
-**Tasks:**
-- Implement `skills.py`: discover skills in `config/skills/`, parse `SKILL.md` frontmatter only at startup. Body is loaded on demand and cached per skill.
-- Extend `classifier.py`: include the list of registered skill names and descriptions in the classifier prompt; expect a `skill` field in JSON output.
-- Extend `router.py`: when a skill is selected (by command, classifier output, or `/skill <name>`), load the body and pass it to the context builder. The context builder appends it as `## Active Skill: <name>` after the persona section.
-- Implement the `summarize-conversation` skill: triggers on `/summary`, summarizes the current session in 3-5 sentences using the operator persona.
-- Add `/skills` command listing available skills (names + descriptions).
-- Add `/reload` command that re-reads `UBONGO.md`, personas, skill metadata, and clears the skill body cache.
+**Goal:** Real responses through LiteLLM/OpenRouter using hierarchical prompts. Personas feel different.
 
-**Acceptance:** `/summary` produces a coherent summary of the current session. `/skills` lists `summarize-conversation`. Editing the skill's `SKILL.md` body and running `/reload` reflects the change without restart. Verifying that the skill body is *not* in the system prompt for messages where the skill isn't triggered (inspect the `before_llm` payload).
+**Sub-phases:**
 
-### Phase 7: Notification Queue and Delivery Policy
+- **2a — Persona registry** (`agents/personas.py`): load each persona file (frontmatter + body) at startup. Frontmatter declares `default_model`, `max_tokens`.
+- **2b — LiteLLM wrapper** (`llm.py`): `complete(system_prompt, messages, model, max_tokens) -> CompletionResult`. Single retry on transient errors.
+- **2c — Wire into REPL/oneshot.** Replace echo: build system prompt, call LLM, return text.
+- **2d — Event scaffolding.** Emit `before_llm` / `after_llm` (passthroughs).
+- **2e — Error path.** On terminal LLM error: short polite message, log cause.
 
-**Goal:** Every outbound message flows through the queue. Delivery is governed by quiet hours and ad-hoc holds. Slash commands manage holds. The policy engine is registered as a `before_send` handler.
+**Files touched:** `src/ubongo/agents/personas.py`, `src/ubongo/llm.py`, `src/ubongo/repl.py`, `src/ubongo/oneshot.py`, `src/ubongo/events.py`.
 
-Build in sub-steps; test each.
+**Testing plan:**
 
-**Sub-step 7a: Queue and immediate delivery.**
-- Implement `delivery/queue.py`: `enqueue(content, urgency, source, ...)`, `dequeue_deliverable() -> List[Item]`, `mark_delivered(id)`.
-- Implement `delivery/worker.py`: asyncio task. Polls every `worker_poll_seconds`. Wakes immediately on `urgent` enqueue.
-- Refactor existing bot response path: enqueue at urgency `urgent`, source `response`. Telegram send happens in the worker after `before_send` event passes.
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Architect mode | "design a circuit breaker for an API gateway" | substantive technical response with tradeoff discussion. |
+| 2 | Casual mode | "ugh today sucked" | short, warm reply. |
+| 3 | Operator mode | "summarize my last 3 commits" | terse, action-oriented (LLM may caveat about no git access — acceptable). |
+| 4 | UBONGO.md effect | edit `config/UBONGO.md` to add a quirky preference; restart; ask any question | response respects the new preference. |
+| 5 | LLM error | bogus API key | polite error message; no traceback to stdout. |
 
-*Acceptance:* Bot still feels instant. All Telegram sends go through the queue (verifiable in DB).
+**Smoke additions:** Architect/Operator/Casual each respond and feel different; one-shot factual works.
 
-**Sub-step 7b: Policy engine as event handler.**
-- Implement `delivery/policy.py`: function `effective_threshold(now) -> Urgency` consulting quiet hours and active `delivery_policy` rows. Function `can_deliver(item, now) -> bool`.
-- Register `policy_check` as the default `before_send` handler. If it returns a payload with `deliver=False`, the worker leaves the item in the queue and updates `deliver_after`.
+**Acceptance:** scenarios pass; smoke passes; merge after approval.
 
-*Acceptance:* Set quiet hours to current time. Send a message; response is enqueued at `normal`-equivalent (not urgent for synchronous responses; this needs handling — see note below) and held. Disable quiet hours; response delivers.
+### Phase 3 — Tone Classifier + Auto Routing
 
-*Note on synchronous responses and quiet hours:* synchronous responses to direct user messages are enqueued at `urgent` so they break through quiet hours. Otherwise the user would send a message during quiet hours and get no reply, which is broken. Only proactive messages (v0.3) get held by quiet hours. Document this clearly.
+**Branch:** `phase-3-classifier`
 
-**Sub-step 7c: Slash commands.**
-- Implement `delivery/commands.py`: handlers for `/hold`, `/resume`, `/quiet`, `/queue`.
+**Goal:** In `/auto` mode, the system classifies each message and picks the persona automatically. Slash overrides still work.
 
-*Acceptance:* `/hold 1m`, send a `low`-urgency test item via debug, verify it's held. After 1 minute, item delivers.
+**Sub-phases:**
 
-**Sub-step 7d: Catch-up summarizer.**
-- Implement `delivery/catchup.py`. On `/resume` or hold expiry with >= `summarize_threshold` pending items, generate one summary message via the casual persona.
+- **3a — Classifier function** (`classifier.py`): single LLM call to small classifier model; JSON output `{intent, tone, task_type, suggested_skill, risk, confidence}`. Defensive parsing.
+- **3b — Routing logic** (`router.py`): load `routing.yaml`; apply rules; return persona. Becomes a private helper of Master Agent in Phase 8.
+- **3c — Hysteresis.** Only switch persona on confidence > 0.7 AND new persona suggestion.
+- **3d — Wire `before_classify` / `after_classify` events** (passthrough).
+- **3e — Per-turn classification log.**
 
-*Acceptance:* Hold for an hour, manually inject 3 fake queue items, `/resume`, get a single summary.
+**Files touched:** `src/ubongo/classifier.py`, `src/ubongo/router.py`, `config/routing.yaml`, `src/ubongo/repl.py`, `src/ubongo/oneshot.py`.
 
-**Sub-step 7e: Notification control via natural language.**
-- Add `notification_control` intent to the classifier prompt.
-- When detected, route to the delivery commands handler. Confirm in plain language. Fall back to slash command suggestions on ambiguity.
+**Testing plan:**
 
-*Acceptance:* "hold notifications for 2 hours" creates a 2-hour hold with confirmation. "stop bothering me until 6pm" creates a hold until 18:00.
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Auto-route to architect | `/auto`; "help me design a circuit breaker" | architect persona; architect-style response. |
+| 2 | Auto-route to casual | `/auto`; "ugh long day" | casual persona. |
+| 3 | Hysteresis | five technical messages, then "lol" | persona stays architect. |
+| 4 | Manual override beats auto | `/auto`; technical question; `/casual` for next | casual voice for next response. |
+| 5 | Classifier failure | force JSON parse error | falls back to default persona; logs failure. |
 
-**Sub-step 7f: Hold-until-ack safety.**
-- Worker checks for `hold_until_ack` policies older than `hold_until_ack_warning_hours`. Sends single urgent ping.
+**Smoke additions:** auto picks reasonable personas across mixed conversation.
 
-*Acceptance:* `/hold`, advance the policy's `created_at` to 25 hours ago in SQLite, observe the worker sends the warning ping on its next cycle.
+**Acceptance:** scenarios pass; merge after approval.
+
+### Phase 4 — SQLite Memory + Compaction
+
+**Branch:** `phase-4-memory`
+
+**Goal:** Conversations persist across restarts. Recall returns recent turns + a compaction summary for older history.
+
+**Sub-phases:**
+
+- **4a — Schema + migrations** (`memory/schema.sql`); `CREATE IF NOT EXISTS` for all tables (including the multi-agent / governance / evolution tables, empty for now).
+- **4b — Store API** (`memory/store.py`): start/get/end conversations; append messages; get session state; get last N; persist summaries.
+- **4c — Session definition.** Same user, last_message_at gap < 30 minutes.
+- **4d — Compaction** (`memory/compaction.py`): registry pattern; default impl summarizes older messages into one paragraph.
+- **4e — Wire `after_recall` event** (compaction handler attached).
+- **4f — Wire `after_llm` event** (memory write handler attached).
+- **4g — Move active persona / override into `sessions` table.**
+
+**Files touched:** `src/ubongo/memory/schema.sql`, `src/ubongo/memory/store.py`, `src/ubongo/memory/compaction.py`, `src/ubongo/repl.py`, `src/ubongo/oneshot.py`, `src/ubongo/events.py`.
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Persistence | 5-turn conversation; `/exit`; restart within 30 min | bot remembers the topic. |
+| 2 | New session | 31 min silence; send a message | new `conversations` row; old context not recalled. |
+| 3 | Compaction trigger | 31 turns | summary persisted; recall = summary + last 10. |
+| 4 | Compaction idempotency | continue past 31 turns by 5 | existing summary not re-generated. |
+| 5 | Swappable strategy | register stub returning `"STUB"`; trigger | recall uses `"STUB"`. |
+
+**Smoke additions:** restart-resumes-conversation; "what have we been talking about" coherent after ~30 turns.
+
+**Acceptance:** scenarios pass; merge after approval.
+
+### Phase 5 — Markdown Vault Projection
+
+**Branch:** `phase-5-vault`
+
+**Goal:** Daily notes generated in Obsidian-compatible Markdown. Read-only in v0.1 (sync is Phase 21).
+
+**Sub-phases:**
+
+- **5a — Vault writer** (`memory/vault.py`): `append_to_daily_note(date, user_message, response, persona)`.
+- **5b — Default `after_send` handler** calls vault writer.
+- **5c — Vault structure**: `vault/daily/YYYY-MM-DD.md`, lazy mkdir.
+- **5d — Obsidian-compatibility check.**
+
+**Files touched:** `src/ubongo/memory/vault.py`, `src/ubongo/events.py`, `vault/.gitkeep`.
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Daily note write | send 3 messages | `vault/daily/<today>.md` has 3 entries. |
+| 2 | Obsidian render | open `vault/` as Obsidian vault | renders cleanly. |
+| 3 | Handler disable | unregister vault handler; send a message | no vault write; SQLite still updated. |
+| 4 | Date rollover | mock time forward; send a message | new `<tomorrow>.md`. |
+
+**Smoke additions:** today's vault note has the conversation entries.
+
+**Acceptance:** scenarios pass; merge after approval.
+
+### Phase 6 — Skills + Progressive Disclosure
+
+**Branch:** `phase-6-skills`
+
+**Goal:** Skills as folders with frontmatter + body. Descriptions load at startup; bodies on activation. v0.1 ships `summarize-conversation`.
+
+**Sub-phases:**
+
+- **6a — Skill discovery** (`skills.py`): scan `config/skills/`; parse `SKILL.md` frontmatter only; build registry.
+- **6b — Lazy body loading.** Body read on first activation; cached. `/reload` clears cache.
+- **6c — Classifier skill suggestion.** Pass list of skill names + descriptions. Expect `suggested_skill` in JSON.
+- **6d — Skill resolution order.** Slash command > classifier suggestion > manual `/skill <name>`.
+- **6e — `summarize-conversation` skill.** `/summary`; operator persona; 3-5 sentence summary.
+- **6f — `/skills` and `/reload` REPL commands.**
+
+**Files touched:** `src/ubongo/skills.py`, `config/skills/summarize-conversation/SKILL.md`, `config/skills/summarize-conversation/prompts/summarize.md`, `src/ubongo/repl.py`, `src/ubongo/classifier.py`.
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | `/summary` works | 5-turn conversation; `/summary` | coherent 3-5 sentence operator-voice summary. |
+| 2 | Skill catalog | `/skills` | lists `summarize-conversation`. |
+| 3 | `/reload` | edit body; `/reload`; trigger again | new body in effect. |
+| 4 | Body lazy-load | inspect logs at startup vs after `/summary` | not loaded at startup. |
+| 5 | Classifier suggestion | "can you wrap this up for me" | suggested skill = `summarize-conversation`. |
+
+**Smoke additions:** `/summary` and `/skills` both work.
+
+**Acceptance:** scenarios pass; merge after approval.
+
+### Phase 7 — Minimal Outbound Queue
+
+**Branch:** `phase-7-queue`
+
+**Goal:** Every CLI response flows through the SQLite-backed queue.
+
+**Sub-phases:**
+
+- **7a — Queue API** (`delivery/queue.py`): `enqueue`, `dequeue_deliverable`, `mark_delivered`.
+- **7b — Refactor response path.** Enqueue at urgent; immediately dequeue + fire `before_send` (passthrough) + print + fire `after_send` (vault) + mark delivered.
+- **7c — `/queue` REPL command.** Print last N rows.
+
+**Files touched:** `src/ubongo/delivery/queue.py`, `src/ubongo/repl.py`, `src/ubongo/oneshot.py`, `src/ubongo/events.py`.
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Queue contains response | send a message; query `notification_queue` | row with `delivered_at` set. |
+| 2 | `/queue` | send 3 messages; `/queue` | 3-row table. |
+| 3 | Latency | time round-trip vs Phase 6 | no perceptible delay. |
+| 4 | Event hooks | register a no-op `before_send` handler; send | response delivered; handler runs. |
+| 5 | Vault still works | check `vault/daily/<today>.md` | entry present. |
+
+**Smoke additions:** `/queue` non-empty after a few turns; full Phase 1–7 walkthrough passes.
+
+**Acceptance:** scenarios pass; **end of Tier 1**; merge after approval.
+
+---
+
+### Tier 2 — Multi-Agent System (Phases 8–12)
+
+### Phase 8 — Master Agent
+
+**Branch:** `phase-8-master`
+
+**Goal:** The Master Agent wraps the existing single-agent flow without changing user-visible behavior. Establishes the seam workers will plug into in Phase 9.
+
+**Sub-phases:**
+
+- **8a — `MasterAgent` class** (`master.py`): `classify`, `plan`, `execute`, `decide`, `handle`. In Phase 8, `plan` always returns a one-agent workflow.
+- **8b — Decision matrix scaffold** (`governance/decision.py`): returns `auto` for everything. Real rules ship in Phase 14.
+- **8c — Migrate response path.** REPL/oneshot calls `MasterAgent.handle(message)`.
+- **8d — Logging.** Emit `master_decision` log per turn with classification + workflow + decision.
+- **8e — `/decisions` REPL command.**
+
+**Files touched:** `src/ubongo/master.py`, `src/ubongo/governance/__init__.py`, `src/ubongo/governance/decision.py`, `src/ubongo/repl.py`, `src/ubongo/oneshot.py`, `src/ubongo/router.py`.
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Behavior parity | same prompts as Phase 7 baseline | same responses (modulo nondeterminism). |
+| 2 | Decision logged | "design a circuit breaker" | `master_decision` log: `intent=technical persona=architect mode=sequential risk=low`. |
+| 3 | `/decisions` | send 3; `/decisions` | 3-row table. |
+| 4 | High-risk passthrough | force `risk=high` | decision = `auto` (rules ship Phase 14). |
+| 5 | Classifier crash | inject exception | falls back to default persona; logs error; response produced. |
+
+**Smoke additions:** `/decisions` populated; cumulative Phase 1–8 walkthrough passes.
+
+**Acceptance:** scenarios pass; merge after approval.
+
+### Phase 9 — First Workers (Research + Memory)
+
+**Branch:** `phase-9-research-memory`
+
+**Goal:** Real worker agents enter the system. Master Agent picks Research for research-y intents; Memory Agent becomes the single writer to durable memory.
+
+**Sub-phases:**
+
+- **9a — Agent base** (`agents/base.py`): `Agent` protocol; `AgentInput`, `AgentResult` dataclasses; `agent_started` / `agent_completed` / `agent_failed` events.
+- **9b — Research Agent** (`agents/research.py`): retrieval + synthesis over conversation memory + vault snippets.
+- **9c — Memory Agent** (`agents/memory.py`): single writer for `messages`, `summaries`, `facts`, vault, embeddings.
+- **9d — Workflow runner skeleton** (`runner.py`): sequential mode only; `execute(workflow) -> WorkflowResult`.
+- **9e — Master Agent picks Research** for `research_brief` workflow.
+- **9f — `/agents` REPL command.**
+- **9g — `workflow_runs` and `agent_runs` writes.**
+
+**Files touched:** `src/ubongo/agents/base.py`, `src/ubongo/agents/research.py`, `src/ubongo/agents/memory.py`, `src/ubongo/runner.py`, `src/ubongo/master.py`, `config/workflows.yaml`, `src/ubongo/repl.py`.
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Research dispatched | "research what we discussed about caching" | Research run visible in `agent_runs`; response cites prior turns. |
+| 2 | `/agents` | `/agents` | lists registered workers. |
+| 3 | Workflow trace | latest `workflow_runs` row | execution_mode=sequential; corresponding agent_runs. |
+| 4 | Memory single-writer | non-Memory agent attempts write (test mode) | raises; no DB write outside Memory Agent. |
+| 5 | Casual still works | `/casual`; "long day" | single-agent (persona only); casual voice. |
+
+**Smoke additions:** research-style question shows multi-agent run; cumulative walkthrough passes.
+
+**Acceptance:** scenarios pass; merge after approval.
+
+### Phase 10 — Evaluator + Critic + Persona Agents Formalized
+
+**Branch:** `phase-10-evaluator-critic`
+
+**Goal:** Three more workers; persona switching now goes through Persona Agent classes; Evaluator produces a confidence number used by governance.
+
+**Sub-phases:**
+
+- **10a — Evaluator Agent** (`agents/evaluator.py`): LLM-as-judge; confidence score + flagged issues.
+- **10b — Critic Agent** (`agents/critic.py`): contrarian frame.
+- **10c — Persona Agents** (`agents/personas.py`): class-based; `ArchitectPersona`, `OperatorPersona`, `CasualPersona`.
+- **10d — Master Agent uses Evaluator** before governance.
+- **10e — `/trace <n>` REPL command.**
+
+**Files touched:** `src/ubongo/agents/evaluator.py`, `src/ubongo/agents/critic.py`, `src/ubongo/agents/personas.py`, `src/ubongo/master.py`, `src/ubongo/governance/decision.py`, `src/ubongo/repl.py`.
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Evaluator runs | any technical question | `agent_runs` row for `evaluator`; confidence stored. |
+| 2 | Critic invocation | borderline confidence (test) | Critic runs; response references critique. |
+| 3 | Persona Agent classes | `/architect`; ask question | `agent_runs.agent='architect'`. |
+| 4 | `/trace 1` | after a turn | classification, workflow, agent runs in order with timings. |
+| 5 | Confidence in decision | force evaluator < 0.2 | decision = reject (Phase 14 thresholds, stub). |
+
+**Smoke additions:** `/trace 1` shows multi-agent execution.
+
+**Acceptance:** scenarios pass; merge after approval.
+
+### Phase 11 — Coding + Execution + Repair Agents
+
+**Branch:** `phase-11-remaining-workers`
+
+**Goal:** Remaining workers ship. Execution Agent runs shell scripts via constrained-bash skill; Repair Agent registered with single-retry.
+
+**Sub-phases:**
+
+- **11a — Coding Agent** (`agents/coding.py`).
+- **11b — Constrained-bash skill** (`config/skills/constrained-bash/`): risk: medium, reversibility: irreversible. v0.1 enforcement: subprocess + restricted PATH.
+- **11c — Execution Agent** (`agents/execution.py`): invokes constrained-bash.
+- **11d — Repair Agent registered** (`agents/repair.py`): single-retry on `agent_failed`.
+- **11e — `/exec <cmd>` REPL command** (debug only).
+- **11f — Workflow `coding_session` lit up.**
+
+**Files touched:** `src/ubongo/agents/coding.py`, `src/ubongo/agents/execution.py`, `src/ubongo/agents/repair.py`, `config/skills/constrained-bash/SKILL.md`, `config/skills/constrained-bash/prompts/run.md`, `config/workflows.yaml`, `src/ubongo/master.py`.
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Coding Agent | "write a Python function that reverses a list" | response contains a tested-shape function. |
+| 2 | Execution path | "run `ls` in the project root" | constrained-bash runs; directory listing returned. |
+| 3 | Sandbox guard | `cat /etc/passwd` | refused; clear error; no leak. |
+| 4 | Repair single-retry | force Coding to fail once | retry with alternate model succeeds; trace shows two `agent_runs`. |
+| 5 | `/exec` direct | `/exec "echo hello"` | prints `hello`. |
+
+**Smoke additions:** code request returns code; "run `ls`" works; forced failure recovers transparently.
+
+**Acceptance:** scenarios pass; merge after approval.
+
+### Phase 12 — Execution Modes (all six)
+
+**Branch:** `phase-12-modes`
+
+**Goal:** Workflow Runner supports sequential, parallel, competitive, collaborative, debate, speculative.
+
+**Sub-phases:**
+
+- **12a — Parallel mode** (`asyncio.gather`).
+- **12b — Competitive mode.** Same input; Evaluator picks winner.
+- **12c — Collaborative mode.** Per-agent subtask; structural merge.
+- **12d — Debate mode.** Two agents argue N rounds; Evaluator synthesizes.
+- **12e — Speculative mode.** Cheap-first; strong validates in background; follow-up correction if mismatch.
+- **12f — Mode selection** declared in `workflows.yaml`.
+- **12g — `/mode <workflow>` debug command.**
+
+**Files touched:** `src/ubongo/runner.py`, `src/ubongo/master.py`, `src/ubongo/agents/evaluator.py`, `config/workflows.yaml`, `src/ubongo/repl.py`.
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Sequential | standard architect question | same as Phase 10. |
+| 2 | Parallel | `/mode research_brief`; "compare Postgres vs DynamoDB" | concurrent runs; total latency < sequential. |
+| 3 | Competitive | configure `coding_competitive` test workflow; ask coding question | both run; Evaluator picks winner with reasoning. |
+| 4 | Collaborative | `/mode research_brief` with `mode=collaborative` | Research = facts; Critic = risks; merged brief. |
+| 5 | Debate | `/mode debate_then_synthesize`; "should we use microservices for a 5-engineer team" | 2 rounds; Evaluator synthesizes "no, with caveats". |
+| 6 | Speculative | `/mode speculative_brief`; quick factual question | cheap response immediate; if validation contradicts, follow-up correction within ~10s. |
+
+**Smoke additions:** all six modes via `/mode` produce distinguishable behavior.
+
+**Acceptance:** scenarios pass; **end of Tier 2**; merge after approval.
+
+---
+
+### Tier 3 — Self-Healing (Phase 13)
+
+### Phase 13 — Repair Agent Activated
+
+**Branch:** `phase-13-repair`
+
+**Goal:** Real failure detection + multi-step recovery.
+
+**Sub-phases:**
+
+- **13a — Failure taxonomy** (`agents/repair.py`): timeout, model error, parse error, content rejection, infinite loop.
+- **13b — Multi-strategy retry.** Same model + different prompt; different model same prompt; smaller model + shorter prompt; abort + apologize.
+- **13c — Agent replacement.** Fallbacks declared per worker in `settings.yaml`.
+- **13d — Workflow rollback.** Write-buffer pattern: agents queue writes; Memory Agent commits on success, drops on failure.
+- **13e — Repair audit.** `repair_runs` table linking to `workflow_runs`.
+- **13f — User-visible behavior.** On unrecoverable failure: clear apology + y/n.
+
+**Files touched:** `src/ubongo/agents/repair.py`, `src/ubongo/runner.py`, `src/ubongo/agents/memory.py`, `src/ubongo/master.py`, `src/ubongo/memory/schema.sql` (add `repair_runs`).
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Timeout recovery | inject 30s timeout in coding model | retry with smaller model; response within ~15s. |
+| 2 | Parse error recovery | inject malformed JSON from classifier | re-prompt with stricter schema; success. |
+| 3 | Agent replacement | disable Coding Agent | architect persona used for code questions; substitution logged. |
+| 4 | Rollback | inject mid-collaborative failure | no partial messages persisted; vault unaffected. |
+| 5 | Unrecoverable | inject persistent failure across all retries | apology + y/n; "n" returns to clean prompt. |
+
+**Smoke additions:** manually trigger a failure; confirm graceful recovery.
+
+**Acceptance:** scenarios pass; merge after approval.
+
+---
+
+### Tier 4 — Governance (Phases 14–15)
+
+### Phase 14 — Risk + Confidence Scoring
+
+**Branch:** `phase-14-governance-rules`
+
+**Goal:** Decision matrix actually decides.
+
+**Sub-phases:**
+
+- **14a — `governance.yaml`** rules.
+- **14b — `governance/risk.py`.**
+- **14c — `governance/confidence.py`.**
+- **14d — `governance/reversibility.py`.**
+- **14e — `governance/decision.py`** rules combine into action.
+- **14f — `/policy` REPL command.**
+- **14g — `governance_decisions` writes.**
+
+**Files touched:** `config/governance.yaml`, `src/ubongo/governance/{risk,confidence,reversibility,decision}.py`, `src/ubongo/master.py`, `src/ubongo/repl.py`.
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Auto-approve | casual question | decision = auto. |
+| 2 | Reject low confidence | force evaluator < 0.2 | decision = reject; user gets retry-different prompt. |
+| 3 | Ask clarification | "delete what?" | decision = ask_clarification; persona asks for missing detail. |
+| 4 | Require approval | "delete the entire vault" | decision = require_approval; blocks. |
+| 5 | `/policy` | `/policy` | prints rules + thresholds. |
+
+**Smoke additions:** normal turns auto-approve; destructive phrase triggers gate.
+
+**Acceptance:** scenarios pass; merge after approval.
+
+### Phase 15 — Approval Gates + Sandboxing
+
+**Branch:** `phase-15-approval-sandbox`
+
+**Goal:** Text-confirmation flow for `require_approval`. Execution Agent properly sandboxed.
+
+**Sub-phases:**
+
+- **15a — Approval prompt** (`governance/approval.py`): one-line summary + `confirm? (y/n/why)`.
+- **15b — Approval persisted** in `governance_decisions.approval_response`.
+- **15c — Execution Agent sandbox.** Subprocess: empty PATH, restricted env, CWD = project subdir, filesystem allowlist, no network, 10s timeout.
+- **15d — Sandbox tests** (negative: out-of-allowlist, network, timeout).
+- **15e — Documentation** in this file or `docs/SECURITY.md`.
+
+**Files touched:** `src/ubongo/governance/approval.py`, `src/ubongo/agents/execution.py`, `src/ubongo/governance/decision.py`, `src/ubongo/repl.py`.
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Approval yes | destructive ask; `y` | proceeds; logged. |
+| 2 | Approval no | `n` | aborted; user back at prompt. |
+| 3 | Approval why | `why` | one-paragraph risk explanation; re-prompts y/n. |
+| 4 | Sandbox path violation | constrained-bash → `/etc/passwd` | refused; no read. |
+| 5 | Sandbox timeout | `sleep 30` | killed at 10s. |
+| 6 | Network blocked | `curl example.com` | fails. |
+
+**Smoke additions:** approval prompt for destructive ask; sandbox refusal logged.
+
+**Acceptance:** scenarios pass; **end of Tier 4**; merge after approval.
+
+---
+
+### Tier 5 — Self-Improvement (Phases 16–19)
+
+### Phase 16 — Variant Generation
+
+**Branch:** `phase-16-variants`
+
+**Goal:** `/optimize <target>` generates N prompt variants. No autonomous loop yet.
+
+**Sub-phases:**
+
+- **16a — `evolution/generator.py`** strategies: paraphrase, prune, expand, recombine, perturb-temperature.
+- **16b — Target registry** (`evolution/targets.py`).
+- **16c — Variant persistence** to `evolution_lineage`.
+- **16d — `/optimize <target>` REPL command.**
+
+**Files touched:** `src/ubongo/evolution/__init__.py`, `src/ubongo/evolution/generator.py`, `src/ubongo/evolution/targets.py`, `src/ubongo/evolution/lineage.py`, `src/ubongo/repl.py`.
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | `/optimize persona:architect` | run | 8 variants printed; 8 lineage rows for target=`persona:architect`, generation=1. |
+| 2 | Strategy diversity | inspect variants | not all paraphrases. |
+| 3 | Lineage parent | each row's `parent_id` points to current active. | |
+| 4 | Targets list | `/optimize` no args | lists evolvable targets. |
+
+**Smoke additions:** `/optimize persona:casual` produces 8 plausible alternates.
+
+**Acceptance:** scenarios pass; merge after approval.
+
+### Phase 17 — Sandboxed Evaluation + Fitness
+
+**Branch:** `phase-17-evaluation`
+
+**Goal:** Variants evaluated against held-out conversation sample; fitness computed.
+
+**Sub-phases:**
+
+- **17a — Held-out sample** (`tests/manual/fixtures/sample_conversations.json`): 30+ short conversations, anonymized.
+- **17b — `evolution/sandbox.py`.**
+- **17c — `evolution/fitness.py`** weighted sum.
+- **17d — `evolution_evaluations` writes.**
+- **17e — `/evaluate <target>` REPL command.**
+- **17f — Anti-cost safeguards** (call cap, throttle).
+
+**Files touched:** `src/ubongo/evolution/sandbox.py`, `src/ubongo/evolution/fitness.py`, `tests/manual/fixtures/sample_conversations.json`, `src/ubongo/repl.py`.
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | `/evaluate persona:architect` | after Phase 16 generation | leaderboard with fitness. |
+| 2 | Cost cap respected | `max_calls_per_hour=10`; trigger | throttles; partial results returned. |
+| 3 | Hallucination signal | deliberately bad variant | fitness reflects degraded hallucination component. |
+| 4 | Tiebreaker | near-equal variants | leaderboard shows both; pick deterministic on ties. |
+
+**Smoke additions:** optimize-then-evaluate cycle for one persona produces leaderboard.
+
+**Acceptance:** scenarios pass; merge after approval.
+
+### Phase 18 — GP Loop (autonomous)
+
+**Branch:** `phase-18-gp-loop`
+
+**Goal:** Generations run as a background asyncio task. Throttled; pauseable.
+
+**Sub-phases:**
+
+- **18a — Loop driver** (`evolution/loop.py`): asyncio task; round-robin or staleness-based target selection.
+- **18b — Throttle / scheduler.**
+- **18c — Selection.** Top K survive; cross-generation lineage.
+- **18d — `/evolution status` REPL command.**
+- **18e — `/evolution pause`, `resume`, `off`.**
+- **18f — Cron support.**
+
+**Files touched:** `src/ubongo/evolution/loop.py`, `src/ubongo/evolution/selection.py`, `src/ubongo/repl.py`, `src/ubongo/__main__.py`.
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Loop runs | `evolution.enabled=true`; wait 5 min | `evolution status` shows 1+ generation completed. |
+| 2 | Pause | `/evolution pause` | no new generations until resume. |
+| 3 | Throttle respect | `max_calls_per_hour=5` | ≤5 calls in test window. |
+| 4 | Multi-target | three targets evolved | round-robin visible in lineage timestamps. |
+| 5 | Crash recovery | kill REPL mid-generation; restart | resumes from last completed generation. |
+
+**Smoke additions:** with evolution enabled, status populated after a few minutes.
+
+**Acceptance:** scenarios pass; merge after approval.
+
+### Phase 19 — GP Targets Expanded + Promotions
+
+**Branch:** `phase-19-promotions`
+
+**Goal:** Beyond persona prompts. Routing rules, tool chains, retry strategies all evolvable. Promotion flow lit up.
+
+**Sub-phases:**
+
+- **19a — Routing-rule variants.**
+- **19b — Tool-chain variants** (per `workflows.yaml` workflow).
+- **19c — Retry-strategy variants** for Repair Agent.
+- **19d — Promotion queue.** `pending_promotions`.
+- **19e — `/improvements` REPL command** (list with diffs).
+- **19f — `/improvements approve <id>` / `reject <id>` / `rollback <target>`.**
+- **19g — Audit log** at `vault/system/evolution-audit.md`.
+
+**Files touched:** `src/ubongo/evolution/generator.py`, `src/ubongo/evolution/promotion.py`, `src/ubongo/repl.py`, `src/ubongo/master.py`, `vault/system/evolution-audit.md`.
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Routing-rule variant | wait for evolution; `/improvements` | diff visible; fitness delta shown. |
+| 2 | Approve | `/improvements approve <id>` | `active_evolutions` updated; audit row appended. |
+| 3 | Reject | `/improvements reject <id>` | recorded; queue size decreases. |
+| 4 | Live swap | after approval, ask normally-classified question | new rules in effect. |
+| 5 | Rollback | `/improvements rollback <target>` | reverts cleanly. |
+
+**Smoke additions:** `/improvements` non-empty after evolution; approve and confirm live behavior change.
+
+**Acceptance:** scenarios pass; **end of Tier 5**; merge after approval.
+
+---
+
+### Tier 6 — Wiki Memory + Polish (Phases 20–21)
+
+### Phase 20 — Embeddings + Graph
+
+**Branch:** `phase-20-embeddings-graph`
+
+**Goal:** Semantic recall and vault-link graph traversal.
+
+**Sub-phases:**
+
+- **20a — Embeddings tables** (`vec_messages`, `vec_vault` virtual tables).
+- **20b — Embedding writes** by Memory Agent; idempotent on text change.
+- **20c — Semantic recall handler** on `after_recall`; configurable top-K.
+- **20d — Vault graph extraction.** Parse `[[wikilinks]]`; populate `vault_links`.
+- **20e — Graph traversal API** (`memory/graph.py`).
+- **20f — `/recall` REPL command.**
+
+**Files touched:** `src/ubongo/memory/embeddings.py`, `src/ubongo/memory/graph.py`, `src/ubongo/agents/memory.py`, `src/ubongo/repl.py`.
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Semantic recall | weeks-old caching discussion; today ask "remember our caching discussion" | old turns surface even if not in last-N. |
+| 2 | Embedding idempotency | re-run on existing DB | no new calls for unchanged messages. |
+| 3 | Vault graph | add `[[note-a]]` to a daily note | `vault_links` row appears; `neighbors` includes `note-a`. |
+| 4 | `/recall` | after a turn | lists recency- and semantic-recalled items. |
+| 5 | Without embeddings | `enabled=false`; restart | recency-only; no errors. |
+
+**Smoke additions:** old-context recall demo (works after some history).
+
+**Acceptance:** scenarios pass; merge after approval.
+
+### Phase 21 — Bidirectional Vault Sync + Audit + End-to-End Tightening
+
+**Branch:** `phase-21-vault-sync-audit`
+
+**Goal:** User can edit vault files; system ingests changes. Full audit log of governance + evolution. Pre-flight smoke pass.
+
+**Sub-phases:**
+
+- **21a — File watcher** (`memory/vault.py` + watchdog).
+- **21b — Ingest pipeline.** Edits trigger Memory Agent re-embed + diff; conflicts via Phase 15 approval flow.
+- **21c — Audit log unified** at `vault/system/audit.md`.
+- **21d — `/audit` REPL command** (filtered tail).
+- **21e — Settings hot-reload** on `/reload`.
+- **21f — Final smoke pass** end-to-end.
+
+**Files touched:** `src/ubongo/memory/vault.py`, `src/ubongo/agents/memory.py`, `src/ubongo/governance/decision.py`, `src/ubongo/evolution/promotion.py`, `src/ubongo/repl.py`, `vault/system/audit.md`.
+
+**Testing plan:**
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 1 | Vault edit ingestion | edit a daily note in Obsidian | within ~5s, ingest fires; embedding refreshed. |
+| 2 | Conflict prompt | edit a vault file the system was about to write | approval prompt: keep mine / yours / merge. |
+| 3 | Audit log | after governance + evolution events; `/audit` | tail; one row per event. |
+| 4 | Settings hot-reload | edit `models.casual`; `/reload` | new model on next casual turn. |
+| 5 | Full smoke | run full `smoke_test.md` | passes without manual fixup. |
+
+**Smoke additions:** edit-vault-note loop; `/audit` walkthrough.
+
+**Acceptance:** all scenarios pass; full smoke test passes; v0.1 done; merge after approval.
+
+---
 
 ## Acceptance Criteria for v0.1 Complete
 
 You are done when all of the following are true:
 
-1. The bot responds to your Telegram messages and ignores everyone else.
-2. Manual `/architect`, `/operator`, `/casual` commands work and feel different.
-3. In `/auto` mode, persona is selected automatically and feels mostly right.
-4. You can correct auto-selection with a slash command.
-5. `UBONGO.md` is loaded for every persona; editing it changes behavior across all personas after `/reload`.
-6. Conversation context persists across bot restarts within a session.
-7. New session starts after 30 minutes of inactivity.
-8. Compaction kicks in past the configured threshold; older history is replaced by a summary in recall; the summary is persisted and not regenerated each turn.
-9. Daily notes write to the Obsidian vault and render correctly.
-10. The `summarize-conversation` skill works via `/summary`. Skill bodies are *not* loaded until activation (verifiable in logs or memory inspection).
-11. `/reload` picks up edits to `UBONGO.md`, personas, and skill metadata without restart.
-12. Every outbound message goes through the notification queue.
-13. Quiet hours hold proactive (non-synchronous) messages of insufficient urgency. Synchronous responses break through.
-14. `/hold`, `/resume`, `/quiet`, `/queue` all work as specified.
-15. Natural-language hold instructions are recognized and confirmed.
-16. Catch-up after release produces a single summary, not a flood.
-17. Named events fire at all the documented points; default handlers do their work; registering a no-op handler doesn't break the flow.
-18. The system survives a full day of real use without crashing.
-19. Total project size is under 3000 lines of Python (excluding tests). Hierarchical context, events, and progressive disclosure justify the bump from 2500.
+1. CLI REPL responds; one-shot command runs and exits.
+2. Manual `/architect`, `/operator`, `/casual` work and feel different.
+3. `/auto` mode classifies intent and routes appropriately; manual override beats auto.
+4. `UBONGO.md` edits change behavior across personas after `/reload`.
+5. Conversation context persists across CLI restarts within a session; new session after 30 minutes silence.
+6. Compaction triggers past threshold; summaries persisted and not regenerated.
+7. Daily notes write to vault and render in Obsidian.
+8. `summarize-conversation` skill works via `/summary`; bodies lazy-loaded.
+9. `/reload` picks up persona/skill metadata edits without restart.
+10. Every outbound message goes through `notification_queue`.
+11. Master Agent classifies, plans, dispatches, governs, composes per turn; `/decisions` and `/trace` populated.
+12. All eight worker agents (Research, Coding, Evaluator, Repair, Memory, Critic, Execution, Persona) registered and dispatchable; `/agents` lists them.
+13. All six execution modes (sequential, parallel, competitive, collaborative, debate, speculative) selectable via `/mode` and produce distinguishable behavior.
+14. Repair Agent recovers timeouts, parse errors, agent failures; rollbacks leave no partial state.
+15. Decision matrix returns auto / ask_clarification / require_approval / reject per the `governance.yaml` rules; `governance_decisions` populated.
+16. `require_approval` flow prompts user; y/n/why all work; Execution Agent properly sandboxed.
+17. `/optimize <target>` generates variants; `/evaluate` produces a fitness leaderboard.
+18. GP loop runs autonomously when enabled; throttled; pauseable.
+19. `/improvements` lists pending promotions with diffs; approve/reject works; live-target swap takes effect; rollback works.
+20. Semantic recall via `sqlite-vec` augments recency in `/recall`; vault-link graph queryable.
+21. File watcher ingests vault edits; conflicts gated by approval flow.
+22. Full `tests/manual/smoke_test.md` walkthrough passes end-to-end without manual fixup.
+23. Total project size stays under ~15,000 lines of Python (excluding tests). If significantly over, the spec is doing too much; cut.
+24. Each phase landed via its own branch and was merged to `main` only after user approval.
 
-If line 19 is failing, you've over-built. Cut.
+If the system survives a real day of use without manual intervention or crashes, ship.
 
-## Out of Scope (v0.1) - Explicit Reminder
+## Out of Scope (v0.1)
 
 Deferred deliberately. Don't sneak them in.
 
-- Slack, WhatsApp, Discord, web UI, voice
-- Master Agent, worker agents, agent lifecycle management
-- Parallel agent execution, debate mode, competitive mode, speculative execution
-- Genetic Programming, runtime self-modification, prompt evolution
-- Embedding-based memory recall, semantic search
-- Topic-aware or persona-specific compaction strategies (the seam exists; the implementations come later)
-- Bidirectional Markdown sync (vault is write-only in v0.1)
-- Approval gates beyond text confirmation
-- Sandboxing, tool execution (zero tools in v0.1), MCP server integration
-- Multi-user support, RBAC, team features
-- Self-healing workflows, retry orchestration beyond single retries
-- Observability dashboards, distributed tracing
-- Docker, Kubernetes, FastAPI, Redis, Qdrant, Memgraph, Temporal, NATS
-- Scheduler / cron-style jobs (v0.3)
-- External integrations: calendar, email, Reddit, news (v0.2 onward, one at a time)
-
----
-
-## v0.2 Sketch (Not Part of v0.1 Build)
-
-After two weeks of v0.1 use, prioritize from this list. Pick at most two.
-
-- **CLI front-end.** Same router, same memory, same queue, same events. Different transport.
-- **First external integration: Google Calendar.** OAuth flow, token storage in SQLite, one skill `calendar-review` activating on `/calendar` or calendar-related questions. Still request-response; no scheduler yet. First real tool: a CLI script `ubongo-calendar` invoked via a `bash` tool exposed to the LLM.
-- **Embedding-based recall.** Add `sqlite-vec`. Embed each message at write time. Register an `after_recall` handler that augments history with semantically relevant past messages. The default compaction handler stays in place.
-- **Topic-aware compaction.** Replace the default compaction function with one that detects topic shifts and summarizes per-topic. Swap in via config.
-- **Structured fact extraction.** Populate the `facts` table. An `after_llm` handler runs over user messages and proposes facts. Surfaced via an `after_recall` handler when relevant.
-- **Bidirectional vault sync.** A file watcher on `vault/` detects edits and ingests them as proposed updates to SQLite, mediated by a confirmation prompt.
-- **A fourth persona.** Critic, Researcher, or Private. Only add if you've felt the lack.
-
-## v0.3 Sketch (Not Part of v0.1 Build)
-
-The scheduler. Adds proactive behavior on top of v0.2's integrations.
-
-- **`config/jobs.yaml`** declares scheduled jobs:
-
-```yaml
-jobs:
-  - name: morning_calendar_brief
-    schedule: "0 7 * * *"
-    skill: calendar-review
-    persona: operator
-    delivery:
-      urgency: normal
-    enabled: true
-
-  - name: friday_inbox_triage
-    schedule: "0 16 * * 5"
-    skill: email-triage
-    persona: architect
-    delivery:
-      urgency: low
-    enabled: true
-```
-
-- **Job runner** uses APScheduler (in-process, cron syntax). Wakes when due, invokes the skill with the persona, enqueues the result with the configured urgency. Same delivery worker, same `before_send` handlers.
-
-- **Urgency rules** in `config/urgency.yaml`:
-
-```yaml
-rules:
-  - source: calendar
-    when: starts_within_minutes <= 15
-    urgency: urgent
-  - source: email
-    when: from_in: ["dalibor@kiwi.com"]
-    urgency: normal
-  - source: news
-    urgency: low
-```
-
-- **Job management:** `/jobs`, `/job enable <name>`, `/job disable <name>`, `/job run <name>`.
-
-- **Additional integrations as separate skills:** `email-triage`, `news-digest`, `reddit-research`. Each is a skill folder. Each backing capability is a CLI script the agent invokes via `bash`, not a first-class tool.
-
-The reason this is v0.3 and not v0.1: the queue, policy engine, events, and progressive disclosure from v0.1 mean the scheduler is mostly "enqueue stuff on a cron." The hard parts are already solved.
-
----
+- Telegram channel and any other external transport: Slack, WhatsApp, Discord, web UI, voice. Telegram returns in v0.2.
+- Notification policy engine, quiet hours, ad-hoc holds, hold-until-ack, catch-up summarizer. Deferred to v0.2 with Telegram.
+- External integrations: Google Calendar, Gmail, Reddit, news. v0.2+, one at a time, each as a CLI script invoked through the constrained-bash skill.
+- Multi-user support, RBAC, team features.
+- Distributed deployment: Docker, Kubernetes, Temporal, Redis, NATS.
+- Production observability dashboards (structured logs + `/audit` are enough).
+- Web UI / mobile apps.
+- Approval gates beyond text confirmation (e.g., signed-action receipts).
+- Bidirectional sync with non-vault sources (Notion, etc.).
 
 ## Setup Instructions (for the README)
 
@@ -858,7 +1403,6 @@ The reason this is v0.3 and not v0.1: the queue, policy engine, events, and prog
 # prerequisites
 # - Python 3.11+
 # - uv (https://docs.astral.sh/uv/)
-# - A Telegram bot token from @BotFather
 # - An OpenRouter API key (https://openrouter.ai/)
 
 git clone <repo>
@@ -867,26 +1411,24 @@ uv sync
 
 # configure
 cp .env.example .env
-# edit .env with your tokens
-# edit config/settings.yaml: set telegram.allowed_user_ids
-# (find your numeric Telegram ID by messaging @userinfobot)
+# edit .env with OPENROUTER_API_KEY
 # edit config/UBONGO.md if you want to customize identity/preferences
 # edit config/personas/*.md to tune voices
 
-# run
+# run (REPL)
 uv run python -m ubongo
-```
 
----
+# run (one-shot)
+uv run python -m ubongo send "draft a migration plan"
+```
 
 ## Final Notes for Claude Code
 
-- Build phase by phase. Do not start Phase N+1 before Phase N is acceptance-tested. Use the acceptance criteria literally.
-- Keep modules small. If a file exceeds 300 lines, consider splitting.
-- Write tests for the queue, policy engine, compaction function, event dispatcher, and progressive-disclosure skill registry. The rest can rely on manual testing in v0.1.
-- No new dependencies beyond those listed in the tech stack table without justification.
-- The user's preferences apply to bot output too: prose over bullets, no em-dashes, no emojis, direct tone. These live in `config/UBONGO.md` and are inherited by every persona.
-- Skills are loaded by description only at startup; bodies load on activation. Verify this before claiming Phase 6 complete.
-- New behavior in v0.2+ ships as event handlers, not core-loop edits.
-- New capabilities in v0.2+ default to CLI scripts invoked via `bash`, not first-class tools.
-- When in doubt, defer. Anything not explicitly required for v0.1 acceptance criteria is out of scope for v0.1.
+- Build phase by phase. Don't start Phase N+1 before Phase N's testing plan and smoke test pass. Acceptance criteria are literal.
+- **Branch per phase.** Create `phase-N-<short-name>` off `main` at phase start. All commits for that phase land there. The user reviews when the testing plan and smoke test pass; merging to `main` is the user's call. Don't merge yourself.
+- Keep modules small. If a file exceeds 400 lines, split. The orchestrator (`master.py`) is the exception.
+- Write pytest tests for: classifier, master, runner, each agent, governance decision, evolution generator, evolution fitness, evolution lineage, memory store, memory compaction, memory embeddings, delivery queue, skills, events. Use the held-out sample fixture for evolution tests.
+- No new dependencies beyond the tech-stack table without justification. In particular: no LangGraph, no Temporal, no `python-telegram-bot` until v0.2.
+- The user's preferences apply to CLI output: prose over bullets, no em-dashes, no emojis, direct tone. These live in `config/UBONGO.md` and propagate via persona prompts.
+- Every workflow goes through the queue. Every governance decision is persisted. Every agent run is traced. Every evolution variant has lineage. These are not optional.
+- The Telegram channel in v0.2 should be additive: add `python-telegram-bot`, restore `allowed_user_ids` and the policy engine + quiet hours + holds, register the policy as a `before_send` handler. The router/agents/governance/evolution don't change.

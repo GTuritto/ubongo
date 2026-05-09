@@ -1,4 +1,15 @@
-Ubongo - Conversation Summary
+# Ubongo — Vision (Origin Document)
+
+> **This document is the design exposition that v0.1 now realizes.**
+>
+> It captures the architectural arc — Master Agent orchestration, worker agents, parallel/debate/speculative execution, governance, Genetic Programming — that the project is built around. v0.1 implements most of it on a hand-rolled (no LangGraph) Python runtime, accessed through a local CLI; Telegram is the planned second channel in v0.2. A few items here remain explicitly out of v0.1 scope (multi-channel, multi-user, distributed deployment); see [UBONGO_BUILD.md](UBONGO_BUILD.md) for the precise scope, the 22-phase build plan, sub-phases, and per-phase testing plans.
+>
+> For the v0.1 scope, build phases, and acceptance criteria, see **[UBONGO_BUILD.md](UBONGO_BUILD.md)**.
+> For setup and current status, see **[README.md](README.md)** and **[STATUS.md](STATUS.md)**.
+
+---
+
+## Conversation Summary
 
 Overview
 

@@ -1,44 +1,94 @@
 # Ubongo
 
-A personal, mood-aware AI assistant that lives in Telegram. One user. Adapts persona and model to the kind of conversation you're having. Capabilities are organized as composable skills with progressive disclosure. Outbound messages flow through a notification queue with a policy engine that respects quiet hours and ad-hoc holds.
+A personal, mood-aware AI mind that runs as a local CLI. *Ubongo* is Swahili for *brain* or *mind*.
 
-The name is Swahili for *brain* or *mind*.
+v0.1 packs three things into one system, hand-rolled in plain Python:
+
+- **A multi-agent orchestrator.** A Master Agent classifies each turn, plans a workflow, dispatches a fleet of worker agents (Research, Coding, Evaluator, Repair, Memory, Critic, Execution, Persona), and composes the response. Six execution modes are available: sequential, parallel, competitive, collaborative, debate, speculative.
+- **A self-improving runtime.** A continuous Genetic Programming loop evolves prompts, routing rules, tool chains, and retry strategies. Variants are evaluated against held-out conversation samples; lineage is tracked; promotions to production require explicit user approval via `/improvements`.
+- **A memory-centric local system.** SQLite is the canonical store. An Obsidian-compatible Markdown vault is projected from it. `sqlite-vec` indexes messages and vault notes for semantic recall. Vault links form a graph the Master Agent can traverse.
+
+A governance layer evaluates risk, confidence, and reversibility per turn and gates risky actions through user approval. Single user, single machine, single channel. No LangGraph, no Temporal, no Docker.
 
 ## Status
 
-v0.1 in development. See `UBONGO_BUILD.md` for the full build specification and phased plan.
+> **v0.1 specification complete; no implementation yet.** Setup / Run / Usage below describe the *intended* v0.1 behavior — the binaries don't exist on disk yet.
+
+The build runs across **22 phases in 6 tiers**. Each phase is implemented on its own branch, ships a working system, and ends with a manual end-to-end smoke test before merging to `main`. See [STATUS.md](STATUS.md) for the live phase tracker and [UBONGO_BUILD.md](UBONGO_BUILD.md) for sub-phases and per-phase testing plans.
 
 ## What Ubongo Is
 
-A single-user Telegram bot. You talk to it; it talks back. Internally it picks one of three personas (Architect, Operator, Casual) based on the tone and intent of your message, runs the appropriate model via OpenRouter, and stores the conversation in SQLite with an Obsidian-compatible Markdown projection.
+- A multi-agent orchestration platform for one user, locally.
+- A self-improving runtime: GP loop with sandboxed evaluation, lineage tracking, human-approved promotions.
+- A CLI: REPL primary, one-shot for scripting.
+- A memory-centric system: SQLite canonical, Markdown vault projected, embeddings indexed, graph linked.
 
-## What Ubongo Is Not
+## What Ubongo Is Not (v0.1)
 
-Not a multi-agent platform. Not a control plane for AI employees. Not a SaaS product. Not multi-channel. Not autonomous. Not self-improving.
+- A multi-channel system. CLI only in v0.1; Telegram is v0.2; Slack/WhatsApp/Discord/web/voice are not on the roadmap.
+- A production system or SaaS product.
+- A multi-user or team tool.
+- A distributed system. Single process, single machine.
 
-If you need orchestration of many agents toward business goals, look at Paperclip. If you need a coding agent toolkit, look at Pi or OpenClaw. Ubongo is narrower than all of them on purpose.
+## How It Works (one screen)
+
+```text
+CLI input
+   │
+   ▼  classify ─────► intent, tone, risk, suggested skill, confidence
+   │
+   ▼  plan ─────────► Workflow(agents, execution mode, persona, models)
+   │
+   ▼  execute ──────► Workflow Runner spawns agents (sequential / parallel /
+   │                  competitive / collaborative / debate / speculative);
+   │                  Evaluator aggregates
+   │
+   ▼  govern ───────► auto / ask_clarification / require_approval / reject
+   │                  (decision matrix: intent + risk + confidence +
+   │                  reversibility + preferences + context)
+   │
+   ▼  compose ──────► Persona Agent shapes the final user-facing text
+   │
+   ▼  enqueue ──────► notification_queue (urgent for synchronous responses)
+   │
+   ▼  send ─────────► dequeue and print to stdout
+   │
+   ▼  remember ─────► Memory Agent writes SQLite + vault + embeddings
+```
+
+A continuous Genetic Programming loop runs in the background on its own asyncio task: generate variants of a target (prompt, routing rule, tool chain, retry strategy), evaluate them in a sandbox against held-out samples, score with a configurable fitness function, surface winners to the user via `/improvements` for approval. Nothing promotes to production without a human `approve`.
+
+## Documentation Map
+
+- [README.md](README.md) — this file. Goal, setup, usage, roadmap, contributing.
+- [UBONGO_BUILD.md](UBONGO_BUILD.md) — full v0.1 build specification, 22 phases with sub-phases and per-phase testing plans. Source of truth.
+- [UBONGO_VISION.md](UBONGO_VISION.md) — design exposition the v0.1 build realizes.
+- [CLAUDE.md](CLAUDE.md) — context for Claude Code sessions.
+- [STATUS.md](STATUS.md) — current phase tracker and acceptance-criteria checklist.
+- [Plans/](Plans/) — archived plan-mode plans.
+- [tests/manual/smoke_test.md](tests/manual/smoke_test.md) — cumulative end-to-end manual playbook, populated phase by phase.
 
 ## Tech Stack
 
 - Python 3.11+
-- python-telegram-bot v21+
 - LiteLLM (model routing)
 - OpenRouter (model provider)
-- SQLite (storage)
+- SQLite + `sqlite-vec` (canonical storage + semantic recall, in the same DB)
 - YAML + Markdown (configuration)
 - uv (package management)
+- stdlib `asyncio` + a hand-rolled event bus for orchestration
 
-No FastAPI, Redis, Docker, or distributed anything. Single process, single user, single channel.
+No FastAPI, Redis, Docker, LangGraph, Temporal, Ray, or Kubernetes. `python-telegram-bot` is added in v0.2 when the Telegram channel ships.
 
 ## Prerequisites
 
 - Python 3.11 or newer
 - [uv](https://docs.astral.sh/uv/) installed
-- A Telegram bot token from [@BotFather](https://t.me/BotFather)
 - An [OpenRouter](https://openrouter.ai/) API key
-- Your Telegram numeric user ID (message [@userinfobot](https://t.me/userinfobot) on Telegram to get it)
 
 ## Setup
+
+> *These steps describe the v0.1 target. They will not work until at least Phase 0 of [UBONGO_BUILD.md](UBONGO_BUILD.md) is complete and merged.*
 
 ```bash
 git clone <repo-url> ubongo
@@ -46,7 +96,7 @@ cd ubongo
 uv sync
 ```
 
-Copy the environment template and fill in your secrets:
+Copy the environment template and fill in your secret:
 
 ```bash
 cp .env.example .env
@@ -54,112 +104,164 @@ cp .env.example .env
 
 Edit `.env`:
 
-```
+```dotenv
 OPENROUTER_API_KEY=sk-or-v1-...
-TELEGRAM_BOT_TOKEN=123456:ABC-...
 ```
 
-Edit `config/settings.yaml` and set `telegram.allowed_user_ids` to your Telegram numeric ID:
-
-```yaml
-telegram:
-  allowed_user_ids: [YOUR_NUMERIC_ID]
-```
-
-Optionally edit `config/UBONGO.md` to customize the global identity context. This file is loaded for every conversation regardless of persona, so it's where you put facts about yourself and communication preferences.
-
-Optionally edit `config/personas/*.md` to tune voices.
+Optionally edit `config/UBONGO.md` to customize the global identity context (loaded for every conversation, every persona, every agent — your single source of truth for "who I am and how I want to be talked to"). Optionally edit `config/personas/*.md` to tune voices.
 
 ## Run
 
+Two modes, sharing the same SQLite state:
+
 ```bash
+# REPL (interactive)
 uv run python -m ubongo
+
+# One-shot
+uv run python -m ubongo send "draft a migration plan"
+uv run python -m ubongo send --persona casual --mode parallel "what should I cook tonight"
 ```
 
-The bot starts polling Telegram. Send it a message from your allowed account; it should respond.
-
-If you get no response, check:
-
-1. The bot is actually running (`Ubongo starting` should appear in the logs).
-2. Your numeric Telegram ID matches `allowed_user_ids` exactly. Wrong ID means silent drop.
-3. `OPENROUTER_API_KEY` is set in `.env` and the file is loaded.
+A one-shot continues an ongoing REPL session if you're inside the 30-minute session window. If launching produces nothing, check that `OPENROUTER_API_KEY` is set in `.env` and that `.env` is being loaded.
 
 ## Usage
 
-Send any text message. Ubongo will classify the intent and tone, pick a persona, and respond.
+In REPL mode, type messages naturally. Ubongo classifies intent and tone, plans a workflow, runs the agents, gates the result through governance, composes a response in the chosen persona, and writes everything to memory.
 
-Slash commands:
+Slash commands (REPL only; one-shot uses CLI flags):
+
+### Persona and workflow control
 
 - `/architect`, `/operator`, `/casual` — force a persona for the current session
 - `/auto` — return to automatic persona selection
-- `/summary` — summarize the current conversation
-- `/skills` — list available skills
-- `/reload` — reload personas, skills, and global context without restarting
-- `/hold 3h` — hold non-urgent notifications for 3 hours
-- `/hold until 18:00` — hold until 6pm today
-- `/hold` — hold until you say `/resume`
-- `/resume` — release any active hold and deliver queued items
-- `/queue` — show what's currently held
-- `/quiet` — show or change quiet hours
+- `/mode <workflow>` — force a specific workflow (sequential / parallel / competitive / collaborative / debate / speculative)
 
-Quiet hours and holds only affect *proactive* messages (which arrive once the scheduler ships in v0.3). Synchronous responses to your messages always come through, even at 3am.
+### Inspection
+
+- `/agents` — list registered worker agents
+- `/skills` — list available skills
+- `/decisions` — last N Master Agent decisions for this session
+- `/trace <n>` — full execution trace for the n-th most recent turn (classification, workflow, per-agent timings)
+- `/queue` — outbound queue contents
+- `/recall` — what was recalled (recency + semantic) for the last turn
+- `/policy` — current governance rules and thresholds
+- `/audit` — unified audit log (governance decisions + evolution events)
+
+### Skills
+
+- `/summary` — summarize the current conversation
+
+### Self-improvement
+
+- `/optimize <target>` — generate variants of a target (e.g., `persona:architect`, `routing:rules`)
+- `/evaluate <target>` — score the most recent variant generation against held-out samples
+- `/improvements` — pending GP promotions; approve / reject / rollback
+- `/evolution status | pause | resume | off` — control the GP loop
+
+### System
+
+- `/reload` — reload personas, skills, global context, and (where safe) settings
+- `/exit` — exit the REPL
+
+For one-shot mode, use flags: `--persona <name>`, `--skill <name>`, `--mode <workflow>`.
 
 ## Configuration
 
 | File | Purpose |
-|---|---|
+| --- | --- |
 | `.env` | Secrets only. Never committed. |
-| `config/settings.yaml` | Models, memory tuning, delivery policy, logging. |
-| `config/UBONGO.md` | Global identity and communication preferences. Loaded for every persona. |
-| `config/personas/*.md` | Voice-specific overlays for each persona. |
+| `config/settings.yaml` | Models per agent role, memory tuning, governance thresholds, evolution config, logging. |
+| `config/UBONGO.md` | Global identity and communication preferences. Loaded for every persona and every agent. |
+| `config/personas/*.md` | Voice-specific overlays for each persona (Architect, Operator, Casual). |
 | `config/skills/<name>/SKILL.md` | Skill definitions. Frontmatter + body. |
-| `config/routing.yaml` | Tone/intent to persona/skill mapping rules. |
-| `config/urgency.yaml` | Urgency assignment rules (used in v0.3). |
+| `config/routing.yaml` | Tone/intent → workflow mapping rules (evolvable). |
+| `config/workflows.yaml` | Named workflow templates: which agents, which execution mode (evolvable). |
+| `config/governance.yaml` | Risk rules and decision-matrix thresholds. |
+| `config/urgency.yaml` | Urgency assignment rules. v0.3+ scope; empty stub in v0.1. |
 
-Edit any of these and run `/reload` in Telegram to apply without restart (except `settings.yaml`, which requires a restart).
+Edit any of these and run `/reload` in the REPL to apply without restart (except `settings.yaml`, which requires a restart).
 
 ## Vault
 
-Daily conversation logs are written to `vault/daily/YYYY-MM-DD.md` in Obsidian-compatible Markdown. Open the `vault/` directory as an Obsidian vault to browse them. The vault is gitignored by default; if you want versioned history of your conversation logs, run `git init` inside `vault/` separately.
+Daily conversation logs are written to `vault/daily/YYYY-MM-DD.md` in Obsidian-compatible Markdown. The system audit log lives at `vault/system/audit.md` (governance decisions + evolution promotions / rejections). Open the `vault/` directory as an Obsidian vault to browse.
 
-In v0.1 the vault is write-only. The system reads from SQLite, never from the Markdown files. Bidirectional sync is on the v0.2 list.
+`vault/` is gitignored by default. If you want versioned history of your conversation logs, run `git init` inside `vault/` separately.
+
+In Phases 5–20 the vault is write-only. Phase 21 enables bidirectional sync: file edits are picked up by a watcher and ingested through the Memory Agent, with conflicts gated by the governance approval flow.
 
 ## Project Structure
 
-```
+> *Planned layout (does not yet exist on disk).*
+
+```text
 ubongo/
-  config/             # all user-editable configuration
-    UBONGO.md         # global identity context
+  config/                # all user-editable configuration
+    UBONGO.md            # global identity (hierarchical root)
     settings.yaml
-    routing.yaml
+    routing.yaml         # tone/intent -> workflow rules
+    workflows.yaml       # named workflow templates (agents, execution mode)
+    governance.yaml      # risk rules, decision-matrix thresholds
     personas/
     skills/
   src/ubongo/
-    bot.py            # Telegram handlers
-    classifier.py     # tone/intent classification
-    router.py         # persona and skill selection
-    context.py        # hierarchical prompt assembly
-    events.py         # named event dispatcher
-    llm.py            # LiteLLM wrapper
-    skills.py         # skill registry with progressive disclosure
-    personas.py
-    delivery/         # notification queue and policy engine
-    memory/           # SQLite store, compaction, vault projection
-  vault/              # generated daily notes (gitignored)
+    __main__.py          # entry: python -m ubongo
+    repl.py              # interactive REPL
+    oneshot.py           # one-shot send command
+    master.py            # Master Agent (orchestrator)
+    classifier.py
+    router.py            # internal helper used by Master Agent.plan
+    runner.py            # workflow runner (six execution modes)
+    composer.py          # response composition
+    skills.py            # skill registry with progressive disclosure
+    context.py
+    events.py
+    llm.py
+    config.py
+    logging.py
+    agents/              # worker agents
+      base.py            # Agent protocol
+      research.py
+      coding.py
+      evaluator.py
+      repair.py
+      memory.py
+      critic.py
+      execution.py
+      personas.py        # Architect, Operator, Casual
+    governance/          # risk, confidence, reversibility, decision matrix, approval
+    evolution/           # GP loop: generator, sandbox, fitness, lineage, promotion
+    delivery/queue.py    # minimal SQLite-backed outbound queue
+    memory/              # SQLite store, compaction, vault, embeddings, graph
+  vault/                 # generated daily notes + audit log (gitignored)
   tests/
+    manual/              # smoke_test.md + sample_conversations fixture
 ```
 
-See `UBONGO_BUILD.md` for the full architecture and the phased build plan.
+See [UBONGO_BUILD.md](UBONGO_BUILD.md) for the full architecture and the 22-phase plan.
+
+## Implementation Workflow
+
+Phases are tracked in [STATUS.md](STATUS.md). Each phase follows the same recipe:
+
+1. Branch off `main` as `phase-N-<short-name>` (names listed in [UBONGO_BUILD.md](UBONGO_BUILD.md) and [STATUS.md](STATUS.md)).
+2. Build the sub-phases.
+3. Run the per-phase **testing plan** (scenario table) and the cumulative **end-to-end smoke test** in [tests/manual/smoke_test.md](tests/manual/smoke_test.md).
+4. When both pass, the user reviews and merges the branch into `main`. No commits to `main` from a phase in progress; no self-merges.
+5. Update [STATUS.md](STATUS.md): move the row from "Not started" → "Complete" with a date.
+6. Start phase N+1 only after phase N is merged.
+
+Each phase ends with the entire system manually testable end-to-end. New features land additively; old features must not regress.
 
 ## Roadmap
 
-**v0.1 (current):** Telegram, three personas, tone routing, SQLite memory, Markdown vault, skills infrastructure with one demo skill, notification queue with quiet hours and holds.
+**v0.1 (current target).** Full multi-agent runtime + GP-driven self-improvement, accessed through a CLI. Eight worker types, six execution modes, governance layer, sandboxed Execution Agent, continuous evolution with human-approved promotions, semantic memory recall, vault graph. 22 phases on dedicated branches; soft LOC ceiling ~15,000 (excluding tests). See [STATUS.md](STATUS.md) and [UBONGO_BUILD.md](UBONGO_BUILD.md).
 
-**v0.2:** Pick at most two from: CLI front-end, Google Calendar integration, embedding-based recall, topic-aware compaction, structured fact extraction, bidirectional vault sync, a fourth persona.
+**v0.2.** Telegram channel — bring back `python-telegram-bot`, `allowed_user_ids` auth, and the policy engine + quiet hours + holds + catch-up summarizer. The queue and event seams from v0.1 mean Telegram is mostly transport plus a `before_send` policy handler. Plus one or two of: Google Calendar integration, structured fact extraction, bidirectional vault sync polish, a fourth persona.
 
-**v0.3:** Scheduler for proactive jobs (cron-style). Additional integrations as skills (email, news, Reddit). Each integration is a CLI script the agent invokes via a single `bash` tool, not a first-class tool definition.
+**v0.3.** Scheduler for proactive jobs (cron-style). Additional integrations as skills (email, news, Reddit). Each integration is a CLI script the Execution Agent invokes through the constrained-bash skill, not a first-class tool definition.
 
-The roadmap is loose on purpose. Build v0.1, use it for two weeks, prioritize v0.2 from observed friction rather than from architectural ambition.
+The roadmap is loose. Build v0.1, use it, prioritize v0.2 from observed friction rather than from architectural ambition.
 
 ## License
 
