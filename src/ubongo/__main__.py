@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import sys
 
+from ubongo import oneshot, repl
 from ubongo.config import ConfigError, load_config
 from ubongo.logging import log_startup, setup_logging
 
@@ -11,8 +11,13 @@ from ubongo.logging import log_startup, setup_logging
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ubongo", description="Ubongo CLI")
     subparsers = parser.add_subparsers(dest="command")
-    send = subparsers.add_parser("send", help="Send a one-shot message (no-op until Phase 1)")
+    send = subparsers.add_parser("send", help="Run a single turn and exit")
     send.add_argument("message", help="Message text")
+    send.add_argument(
+        "--persona",
+        default=None,
+        help="Persona to use for this turn (architect, operator, casual)",
+    )
     return parser
 
 
@@ -30,12 +35,8 @@ def main(argv: list[str] | None = None) -> int:
     log_startup(config)
 
     if args.command == "send":
-        logging.getLogger("ubongo").info(
-            "cli_send_received",
-            extra={"length": len(args.message), "phase": "0e_no_op"},
-        )
-
-    return 0
+        return oneshot.run(args.message, args.persona)
+    return repl.run()
 
 
 if __name__ == "__main__":
