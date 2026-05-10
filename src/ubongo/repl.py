@@ -18,7 +18,7 @@ _BANNER = "Ubongo REPL ready. /exit to quit."
 _AUTO_NOTICE = "Auto routing not yet active (Phase 3); using default persona: architect."
 
 
-def handle_text(persona_name: str, message: str) -> str:
+def handle_text(persona_name: str, message: str) -> tuple[str, bool]:
     persona = personas.get(persona_name)
     system_prompt = build_system_prompt(persona_name)
     messages = [{"role": "user", "content": message}]
@@ -33,7 +33,7 @@ def handle_text(persona_name: str, message: str) -> str:
                 "cause": str(exc.cause) if exc.cause else None,
             },
         )
-        return _LLM_FAILURE_MESSAGE
+        return _LLM_FAILURE_MESSAGE, False
 
     logger.info(
         "repl_turn",
@@ -47,7 +47,7 @@ def handle_text(persona_name: str, message: str) -> str:
             "attempts": result.attempts,
         },
     )
-    return result.text
+    return result.text, True
 
 
 def handle_slash(line: str, current_persona: str) -> tuple[str, bool, str]:
@@ -87,7 +87,8 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
                 return 0
             continue
 
-        print(handle_text(persona, stripped))
+        text, _ok = handle_text(persona, stripped)
+        print(text)
 
 
 if __name__ == "__main__":

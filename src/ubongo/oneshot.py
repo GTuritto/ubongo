@@ -18,6 +18,6 @@ def run(message: str, persona: str | None = None) -> int:
         )
         return 1
 
-    response = handle_text(chosen, message)
+    response, ok = handle_text(chosen, message)
     print(response)
-    return 0
+    return 0 if ok else 1
