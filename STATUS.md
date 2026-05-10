@@ -4,7 +4,7 @@ Last updated: 2026-05-09
 
 ## Overall
 
-Phases 0–3 merged. Phase 4 (SQLite memory, conversation persistence, compaction registry, session timeout) complete on `phase-4-memory` branch, awaiting user merge. Conversations now persist across restarts at `./data/ubongo.db`; recall returns last 10 messages plus a paragraph summary once a conversation grows past 30 turns. v0.1 scope is multi-agent + self-improving + CLI; see [UBONGO_BUILD.md](UBONGO_BUILD.md).
+Phases 0–3 merged. Phase 4 (SQLite memory, conversation persistence, cumulative compaction, cross-session summary inheritance, session timeout) complete on `phase-4-memory` branch, awaiting user merge. Conversations persist across restarts at `./data/ubongo.db`; recall returns last 10 messages plus a cumulative paragraph summary once a conversation crosses 15 turns; new conversations inherit the previous one's summary so durable facts (birthday, preferences, project context) survive the 30-minute timeout. v0.1 scope is multi-agent + self-improving + CLI; see [UBONGO_BUILD.md](UBONGO_BUILD.md).
 
 ## Phase Tracker
 
@@ -37,7 +37,7 @@ Each phase is built on its own branch. Don't start Phase N+1 until Phase N's tes
 
 ## Lines of Code
 
-1448 / ~15,000 soft target (excluding tests). Phases 0-4: skeleton, config, context loader, JSON logger, REPL + one-shot, persona registry, LiteLLM wrapper, event bus, tone classifier, routing + hysteresis, SQLite store + sessions, compaction registry.
+1499 / ~15,000 soft target (excluding tests). Phases 0-4: skeleton, config, context loader, JSON logger, REPL + one-shot, persona registry, LiteLLM wrapper, event bus, tone classifier, routing + hysteresis, SQLite store + sessions, cumulative compaction, cross-session summary inheritance.
 
 ## v0.1 Acceptance Criteria
 
