@@ -4,7 +4,7 @@ Last updated: 2026-05-09
 
 ## Overall
 
-Phases 0–2 merged. Phase 3 (tone classifier + auto-routing with hysteresis) complete on `phase-3-classifier` branch, awaiting user merge. `/auto` mode now classifies each turn (Qwen 2.5 7B) and picks a persona via routing.yaml; manual slash overrides still beat auto. v0.1 scope is multi-agent + self-improving + CLI; see [UBONGO_BUILD.md](UBONGO_BUILD.md).
+Phases 0–3 merged. Phase 4 (SQLite memory, conversation persistence, compaction registry, session timeout) complete on `phase-4-memory` branch, awaiting user merge. Conversations now persist across restarts at `./data/ubongo.db`; recall returns last 10 messages plus a paragraph summary once a conversation grows past 30 turns. v0.1 scope is multi-agent + self-improving + CLI; see [UBONGO_BUILD.md](UBONGO_BUILD.md).
 
 ## Phase Tracker
 
@@ -14,7 +14,7 @@ Phases 0–2 merged. Phase 3 (tone classifier + auto-routing with hysteresis) co
 | 1 | Foundation | CLI REPL + One-Shot (echo) | `phase-1-cli-echo` | Complete (2026-05-09) |
 | 2 | Foundation | LLM Integration | `phase-2-llm` | Complete (2026-05-10) |
 | 3 | Foundation | Tone Classifier + Auto Routing | `phase-3-classifier` | Complete (2026-05-10) |
-| 4 | Foundation | SQLite Memory + Compaction | `phase-4-memory` | Not started |
+| 4 | Foundation | SQLite Memory + Compaction | `phase-4-memory` | Complete (2026-05-10) |
 | 5 | Foundation | Markdown Vault Projection | `phase-5-vault` | Not started |
 | 6 | Foundation | Skills + Progressive Disclosure | `phase-6-skills` | Not started |
 | 7 | Foundation | Minimal Outbound Queue | `phase-7-queue` | Not started |
@@ -37,7 +37,7 @@ Each phase is built on its own branch. Don't start Phase N+1 until Phase N's tes
 
 ## Lines of Code
 
-831 / ~15,000 soft target (excluding tests). Phases 0-3: skeleton, config, context loader, JSON logger, REPL + one-shot, persona registry, LiteLLM wrapper, event bus, tone classifier, routing + hysteresis.
+1448 / ~15,000 soft target (excluding tests). Phases 0-4: skeleton, config, context loader, JSON logger, REPL + one-shot, persona registry, LiteLLM wrapper, event bus, tone classifier, routing + hysteresis, SQLite store + sessions, compaction registry.
 
 ## v0.1 Acceptance Criteria
 

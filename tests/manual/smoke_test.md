@@ -61,7 +61,17 @@ Each section's scenarios are run in order. If a scenario fails, the phase is not
 
 ## Phase 4 — SQLite Memory + Compaction
 
-*(Populated when Phase 4 is implemented.)*
+DB lives at `./data/ubongo.db` (gitignored). To start with a clean state, `rm -f data/ubongo.db` before any of these. To advance the simulated clock for the timeout test, set `UBONGO_FAKE_NOW=<ISO8601>` in the environment.
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 4.1 | Persistence across restart | Process A: `uv run python -m ubongo send "I'm working on a project called Ubongo. Remember that." --persona casual`. Process B: `uv run python -m ubongo send "What was the project name I just told you?" --persona casual` | Process B response names `Ubongo`. `sqlite3 data/ubongo.db "SELECT COUNT(*) FROM messages"` returns 4. Both processes wrote into conversation id 1. |
+| 4.2 | New session after timeout | Process A: `UBONGO_FAKE_NOW=2030-01-01T12:00:00+00:00 uv run python -m ubongo send "first turn"`. Process B: `UBONGO_FAKE_NOW=2030-01-01T12:31:00+00:00 uv run python -m ubongo send "second turn"` | `sqlite3 data/ubongo.db "SELECT id, started_at, ended_at FROM conversations"` shows 2 rows; conversation 1 has `ended_at` set to the original `last_message_at`. |
+| 4.3 | Compaction trigger | Drive 31 turns into one conversation (a small bash loop with `ubongo send` works). | `sqlite3 data/ubongo.db "SELECT id, covers_from_message_id, covers_to_message_id, strategy FROM summaries"` shows one row with `covers_to_message_id` = (max - 10). stderr has a `compaction_run` log line on the triggering turn. |
+| 4.4 | Compaction idempotency | After 4.3: send 5 more turns | `sqlite3 data/ubongo.db "SELECT COUNT(*) FROM summaries"` is still 1. No new `compaction_run` log entry on the new turns. |
+| 4.5 | Swappable strategy (pytest gates this) | `uv run pytest tests/test_memory_compaction.py::test_register_and_get_custom_strategy tests/test_memory_compaction.py::test_maybe_compact_at_threshold_persists_summary` | Both tests pass; the second uses a stub strategy registered as `stub` and the persisted summary's `content` is `STUB:21`. |
+| 4.6 | Persona persistence across restart | Process A: `printf '/casual\n/exit\n' \| uv run python -m ubongo`. Process B: start REPL, type `hi` | The `hi` reply is in casual voice. `sqlite3 data/ubongo.db "SELECT active_persona, auto_mode FROM sessions"` returns `casual`/`0`. |
+| 4.7 | Pytest passes | `uv run pytest tests/` | All tests pass (65 expected after Phase 4). |
 
 ## Phase 5 — Markdown Vault Projection
 
