@@ -9,8 +9,9 @@
 *.db-wal
 *.db-shm
 
-# Generated vault notes
-vault/
+# Generated vault notes (track the directory marker, ignore contents)
+vault/*
+!vault/.gitkeep
 
 # Python
 __pycache__/
