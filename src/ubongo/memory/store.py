@@ -233,6 +233,18 @@ def max_message_id(conversation_id: int) -> int:
 # --- summaries ---
 
 
+def _row_to_summary(row: sqlite3.Row) -> Summary:
+    return Summary(
+        id=row["id"],
+        conversation_id=row["conversation_id"],
+        covers_from_message_id=row["covers_from_message_id"],
+        covers_to_message_id=row["covers_to_message_id"],
+        content=row["content"],
+        strategy=row["strategy"],
+        created_at=row["created_at"],
+    )
+
+
 def latest_summary(conversation_id: int) -> Summary | None:
     conn = connection()
     row = conn.execute(
@@ -245,17 +257,26 @@ def latest_summary(conversation_id: int) -> Summary | None:
         """,
         (conversation_id,),
     ).fetchone()
-    if row is None:
-        return None
-    return Summary(
-        id=row["id"],
-        conversation_id=row["conversation_id"],
-        covers_from_message_id=row["covers_from_message_id"],
-        covers_to_message_id=row["covers_to_message_id"],
-        content=row["content"],
-        strategy=row["strategy"],
-        created_at=row["created_at"],
-    )
+    return _row_to_summary(row) if row else None
+
+
+def latest_summary_from_other_conversations(exclude_conversation_id: int) -> Summary | None:
+    """Return the most recent summary written for any conversation other than
+    the one specified. Used as cross-session memory: when a fresh conversation
+    has no summary yet, we inherit the prior conversation's summary so durable
+    facts (birthday, preferences, project context) survive the timeout."""
+    conn = connection()
+    row = conn.execute(
+        """
+        SELECT id, conversation_id, covers_from_message_id, covers_to_message_id, content, strategy, created_at
+        FROM summaries
+        WHERE conversation_id != ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (exclude_conversation_id,),
+    ).fetchone()
+    return _row_to_summary(row) if row else None
 
 
 def persist_summary(
@@ -411,6 +432,13 @@ def recall(conversation_id: int) -> RecallContext:
     recall_turns = int(config.get("memory", {}).get("recall_turns", 10))
 
     summary = latest_summary(conversation_id)
+    inherited = False
+    if summary is None:
+        cross = latest_summary_from_other_conversations(exclude_conversation_id=conversation_id)
+        if cross is not None:
+            summary = cross
+            inherited = True
+
     messages = last_n_messages(conversation_id, recall_turns)
 
     events.dispatch(
@@ -419,6 +447,7 @@ def recall(conversation_id: int) -> RecallContext:
             "conversation_id": conversation_id,
             "messages_since_summary": count_messages_since_summary(conversation_id),
             "recall_turns": recall_turns,
+            "summary_inherited": inherited,
         },
     )
 

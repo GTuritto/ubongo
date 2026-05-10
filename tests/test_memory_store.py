@@ -149,6 +149,34 @@ def test_current_or_new_conversation_continues_within_timeout(db, monkeypatch) -
     assert cid_1 == cid_2
 
 
+def test_recall_inherits_summary_from_previous_conversation(db) -> None:
+    """When a new conversation has no summary, recall falls back to the most
+    recent summary from any other conversation. Cross-session memory."""
+    cid_old = store.start_conversation("casual")
+    store.append_message(cid_old, "user", "my birthday is March 15")
+    store.persist_summary(cid_old, 1, 1, "User said their birthday is March 15.", "default")
+    store.end_conversation(cid_old)
+
+    cid_new = store.start_conversation("casual")
+    store.append_message(cid_new, "user", "hey")
+    ctx = store.recall(cid_new)
+    assert ctx.summary_text is not None
+    assert "March 15" in ctx.summary_text
+    # The current conversation has no summary, but the inherited one shows up.
+
+
+def test_recall_prefers_current_conversation_summary_over_inherited(db) -> None:
+    cid_old = store.start_conversation("casual")
+    store.append_message(cid_old, "user", "old fact")
+    store.persist_summary(cid_old, 1, 1, "OLD SUMMARY", "default")
+    cid_new = store.start_conversation("casual")
+    for _ in range(2):
+        store.append_message(cid_new, "user", "x")
+    store.persist_summary(cid_new, 1, 2, "NEW SUMMARY", "default")
+    ctx = store.recall(cid_new)
+    assert ctx.summary_text == "NEW SUMMARY"
+
+
 def test_recall_returns_summary_and_messages(db) -> None:
     cid = store.start_conversation("architect")
     for i in range(3):

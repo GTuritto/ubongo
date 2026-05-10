@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from ubongo import events
+from ubongo.memory import compaction  # noqa: F401  -- registers after_recall handler
 
 logger = logging.getLogger("ubongo.memory")
 
