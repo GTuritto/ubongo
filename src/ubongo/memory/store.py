@@ -3,10 +3,53 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger("ubongo.memory.store")
+
+
+@dataclass(frozen=True)
+class Conversation:
+    id: int
+    started_at: str
+    ended_at: str | None
+    active_persona: str | None
+
+
+@dataclass(frozen=True)
+class Message:
+    id: int
+    conversation_id: int
+    role: str
+    content: str
+    timestamp: str
+    persona: str | None
+    model: str | None
+    tokens_in: int
+    tokens_out: int
+
+
+@dataclass(frozen=True)
+class Summary:
+    id: int
+    conversation_id: int
+    covers_from_message_id: int
+    covers_to_message_id: int
+    content: str
+    strategy: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class Session:
+    user_id: int
+    last_message_at: str | None
+    active_persona: str | None
+    override_until: str | None
+    current_conversation_id: int | None
+    auto_mode: bool
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _DB_PATH = _REPO_ROOT / "data" / "ubongo.db"
@@ -61,3 +104,246 @@ def bootstrap() -> sqlite3.Connection:
 
 def connection() -> sqlite3.Connection:
     return bootstrap()
+
+
+# --- conversations ---
+
+
+def start_conversation(active_persona: str) -> int:
+    conn = connection()
+    cursor = conn.execute(
+        "INSERT INTO conversations (started_at, active_persona) VALUES (?, ?)",
+        (now_iso(), active_persona),
+    )
+    return int(cursor.lastrowid)
+
+
+def end_conversation(conversation_id: int, when: str | None = None) -> None:
+    conn = connection()
+    conn.execute(
+        "UPDATE conversations SET ended_at = ? WHERE id = ?",
+        (when or now_iso(), conversation_id),
+    )
+
+
+def get_conversation(conversation_id: int) -> Conversation | None:
+    conn = connection()
+    row = conn.execute(
+        "SELECT id, started_at, ended_at, active_persona FROM conversations WHERE id = ?",
+        (conversation_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return Conversation(
+        id=row["id"],
+        started_at=row["started_at"],
+        ended_at=row["ended_at"],
+        active_persona=row["active_persona"],
+    )
+
+
+# --- messages ---
+
+
+def append_message(
+    conversation_id: int,
+    role: str,
+    content: str,
+    *,
+    persona: str | None = None,
+    model: str | None = None,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+) -> int:
+    conn = connection()
+    cursor = conn.execute(
+        """
+        INSERT INTO messages
+            (conversation_id, role, content, timestamp, persona, model, tokens_in, tokens_out)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (conversation_id, role, content, now_iso(), persona, model, tokens_in, tokens_out),
+    )
+    return int(cursor.lastrowid)
+
+
+def _row_to_message(row: sqlite3.Row) -> Message:
+    return Message(
+        id=row["id"],
+        conversation_id=row["conversation_id"],
+        role=row["role"],
+        content=row["content"],
+        timestamp=row["timestamp"],
+        persona=row["persona"],
+        model=row["model"],
+        tokens_in=row["tokens_in"] or 0,
+        tokens_out=row["tokens_out"] or 0,
+    )
+
+
+def last_n_messages(conversation_id: int, n: int) -> list[Message]:
+    conn = connection()
+    rows = conn.execute(
+        """
+        SELECT * FROM (
+            SELECT id, conversation_id, role, content, timestamp, persona, model, tokens_in, tokens_out
+            FROM messages
+            WHERE conversation_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+        ) ORDER BY id ASC
+        """,
+        (conversation_id, n),
+    ).fetchall()
+    return [_row_to_message(r) for r in rows]
+
+
+def messages_in_range(conversation_id: int, from_id: int, to_id: int) -> list[Message]:
+    conn = connection()
+    rows = conn.execute(
+        """
+        SELECT id, conversation_id, role, content, timestamp, persona, model, tokens_in, tokens_out
+        FROM messages
+        WHERE conversation_id = ? AND id >= ? AND id <= ?
+        ORDER BY id ASC
+        """,
+        (conversation_id, from_id, to_id),
+    ).fetchall()
+    return [_row_to_message(r) for r in rows]
+
+
+def max_message_id(conversation_id: int) -> int:
+    conn = connection()
+    row = conn.execute(
+        "SELECT COALESCE(MAX(id), 0) AS m FROM messages WHERE conversation_id = ?",
+        (conversation_id,),
+    ).fetchone()
+    return int(row["m"]) if row else 0
+
+
+# --- summaries ---
+
+
+def latest_summary(conversation_id: int) -> Summary | None:
+    conn = connection()
+    row = conn.execute(
+        """
+        SELECT id, conversation_id, covers_from_message_id, covers_to_message_id, content, strategy, created_at
+        FROM summaries
+        WHERE conversation_id = ?
+        ORDER BY covers_to_message_id DESC, id DESC
+        LIMIT 1
+        """,
+        (conversation_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return Summary(
+        id=row["id"],
+        conversation_id=row["conversation_id"],
+        covers_from_message_id=row["covers_from_message_id"],
+        covers_to_message_id=row["covers_to_message_id"],
+        content=row["content"],
+        strategy=row["strategy"],
+        created_at=row["created_at"],
+    )
+
+
+def persist_summary(
+    conversation_id: int,
+    covers_from_message_id: int,
+    covers_to_message_id: int,
+    content: str,
+    strategy: str,
+) -> int:
+    conn = connection()
+    cursor = conn.execute(
+        """
+        INSERT INTO summaries
+            (conversation_id, covers_from_message_id, covers_to_message_id, content, strategy, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (conversation_id, covers_from_message_id, covers_to_message_id, content, strategy, now_iso()),
+    )
+    return int(cursor.lastrowid)
+
+
+def count_messages_since_summary(conversation_id: int) -> int:
+    last = latest_summary(conversation_id)
+    floor = last.covers_to_message_id if last else 0
+    conn = connection()
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ? AND id > ?",
+        (conversation_id, floor),
+    ).fetchone()
+    return int(row["c"]) if row else 0
+
+
+# --- sessions ---
+
+
+def get_session(user_id: int = 1) -> Session | None:
+    conn = connection()
+    row = conn.execute(
+        """
+        SELECT user_id, last_message_at, active_persona, override_until, current_conversation_id, auto_mode
+        FROM sessions WHERE user_id = ?
+        """,
+        (user_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return Session(
+        user_id=row["user_id"],
+        last_message_at=row["last_message_at"],
+        active_persona=row["active_persona"],
+        override_until=row["override_until"],
+        current_conversation_id=row["current_conversation_id"],
+        auto_mode=bool(row["auto_mode"]),
+    )
+
+
+def upsert_session(
+    user_id: int = 1,
+    *,
+    last_message_at: str | None = None,
+    active_persona: str | None = None,
+    current_conversation_id: int | None = None,
+    auto_mode: bool | None = None,
+) -> None:
+    """Insert or partial-update a session row. Unspecified fields are preserved on update."""
+    existing = get_session(user_id)
+    conn = connection()
+    if existing is None:
+        conn.execute(
+            """
+            INSERT INTO sessions
+                (user_id, last_message_at, active_persona, override_until,
+                 current_conversation_id, auto_mode)
+            VALUES (?, ?, ?, NULL, ?, ?)
+            """,
+            (
+                user_id,
+                last_message_at,
+                active_persona,
+                current_conversation_id,
+                int(bool(auto_mode)) if auto_mode is not None else 0,
+            ),
+        )
+        return
+    new_last = last_message_at if last_message_at is not None else existing.last_message_at
+    new_persona = active_persona if active_persona is not None else existing.active_persona
+    new_conv_id = (
+        current_conversation_id
+        if current_conversation_id is not None
+        else existing.current_conversation_id
+    )
+    new_auto = int(bool(auto_mode)) if auto_mode is not None else int(existing.auto_mode)
+    conn.execute(
+        """
+        UPDATE sessions
+        SET last_message_at = ?, active_persona = ?, current_conversation_id = ?, auto_mode = ?
+        WHERE user_id = ?
+        """,
+        (new_last, new_persona, new_conv_id, new_auto, user_id),
+    )
