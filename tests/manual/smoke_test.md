@@ -28,7 +28,7 @@ Each section's scenarios are run in order. If a scenario fails, the phase is not
 | --- | --- | --- | --- |
 | 1.1 | REPL banner + default response | `uv run python -m ubongo`; type `hello` | First line: `Ubongo REPL ready. /exit to quit.` Then a `>` prompt. Substantive architect-voiced response (Phase 2 onward; pre-Phase-2 was bracket echo). |
 | 1.2 | Persona switch | After 1.1: `/casual`, then `hello` | `Switched to casual.` then a warm casual-voiced response. |
-| 1.3 | `/auto` reverts to default | After 1.2: `/auto`, then `hello` | `Auto routing not yet active (Phase 3); using default persona: architect.` then an architect-voiced response. |
+| 1.3 | `/auto` enables auto routing | After 1.2: `/auto`, then `hello` | `Auto routing enabled.` then an LLM-voiced response. From Phase 3 onward the classifier picks the persona; before Phase 3 this fell back to the default architect. |
 | 1.4 | `/exit` clean quit | type `/exit` | `Goodbye.` rc 0. |
 | 1.5 | One-shot with `--persona` | `uv run python -m ubongo send "hello" --persona operator` | stdout: `[operator] hello`. rc 0. |
 | 1.6 | One-shot default persona | `uv run python -m ubongo send "hi"` | stdout: `[architect] hi`. rc 0. |
@@ -50,7 +50,14 @@ Each section's scenarios are run in order. If a scenario fails, the phase is not
 
 ## Phase 3 — Tone Classifier + Auto Routing
 
-*(Populated when Phase 3 is implemented.)*
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 3.1 | Auto-route to architect | REPL: `/auto`, `help me design a circuit breaker` | Substantive architect-voiced response. stderr `classify` log shows `intent=technical` (or `coding`), `confidence>=0.7`, `used=architect`. |
+| 3.2 | Auto-route to casual | REPL: `/auto`, `ugh long day` | Short, warm casual reply. `classify` log shows `intent=casual` or `tone=tired`/`frustrated`, `used=casual`. |
+| 3.3 | Hysteresis keeps architect on weak switch | REPL: `/auto`, send 3-5 technical questions, then `lol` | After `lol`, persona stays architect. `classify` log on the `lol` turn may show `suggested=casual` but `used=architect` because confidence falls below the 0.7 threshold or persona was already set by prior turns. |
+| 3.4 | Manual override beats auto | REPL: `/auto`, technical question (auto picks architect), `/casual`, `something simple` | After `/casual`: `Switched to casual.` Next turn uses casual; no `classify` event logged for that turn (auto_mode is off). |
+| 3.5 | Classifier failure (sanity) | Set `OPENROUTER_API_KEY=sk-or-v1-bogus`; REPL: `/auto`, `hi` | Classifier returns `_FALLBACK` (confidence 0.0); router falls back to default workflow (`casual`); stderr has `classify_failed` log. The conversation continues (LLM call also fails, so polite stdout error). The pytest suite is the gate for this path; this manual scenario is just a sanity check. |
+| 3.6 | Pytest passes | `uv run pytest tests/` | All tests pass (41 expected after Phase 3: events/personas/repl/classifier/router). |
 
 ## Phase 4 — SQLite Memory + Compaction
 
