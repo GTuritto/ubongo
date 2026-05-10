@@ -2,11 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from ubongo.repl import DEFAULT_PERSONA, echo, handle_slash
-
-
-def test_echo_format() -> None:
-    assert echo("architect", "hello") == "[architect] hello"
+from ubongo.repl import DEFAULT_PERSONA, handle_slash
 
 
 @pytest.mark.parametrize("name", ["architect", "operator", "casual"])

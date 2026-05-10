@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from ubongo.repl import DEFAULT_PERSONA, VALID_PERSONAS, echo
+from ubongo.repl import DEFAULT_PERSONA, VALID_PERSONAS, handle_text
 
 logger = logging.getLogger("ubongo.oneshot")
 
@@ -18,9 +18,6 @@ def run(message: str, persona: str | None = None) -> int:
         )
         return 1
 
-    print(echo(chosen, message))
-    logger.info(
-        "oneshot_turn",
-        extra={"persona": chosen, "length": len(message)},
-    )
+    response = handle_text(chosen, message)
+    print(response)
     return 0
