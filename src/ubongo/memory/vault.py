@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import logging
 from datetime import date as date_type
+from datetime import datetime
 from datetime import time as time_type
 from pathlib import Path
 
+from ubongo import events
 from ubongo.config import load_config
 
 logger = logging.getLogger("ubongo.memory.vault")
@@ -91,3 +93,32 @@ def append_to_daily_note(
         },
     )
     return path
+
+
+def _parse_iso(s: str) -> datetime:
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    return datetime.fromisoformat(s)
+
+
+def _after_send_handler(payload: dict) -> None:
+    """Default after_send subscriber: append the turn to today's daily note."""
+    user_message = payload.get("user_message")
+    response = payload.get("response")
+    persona = payload.get("persona") or "casual"
+    auto_routed = bool(payload.get("auto_routed", False))
+    ts = payload.get("ts")
+    if not user_message or not response or not ts:
+        return
+    when = _parse_iso(ts)
+    append_to_daily_note(
+        when.date(),
+        when.time().replace(microsecond=0),
+        user_message,
+        response,
+        persona,
+        auto_routed=auto_routed,
+    )
+
+
+events.register("after_send", _after_send_handler)

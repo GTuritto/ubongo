@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from ubongo import classifier, memory, router  # noqa: F401  -- memory registers after_llm
+from ubongo import classifier, events, memory, router  # noqa: F401  -- memory registers handlers
 from ubongo.agents import personas
 from ubongo.context import build_system_prompt
 from ubongo.llm import LLMError, complete
@@ -94,12 +94,13 @@ def handle_text(
         )
 
     conv_id = store.current_or_new_conversation(chosen)
-    store.append_message(conv_id, "user", message, persona=chosen)
+    user_msg_id = store.append_message(conv_id, "user", message, persona=chosen)
 
     text, ok, tokens_in, tokens_out, model = _call_llm(chosen, message, conv_id)
 
+    assistant_msg_id = None
     if ok:
-        store.append_message(
+        assistant_msg_id = store.append_message(
             conv_id,
             "assistant",
             text,
@@ -108,12 +109,27 @@ def handle_text(
             tokens_in=tokens_in,
             tokens_out=tokens_out,
         )
+    ts_now = store.now_iso()
     store.upsert_session(
         active_persona=chosen,
         current_conversation_id=conv_id,
-        last_message_at=store.now_iso(),
+        last_message_at=ts_now,
         auto_mode=auto_mode,
     )
+    if ok:
+        events.dispatch(
+            "after_send",
+            {
+                "user_message": message,
+                "response": text,
+                "persona": chosen,
+                "auto_routed": auto_mode,
+                "conversation_id": conv_id,
+                "user_message_id": user_msg_id,
+                "assistant_message_id": assistant_msg_id,
+                "ts": ts_now,
+            },
+        )
     return text, ok, chosen
 
 

@@ -4,6 +4,7 @@ import logging
 
 from ubongo import events
 from ubongo.memory import compaction  # noqa: F401  -- registers after_recall handler
+from ubongo.memory import vault  # noqa: F401  -- registers after_send handler
 
 logger = logging.getLogger("ubongo.memory")
 

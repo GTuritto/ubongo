@@ -15,6 +15,14 @@ def register(event: str, handler: Handler) -> None:
     _handlers[event].append(handler)
 
 
+def unregister(event: str, handler: Handler) -> None:
+    handlers = _handlers.get(event, [])
+    try:
+        handlers.remove(handler)
+    except ValueError:
+        pass
+
+
 def dispatch(event: str, payload: dict[str, Any]) -> None:
     for handler in _handlers.get(event, []):
         try:
