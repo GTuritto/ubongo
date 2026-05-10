@@ -3,10 +3,11 @@ from __future__ import annotations
 import logging
 import sys
 
-from ubongo import classifier, router
+from ubongo import classifier, memory, router  # noqa: F401  -- memory registers after_llm
 from ubongo.agents import personas
 from ubongo.context import build_system_prompt
 from ubongo.llm import LLMError, complete
+from ubongo.memory import store
 
 logger = logging.getLogger("ubongo.repl")
 
@@ -18,12 +19,31 @@ _AUTO_ENABLED = "Auto routing enabled."
 _LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 
 
-def _call_llm(persona_name: str, message: str) -> tuple[str, bool]:
+def _build_message_history(conv_id: int, current_message: str) -> tuple[str | None, list[dict]]:
+    """Returns (summary_text or None, messages list ending with the current user turn)."""
+    ctx = store.recall(conv_id)
+    history: list[dict] = []
+    for msg in ctx.messages:
+        if msg.role in ("user", "assistant"):
+            history.append({"role": msg.role, "content": msg.content})
+    history.append({"role": "user", "content": current_message})
+    return ctx.summary_text, history
+
+
+def _system_prompt_with_summary(persona_name: str, summary_text: str | None) -> str:
+    base = build_system_prompt(persona_name)
+    if not summary_text:
+        return base
+    return f"{base}\n\n## Conversation summary so far\n\n{summary_text}"
+
+
+def _call_llm(persona_name: str, message: str, conv_id: int) -> tuple[str, bool, int, int, str]:
+    """Returns (text, ok, tokens_in, tokens_out, model)."""
     persona = personas.get(persona_name)
-    system_prompt = build_system_prompt(persona_name)
-    messages = [{"role": "user", "content": message}]
+    summary_text, history = _build_message_history(conv_id, message)
+    system_prompt = _system_prompt_with_summary(persona_name, summary_text)
     try:
-        result = complete(system_prompt, messages, persona.model, persona.max_tokens)
+        result = complete(system_prompt, history, persona.model, persona.max_tokens)
     except LLMError as exc:
         logger.error(
             "llm_error",
@@ -33,7 +53,7 @@ def _call_llm(persona_name: str, message: str) -> tuple[str, bool]:
                 "cause": str(exc.cause) if exc.cause else None,
             },
         )
-        return _LLM_FAILURE_MESSAGE, False
+        return _LLM_FAILURE_MESSAGE, False, 0, 0, persona.model
 
     logger.info(
         "repl_turn",
@@ -47,7 +67,7 @@ def _call_llm(persona_name: str, message: str) -> tuple[str, bool]:
             "attempts": result.attempts,
         },
     )
-    return result.text, True
+    return result.text, True, result.tokens_in, result.tokens_out, result.model
 
 
 def handle_text(
@@ -55,26 +75,45 @@ def handle_text(
     message: str,
     auto_mode: bool = False,
 ) -> tuple[str, bool, str]:
-    if not auto_mode:
-        text, ok = _call_llm(persona_name, message)
-        return text, ok, persona_name
+    chosen = persona_name
+    if auto_mode:
+        classification = classifier.classify(message)
+        suggested = router.route(classification)
+        chosen = router.apply_hysteresis(persona_name, suggested, classification.confidence)
+        logger.info(
+            "classify",
+            extra={
+                "intent": classification.intent,
+                "tone": classification.tone,
+                "task_type": classification.task_type,
+                "risk": classification.risk,
+                "confidence": classification.confidence,
+                "suggested": suggested,
+                "used": chosen,
+            },
+        )
 
-    classification = classifier.classify(message)
-    suggested = router.route(classification)
-    chosen = router.apply_hysteresis(persona_name, suggested, classification.confidence)
-    logger.info(
-        "classify",
-        extra={
-            "intent": classification.intent,
-            "tone": classification.tone,
-            "task_type": classification.task_type,
-            "risk": classification.risk,
-            "confidence": classification.confidence,
-            "suggested": suggested,
-            "used": chosen,
-        },
+    conv_id = store.current_or_new_conversation(chosen)
+    store.append_message(conv_id, "user", message, persona=chosen)
+
+    text, ok, tokens_in, tokens_out, model = _call_llm(chosen, message, conv_id)
+
+    if ok:
+        store.append_message(
+            conv_id,
+            "assistant",
+            text,
+            persona=chosen,
+            model=model,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+        )
+    store.upsert_session(
+        active_persona=chosen,
+        current_conversation_id=conv_id,
+        last_message_at=store.now_iso(),
+        auto_mode=auto_mode,
     )
-    text, ok = _call_llm(chosen, message)
     return text, ok, chosen
 
 
