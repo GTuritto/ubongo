@@ -26,9 +26,9 @@ Each section's scenarios are run in order. If a scenario fails, the phase is not
 
 | # | Scenario | Steps | Expected |
 | --- | --- | --- | --- |
-| 1.1 | REPL banner + default echo | `uv run python -m ubongo`; type `hello` | First line: `Ubongo REPL ready. /exit to quit.` Then a `>` prompt. Echo: `[architect] hello`. |
-| 1.2 | Persona switch | After 1.1: `/casual`, then `hello` | `Switched to casual.` then `[casual] hello`. |
-| 1.3 | `/auto` reverts to default | After 1.2: `/auto`, then `hello` | `Auto routing not yet active (Phase 3); using default persona: architect.` then `[architect] hello`. |
+| 1.1 | REPL banner + default response | `uv run python -m ubongo`; type `hello` | First line: `Ubongo REPL ready. /exit to quit.` Then a `>` prompt. Substantive architect-voiced response (Phase 2 onward; pre-Phase-2 was bracket echo). |
+| 1.2 | Persona switch | After 1.1: `/casual`, then `hello` | `Switched to casual.` then a warm casual-voiced response. |
+| 1.3 | `/auto` reverts to default | After 1.2: `/auto`, then `hello` | `Auto routing not yet active (Phase 3); using default persona: architect.` then an architect-voiced response. |
 | 1.4 | `/exit` clean quit | type `/exit` | `Goodbye.` rc 0. |
 | 1.5 | One-shot with `--persona` | `uv run python -m ubongo send "hello" --persona operator` | stdout: `[operator] hello`. rc 0. |
 | 1.6 | One-shot default persona | `uv run python -m ubongo send "hi"` | stdout: `[architect] hi`. rc 0. |
@@ -39,7 +39,14 @@ Each section's scenarios are run in order. If a scenario fails, the phase is not
 
 ## Phase 2 — LLM Integration
 
-*(Populated when Phase 2 is implemented.)*
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 2.1 | Architect voice (depth) | `uv run python -m ubongo send "design a circuit breaker for an API gateway" --persona architect` | Substantive technical response: states, thresholds, tradeoffs. Markdown structure (sections, code blocks). Names what isn't decided yet. |
+| 2.2 | Casual voice (warmth + brevity) | `uv run python -m ubongo send "ugh today sucked" --persona casual` | Short, present, human reply. Often a single sentence or a follow-up question. No advice unless asked. |
+| 2.3 | Operator voice (terse + actionable) | `uv run python -m ubongo send "summarize my last 3 commits" --persona operator` | Terse. Honestly says it doesn't have git access; lists what would unblock it. No padding. |
+| 2.4 | UBONGO.md propagates | Edit `config/UBONGO.md` to add a quirky directive (e.g. `Always begin every reply with "Right.,"`); restart; ask any question | Response respects the new directive. Restore `UBONGO.md` afterward. |
+| 2.5 | Terminal LLM error | `OPENROUTER_API_KEY=sk-or-v1-bogus uv run python -m ubongo send "hi" --persona casual` | stdout: `Sorry, I couldn't reach the model. Check the logs.` rc 1. stderr has structured `llm_attempt_failed` (twice — single retry) and `llm_error` JSON lines. No traceback to stdout. |
+| 2.6 | Pytest passes | `uv run pytest tests/` | All tests pass (18 expected after Phase 2: repl/personas/events). |
 
 ## Phase 3 — Tone Classifier + Auto Routing
 

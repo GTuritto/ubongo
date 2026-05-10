@@ -4,7 +4,7 @@ Last updated: 2026-05-09
 
 ## Overall
 
-Phase 0 (skeleton) merged. Phase 1 (CLI REPL + one-shot, echo only) complete on `phase-1-cli-echo` branch, awaiting user merge. v0.1 scope is multi-agent + self-improving + CLI; see [UBONGO_BUILD.md](UBONGO_BUILD.md).
+Phases 0 and 1 merged. Phase 2 (LLM integration via LiteLLM/OpenRouter, persona registry, event bus) complete on `phase-2-llm` branch, awaiting user merge. Personas now produce real responses with distinct voices. v0.1 scope is multi-agent + self-improving + CLI; see [UBONGO_BUILD.md](UBONGO_BUILD.md).
 
 ## Phase Tracker
 
@@ -12,7 +12,7 @@ Phase 0 (skeleton) merged. Phase 1 (CLI REPL + one-shot, echo only) complete on 
 | --- | --- | --- | --- | --- |
 | 0 | Foundation | Skeleton | `phase-0-skeleton` | Complete (2026-05-09) |
 | 1 | Foundation | CLI REPL + One-Shot (echo) | `phase-1-cli-echo` | Complete (2026-05-09) |
-| 2 | Foundation | LLM Integration | `phase-2-llm` | Not started |
+| 2 | Foundation | LLM Integration | `phase-2-llm` | Complete (2026-05-10) |
 | 3 | Foundation | Tone Classifier + Auto Routing | `phase-3-classifier` | Not started |
 | 4 | Foundation | SQLite Memory + Compaction | `phase-4-memory` | Not started |
 | 5 | Foundation | Markdown Vault Projection | `phase-5-vault` | Not started |
