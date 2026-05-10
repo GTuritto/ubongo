@@ -4,7 +4,7 @@ Last updated: 2026-05-09
 
 ## Overall
 
-Phases 0–3 merged. Phase 4 (SQLite memory, conversation persistence, cumulative compaction, cross-session summary inheritance, session timeout) complete on `phase-4-memory` branch, awaiting user merge. Conversations persist across restarts at `./data/ubongo.db`; recall returns last 10 messages plus a cumulative paragraph summary once a conversation crosses 15 turns; new conversations inherit the previous one's summary so durable facts (birthday, preferences, project context) survive the 30-minute timeout. v0.1 scope is multi-agent + self-improving + CLI; see [UBONGO_BUILD.md](UBONGO_BUILD.md).
+Phases 0–4 merged. Phase 5 (Obsidian-compatible Markdown vault projection) complete on `phase-5-vault` branch, awaiting user merge. Each successful turn appends to `vault/daily/YYYY-MM-DD.md` via an `after_send` handler that subscribers can unregister to test independence from SQLite. Read-only in v0.1; bidirectional sync is Phase 21. v0.1 scope is multi-agent + self-improving + CLI; see [UBONGO_BUILD.md](UBONGO_BUILD.md).
 
 ## Phase Tracker
 
@@ -15,7 +15,7 @@ Phases 0–3 merged. Phase 4 (SQLite memory, conversation persistence, cumulativ
 | 2 | Foundation | LLM Integration | `phase-2-llm` | Complete (2026-05-10) |
 | 3 | Foundation | Tone Classifier + Auto Routing | `phase-3-classifier` | Complete (2026-05-10) |
 | 4 | Foundation | SQLite Memory + Compaction | `phase-4-memory` | Complete (2026-05-10) |
-| 5 | Foundation | Markdown Vault Projection | `phase-5-vault` | Not started |
+| 5 | Foundation | Markdown Vault Projection | `phase-5-vault` | Complete (2026-05-10) |
 | 6 | Foundation | Skills + Progressive Disclosure | `phase-6-skills` | Not started |
 | 7 | Foundation | Minimal Outbound Queue | `phase-7-queue` | Not started |
 | 8 | Multi-Agent | Master Agent | `phase-8-master` | Not started |
@@ -37,7 +37,7 @@ Each phase is built on its own branch. Don't start Phase N+1 until Phase N's tes
 
 ## Lines of Code
 
-1499 / ~15,000 soft target (excluding tests). Phases 0-4: skeleton, config, context loader, JSON logger, REPL + one-shot, persona registry, LiteLLM wrapper, event bus, tone classifier, routing + hysteresis, SQLite store + sessions, cumulative compaction, cross-session summary inheritance.
+1648 / ~15,000 soft target (excluding tests). Phases 0-5: skeleton, config, context loader, JSON logger, REPL + one-shot, persona registry, LiteLLM wrapper, event bus, tone classifier, routing + hysteresis, SQLite store + sessions, cumulative compaction, cross-session summary inheritance, Markdown vault projection.
 
 ## v0.1 Acceptance Criteria
 

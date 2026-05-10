@@ -77,7 +77,16 @@ DB lives at `./data/ubongo.db` (gitignored). To start with a clean state, `rm -f
 
 ## Phase 5 — Markdown Vault Projection
 
-*(Populated when Phase 5 is implemented.)*
+Daily notes land at `vault/daily/YYYY-MM-DD.md`. Vault is gitignored except `vault/.gitkeep`. Format: YAML frontmatter (date + tags), H1 date, one `## HH:MM:SS — persona [(auto)]` H2 per turn with verbatim `**You:**` / `**Ubongo:**` bodies.
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 5.1 | Daily note write | `rm -f data/ubongo.db vault/daily/$(date -u +%Y-%m-%d).md`; send 3 messages with `ubongo send` | `vault/daily/<today>.md` exists with frontmatter, H1 date, three `## HH:MM:SS — <persona>` entries containing the user/assistant pairs verbatim. |
+| 5.2 | Obsidian render (manual) | Open `vault/` as an Obsidian vault | Frontmatter shown in the properties panel; H1/H2 hierarchy correct; `**You:**` / `**Ubongo:**` bold; line wraps cleanly; Properties tags include `ubongo`, `daily`. |
+| 5.3 | Handler disable | `uv run python -c "from ubongo import events; from ubongo.memory import vault; events.unregister('after_send', vault._after_send_handler); from ubongo import oneshot; oneshot.run('test', 'casual')"`; check that today's vault file size did not grow but `messages` count did | Vault file unchanged; `sqlite3 data/ubongo.db "SELECT COUNT(*) FROM messages"` increased by 2. |
+| 5.4 | Date rollover | `UBONGO_FAKE_NOW="2030-06-15T23:50:00+00:00" ubongo send "before midnight" --persona casual`; `UBONGO_FAKE_NOW="2030-06-16T00:10:00+00:00" ubongo send "after midnight" --persona casual` | Both `vault/daily/2030-06-15.md` and `vault/daily/2030-06-16.md` exist with the respective entries. |
+| 5.5 | Auto-routed suffix | `printf '/auto\nhelp me design a circuit breaker\n/exit\n' \| ubongo` | The vault file's H2 entry for that turn ends with `(auto)` after the persona name — e.g., `## HH:MM:SS — architect (auto)`. |
+| 5.6 | Pytest passes | `uv run pytest tests/` | All tests pass (75 expected after Phase 5). |
 
 ## Phase 6 — Skills + Progressive Disclosure
 
