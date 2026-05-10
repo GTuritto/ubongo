@@ -17,7 +17,7 @@ memory:
   session_timeout_minutes: 30
   compaction:
     strategy: default
-    trigger_at_turns: 30
+    trigger_at_turns: 15
   embeddings:
     enabled: true
     model: openrouter/openai/text-embedding-3-small

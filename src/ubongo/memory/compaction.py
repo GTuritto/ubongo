@@ -11,7 +11,7 @@ from ubongo.memory.store import Message, Summary
 
 logger = logging.getLogger("ubongo.memory.compaction")
 
-Strategy = Callable[[list[Message]], str]
+Strategy = Callable[[str | None, list[Message]], str]
 
 _strategies: dict[str, Strategy] = {}
 
@@ -31,24 +31,31 @@ def list_strategies() -> list[str]:
 
 
 _DEFAULT_SYSTEM_PROMPT = """\
-You are a tight summarizer. Read the conversation excerpt and produce a single \
-factual paragraph that captures what was discussed and decided. No preamble, no list, \
-no closing remarks. Under 120 words. Third person. Plain prose."""
+You maintain a running summary of an ongoing conversation. The summary is the durable memory the assistant relies on for facts older than the recall window. Always preserve concrete facts, names, dates, preferences, and decisions stated by the user. Drop banter and pleasantries. Under 200 words. Third person. Plain prose, single paragraph or two short paragraphs at most."""
 
 
-def default_strategy(messages: list[Message]) -> str:
+def default_strategy(prior_summary: str | None, messages: list[Message]) -> str:
     if not messages:
-        return ""
+        return prior_summary or ""
     config = load_config()
     model = config.get("models", {}).get("compaction", "openrouter/anthropic/claude-haiku-4.5")
     transcript_lines = [f"{m.role}: {m.content}" for m in messages]
     transcript = "\n".join(transcript_lines)
+    if prior_summary:
+        user_content = (
+            "Existing summary of earlier turns:\n\n"
+            f"{prior_summary}\n\n"
+            "New turns to fold in (preserve everything still relevant from the existing summary; integrate the new facts):\n\n"
+            f"{transcript}"
+        )
+    else:
+        user_content = f"New turns to summarize:\n\n{transcript}"
     try:
         result = complete(
             system_prompt=_DEFAULT_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": transcript}],
+            messages=[{"role": "user", "content": user_content}],
             model=model,
-            max_tokens=256,
+            max_tokens=400,
         )
         return result.text.strip()
     except LLMError as exc:
@@ -56,6 +63,9 @@ def default_strategy(messages: list[Message]) -> str:
             "compaction_failed",
             extra={"strategy": "default", "cause": str(exc.cause) if exc.cause else None},
         )
+        # On failure, prefer keeping the prior summary over losing it.
+        if prior_summary:
+            return prior_summary
         return f"[compaction failed: {len(messages)} messages were not summarized]"
 
 
@@ -80,6 +90,9 @@ def maybe_compact(
 ) -> Summary | None:
     """Run compaction if the message-since-summary count is past the threshold.
 
+    Cumulative summaries: each compaction folds the previous summary text into
+    the new one, so the latest summary always covers from message 1 forward.
+
     Returns the persisted Summary or None if no compaction was needed.
     """
     config = load_config()
@@ -94,21 +107,28 @@ def maybe_compact(
     last_summary = store.latest_summary(conversation_id)
     floor_id = last_summary.covers_to_message_id if last_summary else 0
     max_id = store.max_message_id(conversation_id)
-    # Summarize messages from (floor_id + 1) up to (max_id - recall_turns).
     upper = max_id - recall_turns
     if upper <= floor_id:
         return None
 
-    messages = store.messages_in_range(conversation_id, floor_id + 1, upper)
-    if not messages:
+    new_messages = store.messages_in_range(conversation_id, floor_id + 1, upper)
+    if not new_messages:
         return None
 
     fn = get(strategy)
-    summary_text = fn(messages)
-    summary_id = store.persist_summary(
+    summary_text = fn(last_summary.content if last_summary else None, new_messages)
+
+    # Cumulative: the new summary covers from the very first message of the
+    # conversation through the highest message id we just folded in.
+    covers_from = (
+        last_summary.covers_from_message_id if last_summary else new_messages[0].id
+    )
+    covers_to = new_messages[-1].id
+
+    store.persist_summary(
         conversation_id=conversation_id,
-        covers_from_message_id=messages[0].id,
-        covers_to_message_id=messages[-1].id,
+        covers_from_message_id=covers_from,
+        covers_to_message_id=covers_to,
         content=summary_text,
         strategy=strategy,
     )
@@ -117,9 +137,10 @@ def maybe_compact(
         extra={
             "conversation_id": conversation_id,
             "strategy": strategy,
-            "covers_from": messages[0].id,
-            "covers_to": messages[-1].id,
-            "message_count": len(messages),
+            "covers_from": covers_from,
+            "covers_to": covers_to,
+            "new_message_count": len(new_messages),
+            "had_prior_summary": last_summary is not None,
         },
     )
     return store.latest_summary(conversation_id)
