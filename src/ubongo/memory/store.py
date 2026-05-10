@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ubongo.config import load_config
+from ubongo import events
 
 logger = logging.getLogger("ubongo.memory.store")
 
@@ -52,6 +53,12 @@ class Session:
     override_until: str | None
     current_conversation_id: int | None
     auto_mode: bool
+
+
+@dataclass(frozen=True)
+class RecallContext:
+    summary_text: str | None
+    messages: list[Message]
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _DB_PATH = _REPO_ROOT / "data" / "ubongo.db"
@@ -394,3 +401,28 @@ def current_or_new_conversation(persona: str, user_id: int = 1) -> int:
         last_message_at=now_iso(),
     )
     return new_id
+
+
+# --- recall ---
+
+
+def recall(conversation_id: int) -> RecallContext:
+    config = load_config()
+    recall_turns = int(config.get("memory", {}).get("recall_turns", 10))
+
+    summary = latest_summary(conversation_id)
+    messages = last_n_messages(conversation_id, recall_turns)
+
+    events.dispatch(
+        "after_recall",
+        {
+            "conversation_id": conversation_id,
+            "messages_since_summary": count_messages_since_summary(conversation_id),
+            "recall_turns": recall_turns,
+        },
+    )
+
+    return RecallContext(
+        summary_text=summary.content if summary else None,
+        messages=messages,
+    )

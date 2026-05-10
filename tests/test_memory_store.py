@@ -149,6 +149,28 @@ def test_current_or_new_conversation_continues_within_timeout(db, monkeypatch) -
     assert cid_1 == cid_2
 
 
+def test_recall_returns_summary_and_messages(db) -> None:
+    cid = store.start_conversation("architect")
+    for i in range(3):
+        store.append_message(cid, "user", f"q{i}")
+    store.persist_summary(cid, 1, 2, "old summary", "default")
+    ctx = store.recall(cid)
+    assert ctx.summary_text == "old summary"
+    assert [m.content for m in ctx.messages] == ["q0", "q1", "q2"]
+
+
+def test_recall_emits_after_recall_event(db) -> None:
+    from ubongo import events
+    seen: list[dict] = []
+    events.register("after_recall", seen.append)
+    cid = store.start_conversation("architect")
+    store.append_message(cid, "user", "hi")
+    store.recall(cid)
+    assert seen
+    assert seen[-1]["conversation_id"] == cid
+    events.clear()
+
+
 def test_current_or_new_conversation_starts_new_after_timeout(db, monkeypatch) -> None:
     monkeypatch.setenv("UBONGO_FAKE_NOW", "2030-01-01T12:00:00+00:00")
     cid_1 = store.current_or_new_conversation("architect")

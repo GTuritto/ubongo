@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
+from ubongo import events
 from ubongo.config import load_config
 from ubongo.llm import LLMError, complete
 from ubongo.memory import store
@@ -59,6 +60,17 @@ def default_strategy(messages: list[Message]) -> str:
 
 
 register("default", default_strategy)
+
+
+def _compaction_handler(payload: dict) -> None:
+    """Subscribed to after_recall: triggers maybe_compact in-band."""
+    conversation_id = payload.get("conversation_id")
+    if conversation_id is None:
+        return
+    maybe_compact(conversation_id)
+
+
+events.register("after_recall", _compaction_handler)
 
 
 def maybe_compact(
