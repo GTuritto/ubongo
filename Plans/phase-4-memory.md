@@ -38,6 +38,7 @@ Branch already cut. Seven commits, one per sub-phase, plus a final STATUS + smok
 **Files added:** `src/ubongo/memory/__init__.py`, `src/ubongo/memory/schema.sql`, `src/ubongo/memory/store.py` (skeleton — full API in 4b).
 
 **Decisions flagged:**
+
 - **DB at repo root (`./ubongo.db`).** Single-user, local-first, no networked instance. Already gitignored via `*.db`. Alternative (`./data/ubongo.db`) requires creating a directory; not worth the friction for one file.
 - **Schema all-tables-up-front.** Per spec: Phase 4 creates the entire v0.1 schema even though Phases 8, 14, 18 are the first to write to most of it. Migrations are the maintenance cost we're avoiding.
 - **`PRAGMA foreign_keys = ON`.** SQLite defaults to off. Turning it on enforces the FK constraints the schema declares (e.g., messages → conversations). Cost is negligible; safety is real.
@@ -65,6 +66,7 @@ Branch already cut. Seven commits, one per sub-phase, plus a final STATUS + smok
 **Files modified:** `src/ubongo/memory/store.py` (continuing).
 
 **Decisions flagged:**
+
 - **Single-user assumption.** `user_id=1` everywhere. v0.1 is single-user (memory `feedback_ubongo_v0.1_full_vision.md`). Multi-user is explicitly out of scope.
 - **Timestamps as ISO 8601 strings, not unix epoch.** SQLite TIMESTAMP is text; ISO strings are sortable lexicographically and human-readable in `sqlite3 ubongo.db`.
 - **No ORM.** Plain `sqlite3` with parameterized queries. Keeps the dependency surface zero-extra and the SQL inspectable.
@@ -107,6 +109,7 @@ Branch already cut. Seven commits, one per sub-phase, plus a final STATUS + smok
 **Files added:** `src/ubongo/memory/compaction.py`.
 
 **Decisions flagged:**
+
 - **Compaction LLM call is synchronous in-line.** A turn that triggers compaction will pause for the haiku-4.5 call before the user sees the response. Acceptable for v0.1 (compaction is rare); Phase 13 Repair Agent or a dedicated background task could move it off the hot path. Documented for later.
 - **Strategy registry rather than a class hierarchy.** Spec says "registry pattern". Functions over classes for one-method protocols.
 
