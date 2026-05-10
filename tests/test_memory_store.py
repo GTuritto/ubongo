@@ -128,3 +128,35 @@ def test_now_iso_uses_fake_now_when_set(db, monkeypatch) -> None:
     monkeypatch.setenv("UBONGO_FAKE_NOW", "2030-01-01T00:00:00+00:00")
     iso = store.now_iso()
     assert iso.startswith("2030-01-01T00:00:00")
+
+
+# --- session timeout / current-or-new conversation ---
+
+
+def test_current_or_new_conversation_creates_first_one(db) -> None:
+    cid = store.current_or_new_conversation("architect")
+    sess = store.get_session()
+    assert sess is not None
+    assert sess.current_conversation_id == cid
+    assert sess.active_persona == "architect"
+
+
+def test_current_or_new_conversation_continues_within_timeout(db, monkeypatch) -> None:
+    monkeypatch.setenv("UBONGO_FAKE_NOW", "2030-01-01T12:00:00+00:00")
+    cid_1 = store.current_or_new_conversation("architect")
+    monkeypatch.setenv("UBONGO_FAKE_NOW", "2030-01-01T12:25:00+00:00")  # 25 min later
+    cid_2 = store.current_or_new_conversation("architect")
+    assert cid_1 == cid_2
+
+
+def test_current_or_new_conversation_starts_new_after_timeout(db, monkeypatch) -> None:
+    monkeypatch.setenv("UBONGO_FAKE_NOW", "2030-01-01T12:00:00+00:00")
+    cid_1 = store.current_or_new_conversation("architect")
+    monkeypatch.setenv("UBONGO_FAKE_NOW", "2030-01-01T12:31:00+00:00")  # 31 min later
+    cid_2 = store.current_or_new_conversation("casual")
+    assert cid_1 != cid_2
+    # Previous conversation closed at the previous last_message_at, not 'now'.
+    prev = store.get_conversation(cid_1)
+    assert prev is not None
+    assert prev.ended_at is not None
+    assert prev.ended_at.startswith("2030-01-01T12:00:00")

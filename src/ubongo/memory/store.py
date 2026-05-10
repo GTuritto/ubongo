@@ -4,8 +4,10 @@ import logging
 import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from ubongo.config import load_config
 
 logger = logging.getLogger("ubongo.memory.store")
 
@@ -347,3 +349,48 @@ def upsert_session(
         """,
         (new_last, new_persona, new_conv_id, new_auto, user_id),
     )
+
+
+# --- session timeout / current-or-new conversation ---
+
+
+def _parse_iso(s: str) -> datetime:
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    return datetime.fromisoformat(s)
+
+
+def _session_timeout() -> timedelta:
+    config = load_config()
+    minutes = config.get("memory", {}).get("session_timeout_minutes", 30)
+    try:
+        return timedelta(minutes=int(minutes))
+    except (TypeError, ValueError):
+        return timedelta(minutes=30)
+
+
+def current_or_new_conversation(persona: str, user_id: int = 1) -> int:
+    """Return the active conversation id for the user, starting a new one if needed.
+
+    The current conversation continues if (now - last_message_at) is within the
+    session timeout. Otherwise the previous conversation is closed (ended_at set
+    to the previous last_message_at) and a new conversation starts.
+    """
+    now = _now()
+    session = get_session(user_id)
+
+    if session and session.current_conversation_id and session.last_message_at:
+        last = _parse_iso(session.last_message_at)
+        if now - last < _session_timeout():
+            return session.current_conversation_id
+        # Timeout exceeded; close the previous conversation.
+        end_conversation(session.current_conversation_id, when=session.last_message_at)
+
+    new_id = start_conversation(persona)
+    upsert_session(
+        user_id=user_id,
+        active_persona=persona,
+        current_conversation_id=new_id,
+        last_message_at=now_iso(),
+    )
+    return new_id
