@@ -1,0 +1,16 @@
+rules:
+  - match: { intent: technical }
+    workflow: technical_deep
+  - match: { intent: work, task_type: command }
+    workflow: quick_action
+  - match: { intent: casual }
+    workflow: casual_reply
+  - match: { tone: frustrated }
+    workflow: supportive_reply
+  - match: { intent: research }
+    workflow: research_brief
+  - match: { intent: coding }
+    workflow: coding_session
+  - match: { task_type: high_stakes_decision }
+    workflow: debate_then_synthesize
+default_workflow: casual_reply
