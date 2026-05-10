@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 
+from ubongo import memory  # noqa: F401  -- registers after_llm seam
 from ubongo.repl import DEFAULT_PERSONA, VALID_PERSONAS, handle_text
 
 logger = logging.getLogger("ubongo.oneshot")

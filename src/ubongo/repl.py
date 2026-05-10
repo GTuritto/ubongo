@@ -137,8 +137,13 @@ def handle_slash(line: str, current_persona: str) -> tuple[str, bool, str, bool 
 
 
 def run(default_persona: str = DEFAULT_PERSONA) -> int:
-    persona = default_persona
-    auto_mode = False
+    session = store.get_session()
+    if session and session.active_persona in VALID_PERSONAS:
+        persona = session.active_persona
+        auto_mode = session.auto_mode
+    else:
+        persona = default_persona
+        auto_mode = False
     print(_BANNER)
     while True:
         try:
@@ -157,6 +162,7 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
             print(msg)
             if auto_change is not None:
                 auto_mode = auto_change
+            store.upsert_session(active_persona=persona, auto_mode=auto_mode)
             if not keep_going:
                 return 0
             continue
