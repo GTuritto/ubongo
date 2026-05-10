@@ -37,7 +37,7 @@ Each phase is built on its own branch. Don't start Phase N+1 until Phase N's tes
 
 ## Lines of Code
 
-240 / ~15,000 soft target (excluding tests). Phase 0: skeleton + config + context loader + JSON logger + CLI entry.
+553 / ~15,000 soft target (excluding tests). Phases 0-2: skeleton, config, context loader, JSON logger, REPL + one-shot, persona registry, LiteLLM wrapper, event bus.
 
 ## v0.1 Acceptance Criteria
 
