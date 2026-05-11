@@ -90,7 +90,18 @@ Daily notes land at `vault/daily/YYYY-MM-DD.md`. Vault is gitignored except `vau
 
 ## Phase 6 — Skills + Progressive Disclosure
 
-*(Populated when Phase 6 is implemented.)*
+Skills live under `config/skills/<name>/`. v0.1 ships `summarize-conversation`. The registry parses frontmatter at startup; bodies and `prompts/*.md` files load lazily on first activation (log lines `skill_body_loaded` / `skill_prompt_loaded`). `/reload` clears all caches (UBONGO.md, personas, skills). `/summary` is a meta-command — it does not persist a message row, does not dispatch `after_send`, and does not touch the vault.
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 6.1 | `/skills` lists registered | `uv run python -m ubongo`; type `/skills` | Table headed `Registered skills:` with one row containing `summarize-conversation`, `risk=low`, `reversibility=reversible`, and the description. |
+| 6.2 | `/summary` produces a recap | `rm -f data/ubongo.db`; in REPL, send 5 messages on a related topic; then `/summary` | A 3–5 sentence operator-voice recap printed to stdout. `sqlite3 data/ubongo.db "SELECT COUNT(*) FROM messages"` is unchanged from before `/summary`; `vault/daily/<today>.md` size unchanged; no new `after_send` payload. |
+| 6.3 | `/reload` picks up edits | Edit `config/skills/summarize-conversation/prompts/summarize.md` (e.g., add `Write the recap in haiku form.`); in REPL: `/reload`; then `/summary` | First reply: `Reloaded UBONGO.md, personas, and skills.` Second reply (`/summary`) reflects the edit. Restore the file afterward. |
+| 6.4 | Body lazy-load | `uv run python -c "from ubongo import skills; skills.list_skills(); print('discovery done')" 2>&1 \| grep skill_body_loaded` ; then `uv run python -c "from ubongo import skills; skills.list_skills(); skills.body('summarize-conversation')" 2>&1 \| grep skill_body_loaded` | First command emits nothing (no `skill_body_loaded` at discovery). Second command emits one `skill_body_loaded` JSON line. |
+| 6.5 | Classifier suggests skill | REPL: `/auto`, then `can you wrap this up for me` | stderr `classify` log line includes `suggested_skill=summarize-conversation`. The reply runs through the normal turn flow with the skill body in the system prompt (no `/summary` shortcut needed). |
+| 6.6 | `/skill <name>` is one-shot | REPL: `/skill summarize-conversation`; then send `hi`; then send `hi again` | After `/skill ...`: `Next turn will use skill: summarize-conversation.` The `hi` turn includes the skill body in the system prompt; the `hi again` turn does not. |
+| 6.7 | Unknown skill rejected | REPL: `/skill phantom` | `Unknown skill: phantom.` REPL state unchanged; next text turn runs normally without any skill. |
+| 6.8 | Pytest passes | `uv run pytest tests/` | All tests pass (109 expected after Phase 6). |
 
 ## Phase 7 — Minimal Outbound Queue
 

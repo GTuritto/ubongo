@@ -1,10 +1,10 @@
 # Ubongo — Implementation Status
 
-Last updated: 2026-05-09
+Last updated: 2026-05-11
 
 ## Overall
 
-Phases 0–4 merged. Phase 5 (Obsidian-compatible Markdown vault projection) complete on `phase-5-vault` branch, awaiting user merge. Each successful turn appends to `vault/daily/YYYY-MM-DD.md` via an `after_send` handler that subscribers can unregister to test independence from SQLite. Read-only in v0.1; bidirectional sync is Phase 21. v0.1 scope is multi-agent + self-improving + CLI; see [UBONGO_BUILD.md](UBONGO_BUILD.md).
+Phases 0–5 merged. Phase 6 (Skills + Progressive Disclosure) complete on `phase-6-skills` branch, awaiting user merge. Skills live as folders under `config/skills/` with YAML frontmatter (name, description, risk, reversibility, optional default_persona + prompts mapping); descriptions load at startup, bodies and prompt files load lazily on first activation. v0.1 ships `summarize-conversation`, invoked via `/summary` (meta-command, no persistence). Classifier now suggests real skills; the REPL gains `/skill <name>` (one-shot pinned skill), `/skills`, and `/reload` (clears UBONGO.md + persona + skill caches). v0.1 scope is multi-agent + self-improving + CLI; see [UBONGO_BUILD.md](UBONGO_BUILD.md).
 
 ## Phase Tracker
 
@@ -16,7 +16,7 @@ Phases 0–4 merged. Phase 5 (Obsidian-compatible Markdown vault projection) com
 | 3 | Foundation | Tone Classifier + Auto Routing | `phase-3-classifier` | Complete (2026-05-10) |
 | 4 | Foundation | SQLite Memory + Compaction | `phase-4-memory` | Complete (2026-05-10) |
 | 5 | Foundation | Markdown Vault Projection | `phase-5-vault` | Complete (2026-05-10) |
-| 6 | Foundation | Skills + Progressive Disclosure | `phase-6-skills` | Not started |
+| 6 | Foundation | Skills + Progressive Disclosure | `phase-6-skills` | Complete (2026-05-11) |
 | 7 | Foundation | Minimal Outbound Queue | `phase-7-queue` | Not started |
 | 8 | Multi-Agent | Master Agent | `phase-8-master` | Not started |
 | 9 | Multi-Agent | First Workers (Research + Memory) | `phase-9-research-memory` | Not started |
@@ -37,7 +37,7 @@ Each phase is built on its own branch. Don't start Phase N+1 until Phase N's tes
 
 ## Lines of Code
 
-1648 / ~15,000 soft target (excluding tests). Phases 0-5: skeleton, config, context loader, JSON logger, REPL + one-shot, persona registry, LiteLLM wrapper, event bus, tone classifier, routing + hysteresis, SQLite store + sessions, cumulative compaction, cross-session summary inheritance, Markdown vault projection.
+1973 / ~15,000 soft target (excluding tests). Phases 0-6: skeleton, config, context loader, JSON logger, REPL + one-shot, persona registry, LiteLLM wrapper, event bus, tone classifier, routing + hysteresis, SQLite store + sessions, cumulative compaction, cross-session summary inheritance, Markdown vault projection, skills registry with lazy body / prompt loading, classifier skill suggestion, summarize-conversation skill + /summary, /skill /skills /reload REPL commands.
 
 ## v0.1 Acceptance Criteria
 
