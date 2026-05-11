@@ -90,7 +90,7 @@ def _parse_skill(skill_dir: Path) -> Skill:
     if name != skill_dir.name:
         logger.warning(
             "skill_name_dir_mismatch",
-            extra={"skill_dir": skill_dir.name, "frontmatter_name": name},
+            extra={"skill_dir_name": skill_dir.name, "frontmatter_name": name},
         )
 
     return Skill(
@@ -149,7 +149,7 @@ def body(name: str) -> str:
     _, raw_body = _split_frontmatter(text)
     stripped = raw_body.rstrip()
     _body_cache[name] = stripped
-    logger.info("skill_body_loaded", extra={"name": name})
+    logger.info("skill_body_loaded", extra={"skill_name": name})
     return stripped
 
 
@@ -166,7 +166,7 @@ def prompt(name: str, key: str) -> str:
         raise FileNotFoundError(f"Skill {name} prompt {key!r} not found at {path}")
     text = path.read_text(encoding="utf-8")
     _prompt_cache[(name, key)] = text
-    logger.info("skill_prompt_loaded", extra={"name": name, "key": key})
+    logger.info("skill_prompt_loaded", extra={"skill_name": name, "prompt_key": key})
     return text
 
 
@@ -177,7 +177,7 @@ def resolve(*, pinned: str | None, suggested: str | None) -> Skill | None:
             continue
         if has(candidate):
             return get(candidate)
-        logger.warning("skill_resolve_unknown", extra={"name": candidate})
+        logger.warning("skill_resolve_unknown", extra={"skill_name": candidate})
     return None
 
 
