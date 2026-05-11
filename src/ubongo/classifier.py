@@ -6,7 +6,7 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from ubongo import events
+from ubongo import events, skills
 from ubongo.config import load_config
 from ubongo.llm import LLMError, complete
 
@@ -37,18 +37,33 @@ _FALLBACK = Classification(
     confidence=0.0,
 )
 
-_SYSTEM_PROMPT = """\
+_BASE_PROMPT = """\
 You are a fast classifier. Read the user message and return ONLY a single JSON object with EXACTLY these keys:
 
 - intent: one of [technical, casual, work, research, coding, other]
 - tone: one of [neutral, frustrated, excited, tired, curious]
 - task_type: one of [command, high_stakes_decision, question, chat, none]
-- suggested_skill: null
+- suggested_skill: {skill_clause}
 - risk: one of [low, medium, high, destructive]
 - confidence: a float between 0.0 and 1.0
 
-No prose, no explanation, no code fences. Just the JSON object.
+No prose, no explanation, no code fences. Just the JSON object.\
 """
+
+
+def _build_system_prompt() -> str:
+    registered = skills.list_skills()
+    if not registered:
+        return _BASE_PROMPT.replace("{skill_clause}", "null")
+    bullets = "\n".join(f"- {s.name} — {s.description}" for s in registered)
+    skill_clause = (
+        "one of the listed skill names below, or null if no skill applies"
+    )
+    return (
+        _BASE_PROMPT.replace("{skill_clause}", skill_clause)
+        + "\n\n## Available skills\n\n"
+        + bullets
+    )
 
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
@@ -80,6 +95,9 @@ def _validate(parsed: dict[str, Any]) -> Classification | None:
         return None
     if suggested_skill is not None and not isinstance(suggested_skill, str):
         return None
+    if isinstance(suggested_skill, str) and not skills.has(suggested_skill):
+        logger.warning("classify_unknown_skill", extra={"skill_name": suggested_skill})
+        suggested_skill = None
 
     confidence = max(0.0, min(1.0, float(confidence)))
 
@@ -101,7 +119,7 @@ def classify(message: str) -> Classification:
 
     try:
         result = complete(
-            system_prompt=_SYSTEM_PROMPT,
+            system_prompt=_build_system_prompt(),
             messages=[{"role": "user", "content": message}],
             model=model,
             max_tokens=128,

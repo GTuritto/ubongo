@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
-from ubongo import classifier, events  # noqa: E402
+from ubongo import classifier, events, skills  # noqa: E402
 from ubongo.classifier import _FALLBACK, Classification, classify  # noqa: E402
 from ubongo.llm import CompletionResult, LLMError  # noqa: E402
 
@@ -22,6 +24,37 @@ def _reset_event_bus():
     events.clear()
     yield
     events.clear()
+
+
+def _write_skill(root: Path, name: str, description: str) -> None:
+    skill_dir = root / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\n"
+        f"name: {name}\n"
+        f"description: {description}\n"
+        f"risk: low\n"
+        f"reversibility: reversible\n"
+        f"---\n"
+        f"\n"
+        f"body\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.fixture
+def empty_skills(tmp_path: Path):
+    skills.set_skills_dir(tmp_path)
+    yield tmp_path
+    skills.set_skills_dir(None)
+
+
+@pytest.fixture
+def with_summarize_skill(tmp_path: Path):
+    _write_skill(tmp_path, "summarize-conversation", "Recap the conversation in 3-5 sentences.")
+    skills.set_skills_dir(tmp_path)
+    yield tmp_path
+    skills.set_skills_dir(None)
 
 
 def test_valid_json_passes_through() -> None:
@@ -130,3 +163,50 @@ def test_after_classify_marks_fallback_true_on_error() -> None:
     with patch("ubongo.classifier.complete", return_value=_completion("garbage")):
         classify("hi")
     assert seen[0]["fallback"] is True
+
+
+def test_system_prompt_omits_skills_block_when_registry_empty(empty_skills: Path) -> None:
+    prompt = classifier._build_system_prompt()
+    assert "## Available skills" not in prompt
+    assert "suggested_skill: null" in prompt
+
+
+def test_system_prompt_lists_registered_skills(with_summarize_skill: Path) -> None:
+    prompt = classifier._build_system_prompt()
+    assert "## Available skills" in prompt
+    assert "- summarize-conversation — Recap the conversation in 3-5 sentences." in prompt
+    assert "one of the listed skill names below, or null" in prompt
+
+
+def test_known_skill_passes_through(with_summarize_skill: Path) -> None:
+    body = json.dumps({
+        "intent": "casual",
+        "tone": "neutral",
+        "task_type": "command",
+        "suggested_skill": "summarize-conversation",
+        "risk": "low",
+        "confidence": 0.8,
+    })
+    with patch("ubongo.classifier.complete", return_value=_completion(body)):
+        result = classify("can you wrap this up for me")
+    assert result.suggested_skill == "summarize-conversation"
+
+
+def test_unknown_skill_coerced_to_none_and_logs(
+    with_summarize_skill: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.WARNING, logger="ubongo.classifier")
+    body = json.dumps({
+        "intent": "casual",
+        "tone": "neutral",
+        "task_type": "command",
+        "suggested_skill": "not-a-real-skill",
+        "risk": "low",
+        "confidence": 0.8,
+    })
+    with patch("ubongo.classifier.complete", return_value=_completion(body)):
+        result = classify("hi")
+    assert result.suggested_skill is None
+    assert result.intent == "casual"
+    unknown_logs = [r for r in caplog.records if r.message == "classify_unknown_skill"]
+    assert len(unknown_logs) == 1
