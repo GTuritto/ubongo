@@ -151,3 +151,38 @@ def test_default_strategy_includes_prior_summary_in_prompt(db) -> None:
     user_content = kwargs["messages"][0]["content"]
     assert "User said their birthday is March 15." in user_content
     assert "Existing summary" in user_content
+
+
+def test_default_strategy_preserves_named_facts_under_repetitive_tail(db) -> None:
+    """Regression for smoke 4.4: when later turns are repetitive ('just say ok'),
+    the prompt must position the prior summary as non-negotiable carry-forward and
+    instruct the model not to let the pattern overwrite earlier facts."""
+    cid = store.start_conversation("casual")
+    prior = "User's birthday is March 15. They are working on a project called Ubongo."
+    # Seed a single early message so we can advance covers_to past it.
+    store.append_message(cid, "user", "early")
+    store.persist_summary(cid, 1, 1, prior, "default")
+    # Drive 15 repetitive turns past the floor to trigger another compaction.
+    for i in range(8):
+        store.append_message(cid, "user", "just say ok")
+        store.append_message(cid, "assistant", "Ok")
+
+    with patch(
+        "ubongo.memory.compaction.complete",
+        return_value=_completion("updated summary"),
+    ) as mock_complete:
+        compaction.maybe_compact(cid)
+
+    args, kwargs = mock_complete.call_args
+    user_content = kwargs["messages"][0]["content"]
+    system_prompt = kwargs["system_prompt"]
+
+    # Prior facts surface in the user message under the FACTS TO PRESERVE frame.
+    assert "March 15" in user_content
+    assert "Ubongo" in user_content
+    assert "FACTS TO PRESERVE" in user_content
+
+    # System prompt carries the hard rules that block silent fact-dropping when the
+    # tail is repetitive.
+    assert "carry-forward" in system_prompt.lower()
+    assert "repetitive" in system_prompt.lower() or "pattern-shaped" in system_prompt.lower()

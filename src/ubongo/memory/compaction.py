@@ -31,7 +31,15 @@ def list_strategies() -> list[str]:
 
 
 _DEFAULT_SYSTEM_PROMPT = """\
-You maintain a running summary of an ongoing conversation. The summary is the durable memory the assistant relies on for facts older than the recall window. Always preserve concrete facts, names, dates, preferences, and decisions stated by the user. Drop banter and pleasantries. Under 200 words. Third person. Plain prose, single paragraph or two short paragraphs at most."""
+You maintain a running summary of an ongoing conversation. The summary is the durable memory the assistant relies on for facts older than the recall window.
+
+Hard rules:
+1. The existing summary (when one is provided) is a carry-forward. Every named entity, date, number, identifier, preference, "remember this" instruction, and concrete decision in it must appear in your output. You may rephrase, but you may not drop any of these.
+2. When the new turns are repetitive or pattern-shaped (e.g., the same short reply repeated), summarize the pattern in ONE sentence at the end. Do not let the pattern overwrite earlier facts.
+3. Always preserve concrete facts, names, dates, numbers, identifiers, preferences, and decisions stated by the user in the new turns too.
+4. Drop banter and pleasantries.
+
+Format: under 200 words, third person, plain prose, single paragraph or two short paragraphs at most."""
 
 
 def default_strategy(prior_summary: str | None, messages: list[Message]) -> str:
@@ -43,10 +51,14 @@ def default_strategy(prior_summary: str | None, messages: list[Message]) -> str:
     transcript = "\n".join(transcript_lines)
     if prior_summary:
         user_content = (
-            "Existing summary of earlier turns:\n\n"
+            "## Existing summary (FACTS TO PRESERVE — every named entity, date, number, "
+            "and 'remember this' from here must appear in your output)\n\n"
             f"{prior_summary}\n\n"
-            "New turns to fold in (preserve everything still relevant from the existing summary; integrate the new facts):\n\n"
-            f"{transcript}"
+            "## New turns to fold in\n\n"
+            f"{transcript}\n\n"
+            "Write the updated summary now. Carry every fact above forward; integrate any "
+            "new facts from the transcript; if the transcript is repetitive, describe the "
+            "pattern in one sentence."
         )
     else:
         user_content = f"New turns to summarize:\n\n{transcript}"
