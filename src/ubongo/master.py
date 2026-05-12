@@ -220,6 +220,7 @@ class MasterAgent:
             auto_mode=auto_mode,
             pending_skill=pending_skill,
         )
+        started_at = store.now_iso()
         classification = self.classify(message, ctx)
         workflow = self.plan(classification, ctx)
         chosen = workflow.persona
@@ -254,8 +255,46 @@ class MasterAgent:
             auto_mode=auto_mode,
         )
 
+        workflow_run_id = store.append_workflow_run(
+            conversation_id=conv_id,
+            message_id=user_msg_id,
+            classification=asdict(classification),
+            workflow=asdict(workflow),
+            execution_mode=workflow.execution_mode,
+            outcome="success" if result.ok else "failure",
+            started_at=started_at,
+            ended_at=ts_now,
+        )
+
         decision = self.decide(classification, result, ctx)
         # decision.action is logged but does NOT alter flow in Phase 8 (always "auto").
+
+        decision_id = store.append_governance_decision(
+            workflow_run_id=workflow_run_id,
+            intent=classification.intent,
+            risk=classification.risk,
+            confidence=classification.confidence,
+            reversibility=None,
+            action=decision.action,
+        )
+
+        logger.info(
+            "master_decision",
+            extra={
+                "intent": classification.intent,
+                "tone": classification.tone,
+                "task_type": classification.task_type,
+                "risk": classification.risk,
+                "confidence": classification.confidence,
+                "persona": chosen,
+                "skill": workflow.skill_name,
+                "execution_mode": workflow.execution_mode,
+                "action": decision.action,
+                "workflow_run_id": workflow_run_id,
+                "decision_id": decision_id,
+                "conversation_id": conv_id,
+            },
+        )
 
         text = self.compose(workflow, result, ctx)
 
@@ -270,6 +309,8 @@ class MasterAgent:
                 "user_message_id": user_msg_id,
                 "assistant_message_id": assistant_msg_id,
                 "ts": ts_now,
+                "workflow_run_id": workflow_run_id,
+                "decision_id": decision_id,
             }
         token = queue.enqueue_for_delivery(
             text,
@@ -280,6 +321,7 @@ class MasterAgent:
                 "auto_routed": auto_mode,
                 "conversation_id": conv_id,
                 "assistant_message_id": assistant_msg_id,
+                "workflow_run_id": workflow_run_id,
                 "decision_action": decision.action,
             },
         )

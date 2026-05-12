@@ -210,3 +210,69 @@ def test_current_or_new_conversation_starts_new_after_timeout(db, monkeypatch) -
     assert prev is not None
     assert prev.ended_at is not None
     assert prev.ended_at.startswith("2030-01-01T12:00:00")
+
+
+def test_workflow_run_and_governance_decision_round_trip(db) -> None:
+    cid = store.start_conversation("architect")
+    msg_id = store.append_message(cid, "user", "design a circuit breaker", persona="architect")
+    wf_id = store.append_workflow_run(
+        conversation_id=cid,
+        message_id=msg_id,
+        classification={"intent": "technical", "confidence": 0.9},
+        workflow={"persona": "architect", "execution_mode": "sequential"},
+        execution_mode="sequential",
+        outcome="success",
+        started_at=store.now_iso(),
+        ended_at=store.now_iso(),
+    )
+    assert isinstance(wf_id, int)
+    gd_id = store.append_governance_decision(
+        workflow_run_id=wf_id,
+        intent="technical",
+        risk="low",
+        confidence=0.9,
+        reversibility=None,
+        action="auto",
+    )
+    assert isinstance(gd_id, int)
+
+    decisions = store.last_n_governance_decisions(10)
+    assert len(decisions) == 1
+    d = decisions[0]
+    assert d["id"] == gd_id
+    assert d["workflow_run_id"] == wf_id
+    assert d["intent"] == "technical"
+    assert d["action"] == "auto"
+    assert d["persona"] == "architect"  # extracted from workflow JSON
+    assert d["execution_mode"] == "sequential"
+
+
+def test_last_n_governance_decisions_returns_newest_first(db) -> None:
+    cid = store.start_conversation("casual")
+    msg_id = store.append_message(cid, "user", "x")
+    ids = []
+    for _ in range(3):
+        wf_id = store.append_workflow_run(
+            conversation_id=cid,
+            message_id=msg_id,
+            classification={"intent": "casual"},
+            workflow={"persona": "casual"},
+            execution_mode="sequential",
+            outcome="success",
+            started_at=store.now_iso(),
+        )
+        gd_id = store.append_governance_decision(
+            workflow_run_id=wf_id,
+            intent="casual",
+            risk="low",
+            confidence=0.9,
+            reversibility=None,
+            action="auto",
+        )
+        ids.append(gd_id)
+    out = store.last_n_governance_decisions(2)
+    assert [d["id"] for d in out] == [ids[2], ids[1]]
+
+
+def test_last_n_governance_decisions_empty(db) -> None:
+    assert store.last_n_governance_decisions(10) == []

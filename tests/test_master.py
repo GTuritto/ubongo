@@ -281,3 +281,75 @@ def test_handle_returns_skill_name_when_pending_skill_set():
             pending_skill="summarize-conversation",
         )
     assert response.skill_name == "summarize-conversation"
+
+
+# --- persistence (8d) ---
+
+
+def _query_one(sql: str):
+    conn = store.connection()
+    return conn.execute(sql).fetchone()
+
+
+def test_handle_persists_workflow_run_and_governance_decision_on_success():
+    with patch("ubongo.master.complete", return_value=_completion("ok")):
+        master.handle("hi", "casual", auto_mode=False)
+
+    wf = _query_one(
+        "SELECT id, conversation_id, execution_mode, outcome FROM workflow_runs"
+    )
+    assert wf is not None
+    assert wf["execution_mode"] == "sequential"
+    assert wf["outcome"] == "success"
+
+    gd = _query_one(
+        "SELECT workflow_run_id, intent, risk, action FROM governance_decisions"
+    )
+    assert gd is not None
+    assert gd["workflow_run_id"] == wf["id"]
+    assert gd["action"] == "auto"
+
+
+def test_handle_persists_workflow_run_with_failure_outcome_on_llm_error():
+    with patch("ubongo.master.complete", side_effect=LLMError("boom", cause=RuntimeError("nope"))):
+        master.handle("hi", "casual", auto_mode=False)
+
+    wf = _query_one("SELECT outcome FROM workflow_runs")
+    assert wf is not None
+    assert wf["outcome"] == "failure"
+    # decision still recorded with action=auto (Phase 14 will downgrade)
+    gd = _query_one("SELECT action FROM governance_decisions")
+    assert gd["action"] == "auto"
+
+
+def test_handle_emits_master_decision_log(caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="ubongo.master")
+    with patch("ubongo.master.complete", return_value=_completion("ok")):
+        master.handle("hi", "casual", auto_mode=False)
+
+    md_records = [r for r in caplog.records if r.msg == "master_decision"]
+    assert len(md_records) == 1
+    rec = md_records[0]
+    # All documented fields present
+    for field in (
+        "intent", "tone", "task_type", "risk", "confidence",
+        "persona", "skill", "execution_mode", "action",
+        "workflow_run_id", "decision_id", "conversation_id",
+    ):
+        assert hasattr(rec, field), f"missing {field}"
+    assert rec.action == "auto"
+    assert rec.execution_mode == "sequential"
+
+
+def test_workflow_run_classification_json_round_trips():
+    import json
+    with patch("ubongo.master.complete", return_value=_completion("ok")):
+        master.handle("design a circuit breaker", "architect", auto_mode=False)
+    row = _query_one("SELECT classification, workflow FROM workflow_runs")
+    cls = json.loads(row["classification"])
+    wf = json.loads(row["workflow"])
+    assert "intent" in cls
+    assert wf["persona"] == "architect"
+    assert wf["execution_mode"] == "sequential"

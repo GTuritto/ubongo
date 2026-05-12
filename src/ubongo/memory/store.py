@@ -455,3 +455,117 @@ def recall(conversation_id: int) -> RecallContext:
         summary_text=summary.content if summary else None,
         messages=messages,
     )
+
+
+# --- workflow_runs + governance_decisions ---
+
+
+def append_workflow_run(
+    conversation_id: int,
+    message_id: int,
+    classification: dict,
+    workflow: dict,
+    execution_mode: str,
+    outcome: str,
+    started_at: str,
+    ended_at: str | None = None,
+) -> int:
+    import json as _json
+
+    conn = connection()
+    cursor = conn.execute(
+        """
+        INSERT INTO workflow_runs
+            (conversation_id, message_id, classification, workflow,
+             execution_mode, started_at, ended_at, outcome)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            conversation_id,
+            message_id,
+            _json.dumps(classification),
+            _json.dumps(workflow),
+            execution_mode,
+            started_at,
+            ended_at,
+            outcome,
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
+def append_governance_decision(
+    workflow_run_id: int,
+    *,
+    intent: str | None,
+    risk: str | None,
+    confidence: float | None,
+    reversibility: str | None,
+    action: str,
+    approval_response: str | None = None,
+    decided_at: str | None = None,
+) -> int:
+    conn = connection()
+    cursor = conn.execute(
+        """
+        INSERT INTO governance_decisions
+            (workflow_run_id, intent, risk, confidence, reversibility,
+             action, approval_response, decided_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            workflow_run_id,
+            intent,
+            risk,
+            confidence,
+            reversibility,
+            action,
+            approval_response,
+            decided_at or now_iso(),
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
+def last_n_governance_decisions(n: int = 10) -> list[dict]:
+    """Return the last N decisions joined with their workflow_runs for display.
+
+    Each dict carries: id, decided_at, intent, risk, confidence, action,
+    persona (extracted from workflow JSON), execution_mode, workflow_run_id.
+    """
+    import json as _json
+
+    if n <= 0:
+        return []
+    conn = connection()
+    rows = conn.execute(
+        """
+        SELECT g.id, g.decided_at, g.intent, g.risk, g.confidence, g.action,
+               g.workflow_run_id, w.execution_mode, w.workflow
+        FROM governance_decisions g
+        JOIN workflow_runs w ON w.id = g.workflow_run_id
+        ORDER BY g.decided_at DESC, g.id DESC
+        LIMIT ?
+        """,
+        (n,),
+    ).fetchall()
+    out: list[dict] = []
+    for row in rows:
+        persona = None
+        try:
+            wf = _json.loads(row["workflow"]) if row["workflow"] else {}
+            persona = wf.get("persona")
+        except Exception:
+            persona = None
+        out.append({
+            "id": row["id"],
+            "decided_at": row["decided_at"],
+            "intent": row["intent"],
+            "risk": row["risk"],
+            "confidence": row["confidence"],
+            "action": row["action"],
+            "workflow_run_id": row["workflow_run_id"],
+            "execution_mode": row["execution_mode"],
+            "persona": persona,
+        })
+    return out
