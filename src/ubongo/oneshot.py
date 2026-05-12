@@ -3,9 +3,9 @@ from __future__ import annotations
 import logging
 import sys
 
-from ubongo import memory  # noqa: F401  -- registers after_llm seam
+from ubongo import master, memory  # noqa: F401  -- registers after_llm seam
 from ubongo.delivery import queue
-from ubongo.repl import DEFAULT_PERSONA, VALID_PERSONAS, handle_text
+from ubongo.repl import DEFAULT_PERSONA, VALID_PERSONAS
 
 logger = logging.getLogger("ubongo.oneshot")
 
@@ -20,7 +20,7 @@ def run(message: str, persona: str | None = None) -> int:
         )
         return 1
 
-    response, ok, _used, _skill, token = handle_text(chosen, message, auto_mode=False)
-    print(response)
-    queue.flush_delivered(token)
-    return 0 if ok else 1
+    response = master.handle(message, chosen, auto_mode=False)
+    print(response.text)
+    queue.flush_delivered(response.delivery_token)
+    return 0 if response.ok else 1

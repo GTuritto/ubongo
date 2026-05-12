@@ -138,7 +138,9 @@ def test_parse_skill_command_returns_none_when_no_arg() -> None:
     assert repl._parse_skill_command("/skills") is None
 
 
-def test_handle_text_uses_pending_skill(tmp_path: Path) -> None:
+def test_master_handle_uses_pending_skill(tmp_path: Path) -> None:
+    from ubongo import master
+
     _seed_conversation("operator")
     captured: dict[str, str] = {}
 
@@ -146,16 +148,21 @@ def test_handle_text_uses_pending_skill(tmp_path: Path) -> None:
         captured["system_prompt"] = system_prompt
         return _completion("ok")
 
-    with patch("ubongo.repl.complete", side_effect=fake_complete):
-        text, ok, used_persona, skill_used, _token = repl.handle_text(
-            "operator", "wrap this up please", auto_mode=False, pending_skill="summarize-conversation"
+    with patch("ubongo.master.complete", side_effect=fake_complete):
+        response = master.handle(
+            "wrap this up please",
+            "operator",
+            auto_mode=False,
+            pending_skill="summarize-conversation",
         )
-    assert ok is True
-    assert skill_used == "summarize-conversation"
+    assert response.ok is True
+    assert response.skill_name == "summarize-conversation"
     assert "Active Skill: summarize-conversation" in captured["system_prompt"]
 
 
-def test_handle_text_ignores_unknown_pending_skill() -> None:
+def test_master_handle_ignores_unknown_pending_skill() -> None:
+    from ubongo import master
+
     _seed_conversation("operator")
     captured: dict[str, str] = {}
 
@@ -163,9 +170,9 @@ def test_handle_text_ignores_unknown_pending_skill() -> None:
         captured["system_prompt"] = system_prompt
         return _completion("ok")
 
-    with patch("ubongo.repl.complete", side_effect=fake_complete):
-        _text, _ok, _used, skill_used, _token = repl.handle_text(
-            "operator", "hi", auto_mode=False, pending_skill="phantom"
+    with patch("ubongo.master.complete", side_effect=fake_complete):
+        response = master.handle(
+            "hi", "operator", auto_mode=False, pending_skill="phantom"
         )
-    assert skill_used is None
+    assert response.skill_name is None
     assert "Active Skill" not in captured["system_prompt"]

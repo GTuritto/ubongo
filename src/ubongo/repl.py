@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from ubongo import classifier, context, events, memory, router, skills  # noqa: F401  -- memory registers handlers
+from ubongo import context, events, master, memory, skills  # noqa: F401  -- memory registers handlers
 from ubongo.agents import personas
 from ubongo.config import load_config
 from ubongo.context import build_system_prompt
@@ -24,146 +24,6 @@ _LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 _HELP_COMMANDS = (
     "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /reload, /exit."
 )
-
-
-def _build_message_history(conv_id: int, current_message: str) -> tuple[str | None, list[dict]]:
-    """Returns (summary_text or None, messages list ending with the current user turn)."""
-    ctx = store.recall(conv_id)
-    history: list[dict] = []
-    for msg in ctx.messages:
-        if msg.role in ("user", "assistant"):
-            history.append({"role": msg.role, "content": msg.content})
-    history.append({"role": "user", "content": current_message})
-    return ctx.summary_text, history
-
-
-def _call_llm(
-    persona_name: str,
-    message: str,
-    conv_id: int,
-    skill_name: str | None = None,
-) -> tuple[str, bool, int, int, str]:
-    """Returns (text, ok, tokens_in, tokens_out, model)."""
-    persona = personas.get(persona_name)
-    summary_text, history = _build_message_history(conv_id, message)
-    base = build_system_prompt(persona_name, skill=skill_name)
-    system_prompt = (
-        base
-        if not summary_text
-        else f"{base}\n\n## Conversation summary so far\n\n{summary_text}"
-    )
-    try:
-        result = complete(system_prompt, history, persona.model, persona.max_tokens)
-    except LLMError as exc:
-        logger.error(
-            "llm_error",
-            extra={
-                "persona": persona_name,
-                "model": persona.model,
-                "cause": str(exc.cause) if exc.cause else None,
-            },
-        )
-        return _LLM_FAILURE_MESSAGE, False, 0, 0, persona.model
-
-    logger.info(
-        "repl_turn",
-        extra={
-            "persona": persona_name,
-            "length": len(message),
-            "model": result.model,
-            "tokens_in": result.tokens_in,
-            "tokens_out": result.tokens_out,
-            "latency_ms": result.latency_ms,
-            "attempts": result.attempts,
-        },
-    )
-    return result.text, True, result.tokens_in, result.tokens_out, result.model
-
-
-def handle_text(
-    persona_name: str,
-    message: str,
-    auto_mode: bool = False,
-    pending_skill: str | None = None,
-) -> tuple[str, bool, str, str | None, queue.DeliveryToken]:
-    """Run a turn end-to-end up to the print boundary.
-
-    Returns (text, ok, used_persona, skill_name, delivery_token). The caller is
-    expected to print(text) then call queue.flush_delivered(delivery_token) to
-    fire after_send and mark the queue row delivered.
-    """
-    chosen = persona_name
-    suggested_skill: str | None = None
-    if auto_mode:
-        classification = classifier.classify(message)
-        suggested = router.route(classification)
-        chosen = router.apply_hysteresis(persona_name, suggested, classification.confidence)
-        suggested_skill = classification.suggested_skill
-        logger.info(
-            "classify",
-            extra={
-                "intent": classification.intent,
-                "tone": classification.tone,
-                "task_type": classification.task_type,
-                "risk": classification.risk,
-                "confidence": classification.confidence,
-                "suggested": suggested,
-                "used": chosen,
-                "suggested_skill": suggested_skill,
-            },
-        )
-
-    resolved_skill = skills.resolve(pinned=pending_skill, suggested=suggested_skill)
-    skill_name = resolved_skill.name if resolved_skill else None
-
-    conv_id = store.current_or_new_conversation(chosen)
-    user_msg_id = store.append_message(conv_id, "user", message, persona=chosen)
-
-    text, ok, tokens_in, tokens_out, model = _call_llm(chosen, message, conv_id, skill_name)
-
-    assistant_msg_id = None
-    if ok:
-        assistant_msg_id = store.append_message(
-            conv_id,
-            "assistant",
-            text,
-            persona=chosen,
-            model=model,
-            tokens_in=tokens_in,
-            tokens_out=tokens_out,
-        )
-    ts_now = store.now_iso()
-    store.upsert_session(
-        active_persona=chosen,
-        current_conversation_id=conv_id,
-        last_message_at=ts_now,
-        auto_mode=auto_mode,
-    )
-
-    after_send_payload: dict | None = None
-    if ok:
-        after_send_payload = {
-            "user_message": message,
-            "response": text,
-            "persona": chosen,
-            "auto_routed": auto_mode,
-            "conversation_id": conv_id,
-            "user_message_id": user_msg_id,
-            "assistant_message_id": assistant_msg_id,
-            "ts": ts_now,
-        }
-    token = queue.enqueue_for_delivery(
-        text,
-        source="response" if ok else "error",
-        after_send_payload=after_send_payload,
-        metadata={
-            "persona": chosen,
-            "auto_routed": auto_mode,
-            "conversation_id": conv_id,
-            "assistant_message_id": assistant_msg_id,
-        },
-    )
-    return text, ok, chosen, skill_name, token
 
 
 def _parse_queue_command(line: str) -> int | None:
@@ -362,14 +222,12 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
                 return 0
             continue
 
-        text, _ok, used_persona, _skill_used, token = handle_text(
-            persona, stripped, auto_mode, pending_skill=pending_skill
-        )
+        response = master.handle(stripped, persona, auto_mode, pending_skill=pending_skill)
         pending_skill = None  # one-shot
-        print(text)
-        queue.flush_delivered(token)
+        print(response.text)
+        queue.flush_delivered(response.delivery_token)
         if auto_mode:
-            persona = used_persona
+            persona = response.persona
 
 
 if __name__ == "__main__":
