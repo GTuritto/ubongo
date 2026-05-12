@@ -32,7 +32,7 @@ Each section's scenarios are run in order. If a scenario fails, the phase is not
 | 1.4 | `/exit` clean quit | type `/exit` | `Goodbye.` rc 0. |
 | 1.5 | One-shot with `--persona` | `uv run python -m ubongo send "hello" --persona operator` | stdout: `[operator] hello`. rc 0. |
 | 1.6 | One-shot default persona | `uv run python -m ubongo send "hi"` | stdout: `[architect] hi`. rc 0. |
-| 1.7 | Unknown slash command | In REPL: `/foo` | `Unknown command: /foo. Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /reload, /exit.` Loop continues. (Help line grows as later phases add commands.) |
+| 1.7 | Unknown slash command | In REPL: `/foo` | `Unknown command: /foo. Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /agents, /reload, /exit.` Loop continues. (Help line grows as later phases add commands.) |
 | 1.8 | One-shot bad persona | `uv run python -m ubongo send "x" --persona bogus` | stderr: `Error: unknown persona 'bogus'. Choose from: architect, operator, casual.` rc 1. |
 | 1.9 | EOF (Ctrl+D) | In REPL: press Ctrl+D | `Goodbye.` rc 0. |
 | 1.10 | Pytest passes | `uv run pytest tests/test_repl.py` | All tests pass. |
@@ -135,7 +135,20 @@ Every LLM-generated response writes a row to `notification_queue` before stdout.
 
 ## Phase 9 — First Workers (Research + Memory)
 
-*(Populated when Phase 9 is implemented.)*
+Real worker agents enter the system. `MasterAgent.execute` delegates to `WorkflowRunner.execute(workflow, ctx, message, workflow_run_id)`, which dispatches the agents listed in `workflow.agents` sequentially, threading prior agents' output text via `AgentInput.prior_findings` and writing one `agent_runs` row per dispatch. `workflows.yaml` declares the per-workflow agent list and mode; `research_brief` runs `["research", "persona:architect"]`. Memory Agent owns the assistant-message write and the vault `after_send` projection (single-writer rule, soft enforcement in production / strict-mode pytest fixture). `workflow_runs` rows now persist with `outcome='in_progress'` before execute, then UPDATE to success/failure. `/agents` lists the registered workers.
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 9.1 | Behavior parity for non-research | `rm -f data/ubongo.db`; `ubongo send "design a circuit breaker" --persona architect`; `ubongo send "ugh long day" --persona casual` | Same shape responses as Phase 8 baseline; queue populated; vault note written. `sqlite3 data/ubongo.db "SELECT json_extract(workflow,'$.agents') FROM workflow_runs ORDER BY id"` → `["persona:architect"]` then `["persona:casual"]`. |
+| 9.2 | Research dispatched | `ubongo send "we should add a caching layer" --persona architect`; then `ubongo send "research what we discussed about caching" --persona architect` | Second response uses retrieved findings (response may cite `[conv:1:msg:1]`); `sqlite3 data/ubongo.db "SELECT json_extract(workflow,'$.agents') FROM workflow_runs ORDER BY id DESC LIMIT 1"` → `["research","persona:architect"]`. |
+| 9.3 | `/agents` | REPL `/agents` | Header `Registered agents:` and rows for `memory`, `persona:architect`, `persona:casual`, `persona:operator`, `research` with role + model. |
+| 9.4 | `agent_runs` populated | After 9.2: `sqlite3 data/ubongo.db "SELECT agent, outcome, tokens_in, tokens_out FROM agent_runs ORDER BY id DESC LIMIT 3"` | three rows for the research turn: `research`, `persona:architect`, `memory`, all `outcome='success'`. |
+| 9.5 | Memory single-writer test | `uv run pytest tests/test_agents_memory.py::test_strict_mode_blocks_non_memory_writer` | passes — synthetic non-Memory caller into `store.append_message(role='assistant')` raises under the fixture. |
+| 9.6 | Casual still works (regression) | `/casual`; `long day` in REPL | Single-agent persona response; casual voice; `sqlite3 data/ubongo.db "SELECT agent FROM agent_runs WHERE workflow_run_id=(SELECT MAX(id) FROM workflow_runs)"` → `persona:casual`. |
+| 9.7 | Research LLM failure | Send a research-style message with the research model temporarily mocked to fail (e.g. patch in a REPL session) | Response is the persona answering without findings (no crash); `sqlite3 data/ubongo.db "SELECT agent, outcome FROM agent_runs WHERE workflow_run_id=(SELECT MAX(id) FROM workflow_runs)"` shows `research` outcome=`failure` and `persona:architect` outcome=`success`; `workflow_runs.outcome='success'`. |
+| 9.8 | `workflow_runs` lifecycle | `sqlite3 data/ubongo.db "SELECT outcome FROM workflow_runs ORDER BY id DESC LIMIT 1"` after any turn | `success` (or `failure`); never `in_progress` after the turn completes. Mid-turn (during the LLM call) the row is `in_progress`; this is observable if you kill the process mid-turn. |
+| 9.9 | `master_decision` still emitted | `ubongo send "research caching" --persona architect 2>/tmp/p9.err`; `grep master_decision /tmp/p9.err` | one JSON line per turn with the Phase-8 fields plus `agents` listing the workflow's agent tuple. |
+| 9.10 | Pytest passes | `uv run pytest tests/` | all green (216 expected after Phase 9: Phase-8's 181 + 6 base + 8 research + 8 memory + 8 runner + 5 /agents). |
 
 ## Phase 10 — Evaluator + Critic + Persona Agents
 
