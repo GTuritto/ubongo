@@ -1,11 +1,24 @@
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 
+from ubongo.agents.base import AgentInput, AgentResult
 from ubongo.config import load_config
+from ubongo.context import build_system_prompt
+from ubongo.llm import LLMError, complete
+
+if TYPE_CHECKING:
+    from ubongo.master import Context
+
+logger = logging.getLogger("ubongo.agents.personas")
+
+_LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _PERSONAS_DIR = _REPO_ROOT / "config" / "personas"
@@ -69,3 +82,80 @@ def get(name: str) -> Persona:
 
 def reload() -> None:
     _registry.clear()
+
+
+class PersonaAgent:
+    """Wraps a persona as an Agent: builds the system prompt, runs the LLM,
+    and weaves prior agent findings (from Research, etc.) into the context."""
+
+    role = "persona composer"
+
+    def __init__(self, persona_name: str) -> None:
+        self.persona_name = persona_name
+        self.name = f"persona:{persona_name}"
+        persona = get(persona_name)
+        self.default_model = persona.model
+        self._max_tokens = persona.max_tokens
+
+    def run(self, input: AgentInput, context: "Context") -> AgentResult:
+        t0 = time.monotonic()
+        persona = get(self.persona_name)
+        skill_name = input.metadata.get("skill")
+        base = build_system_prompt(self.persona_name, skill=skill_name)
+
+        sections: list[str] = [base]
+        if input.summary_text:
+            sections.append(f"## Conversation summary so far\n\n{input.summary_text}")
+        if input.prior_findings:
+            for i, finding in enumerate(input.prior_findings, start=1):
+                label = "Research findings" if i == 1 else f"Prior agent findings #{i}"
+                sections.append(f"## {label}\n\n{finding}")
+        system_prompt = "\n\n".join(sections)
+
+        try:
+            completion = complete(
+                system_prompt=system_prompt,
+                messages=list(input.history),
+                model=persona.model,
+                max_tokens=persona.max_tokens,
+            )
+        except LLMError as exc:
+            elapsed = int((time.monotonic() - t0) * 1000)
+            logger.error(
+                "persona_llm_error",
+                extra={
+                    "persona": self.persona_name,
+                    "model": persona.model,
+                    "cause": str(exc.cause) if exc.cause else None,
+                },
+            )
+            return AgentResult(
+                text=_LLM_FAILURE_MESSAGE,
+                ok=False,
+                model=persona.model,
+                tokens_in=0,
+                tokens_out=0,
+                latency_ms=elapsed,
+                error="persona_llm_error",
+            )
+
+        logger.info(
+            "persona_run",
+            extra={
+                "persona": self.persona_name,
+                "model": completion.model,
+                "tokens_in": completion.tokens_in,
+                "tokens_out": completion.tokens_out,
+                "latency_ms": completion.latency_ms,
+                "attempts": completion.attempts,
+                "had_findings": bool(input.prior_findings),
+            },
+        )
+        return AgentResult(
+            text=completion.text,
+            ok=True,
+            model=completion.model,
+            tokens_in=completion.tokens_in,
+            tokens_out=completion.tokens_out,
+            latency_ms=completion.latency_ms,
+        )

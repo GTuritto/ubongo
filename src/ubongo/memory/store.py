@@ -517,6 +517,50 @@ def append_workflow_run(
     return int(cursor.lastrowid)
 
 
+def append_agent_run(
+    workflow_run_id: int,
+    *,
+    agent: str,
+    model: str | None,
+    input: dict,
+    output: dict,
+    confidence: float | None,
+    tokens_in: int,
+    tokens_out: int,
+    latency_ms: int,
+    outcome: str,
+    started_at: str,
+    ended_at: str,
+) -> int:
+    """Persist one agent_runs row. Called by the WorkflowRunner per agent dispatch."""
+    import json as _json
+
+    conn = connection()
+    cursor = conn.execute(
+        """
+        INSERT INTO agent_runs
+            (workflow_run_id, agent, model, input, output, confidence,
+             tokens_in, tokens_out, latency_ms, outcome, started_at, ended_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            workflow_run_id,
+            agent,
+            model,
+            _json.dumps(input),
+            _json.dumps(output),
+            confidence,
+            tokens_in,
+            tokens_out,
+            latency_ms,
+            outcome,
+            started_at,
+            ended_at,
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
 def append_governance_decision(
     workflow_run_id: int,
     *,
