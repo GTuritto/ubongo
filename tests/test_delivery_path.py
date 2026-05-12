@@ -9,6 +9,7 @@ import pytest
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo import context, events, oneshot, repl, skills  # noqa: E402
+from ubongo.agents import memory as _agents_memory  # noqa: E402
 from ubongo.delivery import queue  # noqa: E402
 from ubongo.llm import CompletionResult, LLMError  # noqa: E402
 from ubongo.memory import store, vault  # noqa: E402
@@ -27,10 +28,10 @@ def _clean_env(tmp_path: Path):
     context.reload()
     events.clear()
     # re-register the production handlers nuked by events.clear()
-    events.register("after_send", vault._after_send_handler)
+    events.register("after_send", _agents_memory.default_memory_agent.project_vault)
     yield
     events.clear()
-    events.register("after_send", vault._after_send_handler)
+    events.register("after_send", _agents_memory.default_memory_agent.project_vault)
     skills.set_skills_dir(None)
     skills.reload()
     context.reload()

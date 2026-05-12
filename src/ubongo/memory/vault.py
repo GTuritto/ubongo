@@ -194,4 +194,6 @@ def _after_send_handler(payload: dict) -> None:
     )
 
 
-events.register("after_send", _after_send_handler)
+# Phase 9c: registration moved to agents.memory so the MemoryAgent owns the
+# write path (single-writer rule). The handler body lives here as
+# `_after_send_handler` and is invoked through MemoryAgent.project_vault.

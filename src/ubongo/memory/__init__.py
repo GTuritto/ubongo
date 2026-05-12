@@ -4,7 +4,10 @@ import logging
 
 from ubongo import events
 from ubongo.memory import compaction  # noqa: F401  -- registers after_recall handler
-from ubongo.memory import vault  # noqa: F401  -- registers after_send handler
+from ubongo.memory import vault  # noqa: F401  -- vault module loaded
+# Phase 9c: MemoryAgent owns the after_send vault projection (single-writer rule).
+# Importing it here triggers the events.register call inside agents/memory.py.
+from ubongo.agents import memory as _agents_memory  # noqa: F401
 
 logger = logging.getLogger("ubongo.memory")
 
