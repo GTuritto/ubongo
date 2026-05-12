@@ -13,6 +13,7 @@ The pipeline:
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import asdict, dataclass
 
 from ubongo import classifier, events, router, skills
@@ -239,6 +240,8 @@ class MasterAgent:
 
         assistant_msg_id = None
         if result.ok:
+            mem_started = store.now_iso()
+            mem_t0 = time.monotonic()
             assistant_msg_id = default_memory_agent.commit_assistant_turn(
                 conversation_id=conv_id,
                 content=result.text,
@@ -246,6 +249,21 @@ class MasterAgent:
                 model=result.model,
                 tokens_in=result.tokens_in,
                 tokens_out=result.tokens_out,
+            )
+            mem_elapsed_ms = int((time.monotonic() - mem_t0) * 1000)
+            store.append_agent_run(
+                workflow_run_id=workflow_run_id,
+                agent="memory",
+                model=None,
+                input={"content_len": len(result.text), "conversation_id": conv_id},
+                output={"assistant_message_id": assistant_msg_id},
+                confidence=None,
+                tokens_in=0,
+                tokens_out=0,
+                latency_ms=mem_elapsed_ms,
+                outcome="success",
+                started_at=mem_started,
+                ended_at=store.now_iso(),
             )
         ts_now = store.now_iso()
         store.upsert_session(

@@ -113,24 +113,26 @@ def test_error_path_enqueues_with_source_error_and_skips_after_send(capsys) -> N
 
 
 def test_vault_still_writes_on_happy_path() -> None:
-    import datetime
+    from datetime import datetime, timezone
 
     with patch("ubongo.agents.personas.complete", return_value=_completion("hello back")):
         oneshot.run("hi", "casual")
 
-    note = vault.daily_note_path(datetime.date.today())
+    # vault files are keyed on UTC dates (via store.now_iso); using local-date
+    # here would be brittle around midnight in non-UTC timezones.
+    note = vault.daily_note_path(datetime.now(timezone.utc).date())
     assert note.exists()
     body = note.read_text(encoding="utf-8")
     assert "hello back" in body
 
 
 def test_vault_does_not_write_on_error_path() -> None:
-    import datetime
+    from datetime import datetime, timezone
 
     with patch("ubongo.agents.personas.complete", side_effect=LLMError("simulated", cause=RuntimeError("nope"))):
         oneshot.run("hi", "casual")
 
-    note = vault.daily_note_path(datetime.date.today())
+    note = vault.daily_note_path(datetime.now(timezone.utc).date())
     assert not note.exists()
 
 
