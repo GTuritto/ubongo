@@ -32,7 +32,7 @@ Each section's scenarios are run in order. If a scenario fails, the phase is not
 | 1.4 | `/exit` clean quit | type `/exit` | `Goodbye.` rc 0. |
 | 1.5 | One-shot with `--persona` | `uv run python -m ubongo send "hello" --persona operator` | stdout: `[operator] hello`. rc 0. |
 | 1.6 | One-shot default persona | `uv run python -m ubongo send "hi"` | stdout: `[architect] hi`. rc 0. |
-| 1.7 | Unknown slash command | In REPL: `/foo` | `Unknown command: /foo. Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /reload, /exit.` Loop continues. (Help line grows as later phases add commands.) |
+| 1.7 | Unknown slash command | In REPL: `/foo` | `Unknown command: /foo. Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /reload, /exit.` Loop continues. (Help line grows as later phases add commands.) |
 | 1.8 | One-shot bad persona | `uv run python -m ubongo send "x" --persona bogus` | stderr: `Error: unknown persona 'bogus'. Choose from: architect, operator, casual.` rc 1. |
 | 1.9 | EOF (Ctrl+D) | In REPL: press Ctrl+D | `Goodbye.` rc 0. |
 | 1.10 | Pytest passes | `uv run pytest tests/test_repl.py` | All tests pass. |
@@ -105,7 +105,18 @@ Skills live under `config/skills/<name>/`. v0.1 ships `summarize-conversation`. 
 
 ## Phase 7 — Minimal Outbound Queue
 
-*(Populated when Phase 7 is implemented.)*
+Every LLM-generated response writes a row to `notification_queue` before stdout. `handle_text` enqueues (`source='response'` on success, `'error'` on LLM failure), dequeues, fires `before_send`, returns a delivery token. The caller prints, then `delivery.queue.flush_delivered(token)` fires `after_send` and marks the row delivered. Slash echoes and `/summary` stay direct-print (out of scope per Phase 7 plan). On queue round-trip failure, output is still printed but no events fire and vault is skipped.
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 7.1 | Queue contains the response | `rm -f data/ubongo.db`; `uv run python -m ubongo send "hello" --persona casual`; `sqlite3 data/ubongo.db "SELECT id, urgency, source, delivered_at IS NOT NULL AS delivered FROM notification_queue"` | one row, `urgency='urgent'`, `source='response'`, `delivered=1`. |
+| 7.2 | `/queue` table | send 3 messages with `ubongo send`; then REPL `/queue` | header `Recent queue (last 10):` followed by 3 rows, newest first; each row has id, two `HH:MM:SS` timestamps, `urgent`, `response`, and a content preview. |
+| 7.3 | `/queue N` argument | After 7.2: REPL `/queue 1` | exactly one row (most recent). `/queue abc` prints `Usage: /queue [N]. …` |
+| 7.4 | Latency | `time uv run python -m ubongo send "hi" --persona casual` | indistinguishable from pre-Phase-7 (queue insert is microseconds; the LLM call dominates). |
+| 7.5 | `before_send` hook fires before stdout | `uv run python -c "from ubongo import events; events.register('before_send', lambda p: print('GOT', p['row_id'], file=__import__('sys').stderr)); from ubongo import oneshot; oneshot.run('hi', 'casual')"` | response on stdout; `GOT <id>` on stderr; vault entry present. |
+| 7.6 | Vault still works on happy path | `rm -f vault/daily/$(date -u +%Y-%m-%d).md`; `ubongo send "vault check" --persona casual` | vault file recreated with the turn (vault writes only on delivery success, but happy path delivers). |
+| 7.7 | Error path enqueues with source='error', skips vault | `rm -f data/ubongo.db vault/daily/$(date -u +%Y-%m-%d).md`; `OPENROUTER_API_KEY=sk-or-v1-bogus uv run python -m ubongo send "hi" --persona casual`; `sqlite3 data/ubongo.db "SELECT source, delivered_at IS NOT NULL FROM notification_queue"` | stdout: `Sorry, I couldn't reach the model. Check the logs.`; rc 1; queue row with `source='error'`, delivered=1; no vault file for today. |
+| 7.8 | Pytest passes | `uv run pytest tests/` | all green (142 expected after Phase 7: prior 110 + 12 queue API + 10 send path + 10 /queue rendering). |
 
 ## Phase 8 — Master Agent
 
