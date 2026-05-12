@@ -22,7 +22,7 @@ _BANNER = "Ubongo REPL ready. /exit to quit."
 _AUTO_ENABLED = "Auto routing enabled."
 _LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 _HELP_COMMANDS = (
-    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /reload, /exit."
+    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /reload, /exit."
 )
 
 
@@ -166,6 +166,45 @@ def handle_text(
     return text, ok, chosen, skill_name, token
 
 
+def _parse_queue_command(line: str) -> int | None:
+    """Returns N from `/queue [N]`. Defaults to 10; returns None for malformed args."""
+    raw = line.strip().lstrip("/")
+    parts = raw.split(maxsplit=1)
+    if parts[0].lower() != "queue":
+        return None
+    if len(parts) == 1:
+        return 10
+    try:
+        n = int(parts[1].strip())
+    except ValueError:
+        return None
+    return n if n > 0 else None
+
+
+def _format_time(ts: str | None) -> str:
+    if ts is None:
+        return "—"
+    # ISO 8601 with millisecond precision: "2026-05-12T15:51:57.123Z"
+    return ts[11:19] if len(ts) >= 19 else ts
+
+
+def _render_queue_table(n: int = 10) -> str:
+    rows = queue.last_n(n)
+    if not rows:
+        return "Queue is empty."
+    lines = [f"Recent queue (last {n}):"]
+    for r in rows:
+        preview = r.content.replace("\n", " ").strip()
+        if len(preview) > 60:
+            preview = preview[:60] + "…"
+        lines.append(
+            f"  {r.id:>4}  {_format_time(r.created_at)}  "
+            f"{_format_time(r.delivered_at):>8}  "
+            f"{r.urgency:>6}  {(r.source or '—'):>8}  {preview}"
+        )
+    return "\n".join(lines)
+
+
 def _render_skills_table() -> str:
     registered = skills.list_skills()
     if not registered:
@@ -292,6 +331,13 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
                 continue
             if head == "skills":
                 print(_render_skills_table())
+                continue
+            if head == "queue":
+                n = _parse_queue_command(stripped)
+                if n is None:
+                    print(f"Usage: /queue [N]. {_HELP_COMMANDS}")
+                else:
+                    print(_render_queue_table(n))
                 continue
             if head == "reload":
                 print(_reload_all())
