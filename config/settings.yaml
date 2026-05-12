@@ -3,10 +3,15 @@ models:
   default: openrouter/anthropic/claude-sonnet-4.5
   casual: openrouter/anthropic/claude-haiku-4.5
   compaction: openrouter/anthropic/claude-haiku-4.5
+  research: openrouter/anthropic/claude-sonnet-4.5
   evaluator: openrouter/anthropic/claude-sonnet-4.5
   critic: openrouter/anthropic/claude-sonnet-4.5
   coding: openrouter/anthropic/claude-sonnet-4.5
   evolution_generator: openrouter/anthropic/claude-sonnet-4.5
+
+agents:
+  research:
+    max_tokens: 800
 
 api_keys:
   openrouter:

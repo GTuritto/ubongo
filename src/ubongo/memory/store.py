@@ -207,6 +207,29 @@ def last_n_messages(conversation_id: int, n: int) -> list[Message]:
     return [_row_to_message(r) for r in rows]
 
 
+def last_n_messages_global(n: int) -> list[Message]:
+    """Return the last N messages across ALL conversations, oldest first.
+
+    Phase-9 helper used by the Research Agent for cross-session retrieval.
+    Phase 20 will replace with sqlite-vec semantic recall.
+    """
+    if n <= 0:
+        return []
+    conn = connection()
+    rows = conn.execute(
+        """
+        SELECT * FROM (
+            SELECT id, conversation_id, role, content, timestamp, persona, model, tokens_in, tokens_out
+            FROM messages
+            ORDER BY id DESC
+            LIMIT ?
+        ) ORDER BY id ASC
+        """,
+        (n,),
+    ).fetchall()
+    return [_row_to_message(r) for r in rows]
+
+
 def messages_in_range(conversation_id: int, from_id: int, to_id: int) -> list[Message]:
     conn = connection()
     rows = conn.execute(
