@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from ubongo import context, events, master, memory, skills  # noqa: F401  -- memory registers handlers
+from ubongo import context, events, master, memory, runner, skills  # noqa: F401  -- memory registers handlers
 from ubongo.agents import personas
 from ubongo.config import load_config
 from ubongo.context import build_system_prompt
@@ -22,7 +22,7 @@ _BANNER = "Ubongo REPL ready. /exit to quit."
 _AUTO_ENABLED = "Auto routing enabled."
 _LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 _HELP_COMMANDS = (
-    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /reload, /exit."
+    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /agents, /reload, /exit."
 )
 
 
@@ -97,6 +97,19 @@ def _render_decisions_table(n: int = 10) -> str:
             f"{intent:>10}  {persona:>10}  {mode:>10}  "
             f"{risk:>8}  {conf:>5}  {action}"
         )
+    return "\n".join(lines)
+
+
+def _render_agents_table() -> str:
+    registry = runner.default_registry()
+    if not registry:
+        return "No agents registered."
+    lines = ["Registered agents:"]
+    for name in sorted(registry):
+        agent = registry[name]
+        model = getattr(agent, "default_model", "") or "—"
+        role = getattr(agent, "role", "")
+        lines.append(f"  {name:<22}  {role:<48}  {model}")
     return "\n".join(lines)
 
 
@@ -240,6 +253,9 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
                     print(f"Usage: /decisions [N]. {_HELP_COMMANDS}")
                 else:
                     print(_render_decisions_table(n))
+                continue
+            if head == "agents":
+                print(_render_agents_table())
                 continue
             if head == "reload":
                 print(_reload_all())
