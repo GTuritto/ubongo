@@ -147,7 +147,7 @@ def test_handle_text_uses_pending_skill(tmp_path: Path) -> None:
         return _completion("ok")
 
     with patch("ubongo.repl.complete", side_effect=fake_complete):
-        text, ok, used_persona, skill_used = repl.handle_text(
+        text, ok, used_persona, skill_used, _token = repl.handle_text(
             "operator", "wrap this up please", auto_mode=False, pending_skill="summarize-conversation"
         )
     assert ok is True
@@ -164,7 +164,7 @@ def test_handle_text_ignores_unknown_pending_skill() -> None:
         return _completion("ok")
 
     with patch("ubongo.repl.complete", side_effect=fake_complete):
-        _text, _ok, _used, skill_used = repl.handle_text(
+        _text, _ok, _used, skill_used, _token = repl.handle_text(
             "operator", "hi", auto_mode=False, pending_skill="phantom"
         )
     assert skill_used is None

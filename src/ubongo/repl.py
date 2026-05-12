@@ -7,6 +7,7 @@ from ubongo import classifier, context, events, memory, router, skills  # noqa: 
 from ubongo.agents import personas
 from ubongo.config import load_config
 from ubongo.context import build_system_prompt
+from ubongo.delivery import queue
 from ubongo.llm import LLMError, complete
 from ubongo.memory import store
 
@@ -84,7 +85,13 @@ def handle_text(
     message: str,
     auto_mode: bool = False,
     pending_skill: str | None = None,
-) -> tuple[str, bool, str, str | None]:
+) -> tuple[str, bool, str, str | None, queue.DeliveryToken]:
+    """Run a turn end-to-end up to the print boundary.
+
+    Returns (text, ok, used_persona, skill_name, delivery_token). The caller is
+    expected to print(text) then call queue.flush_delivered(delivery_token) to
+    fire after_send and mark the queue row delivered.
+    """
     chosen = persona_name
     suggested_skill: str | None = None
     if auto_mode:
@@ -132,21 +139,31 @@ def handle_text(
         last_message_at=ts_now,
         auto_mode=auto_mode,
     )
+
+    after_send_payload: dict | None = None
     if ok:
-        events.dispatch(
-            "after_send",
-            {
-                "user_message": message,
-                "response": text,
-                "persona": chosen,
-                "auto_routed": auto_mode,
-                "conversation_id": conv_id,
-                "user_message_id": user_msg_id,
-                "assistant_message_id": assistant_msg_id,
-                "ts": ts_now,
-            },
-        )
-    return text, ok, chosen, skill_name
+        after_send_payload = {
+            "user_message": message,
+            "response": text,
+            "persona": chosen,
+            "auto_routed": auto_mode,
+            "conversation_id": conv_id,
+            "user_message_id": user_msg_id,
+            "assistant_message_id": assistant_msg_id,
+            "ts": ts_now,
+        }
+    token = queue.enqueue_for_delivery(
+        text,
+        source="response" if ok else "error",
+        after_send_payload=after_send_payload,
+        metadata={
+            "persona": chosen,
+            "auto_routed": auto_mode,
+            "conversation_id": conv_id,
+            "assistant_message_id": assistant_msg_id,
+        },
+    )
+    return text, ok, chosen, skill_name, token
 
 
 def _render_skills_table() -> str:
@@ -299,11 +316,12 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
                 return 0
             continue
 
-        text, _ok, used_persona, _skill_used = handle_text(
+        text, _ok, used_persona, _skill_used, token = handle_text(
             persona, stripped, auto_mode, pending_skill=pending_skill
         )
         pending_skill = None  # one-shot
         print(text)
+        queue.flush_delivered(token)
         if auto_mode:
             persona = used_persona
 

@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from ubongo import events
 from ubongo.memory import store
 
 logger = logging.getLogger("ubongo.delivery.queue")
@@ -115,6 +116,71 @@ def mark_delivered(row_id: int, when: str | None = None) -> None:
         "UPDATE notification_queue SET delivered_at = ? WHERE id = ?",
         (ts, row_id),
     )
+
+
+@dataclass(frozen=True)
+class DeliveryToken:
+    """Opaque handle returned by enqueue_for_delivery, consumed by flush_delivered.
+
+    row_id is None when the queue round-trip failed (caller still owns the print
+    but no row to mark delivered). after_send_payload is None when ok=False, so
+    flush_delivered knows not to fire after_send for error responses.
+    """
+
+    row_id: int | None
+    after_send_payload: dict[str, Any] | None
+
+
+def enqueue_for_delivery(
+    content: str,
+    *,
+    source: str,
+    after_send_payload: dict[str, Any] | None,
+    urgency: Urgency = "urgent",
+    metadata: dict[str, Any] | None = None,
+) -> DeliveryToken:
+    """Enqueue, dequeue, and dispatch before_send. Caller prints, then calls flush_delivered.
+
+    Queue failures (enqueue or dequeue inconsistency) log a warning and return a
+    token with row_id=None so the caller can still print without losing output.
+    """
+    try:
+        row_id = enqueue(content, urgency=urgency, source=source, metadata=metadata)
+    except Exception as exc:
+        logger.warning("queue_enqueue_failed", extra={"cause": str(exc), "source": source})
+        return DeliveryToken(row_id=None, after_send_payload=None)
+    row = dequeue_deliverable()
+    if row is None or row.id != row_id:
+        logger.warning(
+            "queue_dequeue_inconsistent",
+            extra={"row_id": row_id, "got": row.id if row else None},
+        )
+        return DeliveryToken(row_id=None, after_send_payload=None)
+    events.dispatch(
+        "before_send",
+        {
+            "row_id": row.id,
+            "content": row.content,
+            "urgency": row.urgency,
+            "source": row.source,
+            "metadata": row.metadata,
+        },
+    )
+    return DeliveryToken(row_id=row.id, after_send_payload=after_send_payload)
+
+
+def flush_delivered(token: DeliveryToken) -> None:
+    """Dispatch after_send (when present) and mark the row delivered."""
+    if token.after_send_payload is not None:
+        events.dispatch("after_send", token.after_send_payload)
+    if token.row_id is not None:
+        try:
+            mark_delivered(token.row_id)
+        except Exception as exc:
+            logger.warning(
+                "queue_mark_delivered_failed",
+                extra={"row_id": token.row_id, "cause": str(exc)},
+            )
 
 
 def last_n(n: int = 10) -> list[QueueRow]:
