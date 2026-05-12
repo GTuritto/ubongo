@@ -22,7 +22,7 @@ _BANNER = "Ubongo REPL ready. /exit to quit."
 _AUTO_ENABLED = "Auto routing enabled."
 _LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 _HELP_COMMANDS = (
-    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /reload, /exit."
+    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /reload, /exit."
 )
 
 
@@ -31,6 +31,21 @@ def _parse_queue_command(line: str) -> int | None:
     raw = line.strip().lstrip("/")
     parts = raw.split(maxsplit=1)
     if parts[0].lower() != "queue":
+        return None
+    if len(parts) == 1:
+        return 10
+    try:
+        n = int(parts[1].strip())
+    except ValueError:
+        return None
+    return n if n > 0 else None
+
+
+def _parse_decisions_command(line: str) -> int | None:
+    """Returns N from `/decisions [N]`. Defaults to 10; returns None for malformed args."""
+    raw = line.strip().lstrip("/")
+    parts = raw.split(maxsplit=1)
+    if parts[0].lower() != "decisions":
         return None
     if len(parts) == 1:
         return 10
@@ -61,6 +76,26 @@ def _render_queue_table(n: int = 10) -> str:
             f"  {r.id:>4}  {_format_time(r.created_at)}  "
             f"{_format_time(r.delivered_at):>8}  "
             f"{r.urgency:>6}  {(r.source or '—'):>8}  {preview}"
+        )
+    return "\n".join(lines)
+
+
+def _render_decisions_table(n: int = 10) -> str:
+    rows = store.last_n_governance_decisions(n)
+    if not rows:
+        return "No decisions yet."
+    lines = [f"Recent decisions (last {n}):"]
+    for r in rows:
+        intent = (r["intent"] or "—")[:10]
+        persona = (r["persona"] or "—")[:10]
+        mode = (r["execution_mode"] or "—")[:10]
+        risk = (r["risk"] or "—")[:8]
+        conf = "—" if r["confidence"] is None else f"{r['confidence']:.2f}"
+        action = r["action"]
+        lines.append(
+            f"  {r['id']:>4}  {_format_time(r['decided_at'])}  "
+            f"{intent:>10}  {persona:>10}  {mode:>10}  "
+            f"{risk:>8}  {conf:>5}  {action}"
         )
     return "\n".join(lines)
 
@@ -198,6 +233,13 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
                     print(f"Usage: /queue [N]. {_HELP_COMMANDS}")
                 else:
                     print(_render_queue_table(n))
+                continue
+            if head == "decisions":
+                n = _parse_decisions_command(stripped)
+                if n is None:
+                    print(f"Usage: /decisions [N]. {_HELP_COMMANDS}")
+                else:
+                    print(_render_decisions_table(n))
                 continue
             if head == "reload":
                 print(_reload_all())

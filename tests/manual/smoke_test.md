@@ -32,7 +32,7 @@ Each section's scenarios are run in order. If a scenario fails, the phase is not
 | 1.4 | `/exit` clean quit | type `/exit` | `Goodbye.` rc 0. |
 | 1.5 | One-shot with `--persona` | `uv run python -m ubongo send "hello" --persona operator` | stdout: `[operator] hello`. rc 0. |
 | 1.6 | One-shot default persona | `uv run python -m ubongo send "hi"` | stdout: `[architect] hi`. rc 0. |
-| 1.7 | Unknown slash command | In REPL: `/foo` | `Unknown command: /foo. Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /reload, /exit.` Loop continues. (Help line grows as later phases add commands.) |
+| 1.7 | Unknown slash command | In REPL: `/foo` | `Unknown command: /foo. Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /reload, /exit.` Loop continues. (Help line grows as later phases add commands.) |
 | 1.8 | One-shot bad persona | `uv run python -m ubongo send "x" --persona bogus` | stderr: `Error: unknown persona 'bogus'. Choose from: architect, operator, casual.` rc 1. |
 | 1.9 | EOF (Ctrl+D) | In REPL: press Ctrl+D | `Goodbye.` rc 0. |
 | 1.10 | Pytest passes | `uv run pytest tests/test_repl.py` | All tests pass. |
@@ -120,7 +120,18 @@ Every LLM-generated response writes a row to `notification_queue` before stdout.
 
 ## Phase 8 — Master Agent
 
-*(Populated when Phase 8 is implemented.)*
+`MasterAgent.handle(message, persona, auto_mode, pending_skill)` is the single orchestration seam for every turn: `classify → plan → execute → decide → compose → enqueue`. REPL and oneshot delegate to it. Every turn writes a `workflow_runs` row and a `governance_decisions` row (action=`auto`; real matrix in Phase 14) and emits a `master_decision` log line. `/decisions [N]` renders the recent decisions table.
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 8.1 | Behavior parity | `rm -f data/ubongo.db`; `ubongo send "design a circuit breaker" --persona architect`; then `ubongo send "ugh long day" --persona casual` | Same shape of response as Phase 7 baseline; persona voice unchanged; queue still populated; vault still written. |
+| 8.2 | `master_decision` log | After 8.1: `ubongo send "design a circuit breaker" --persona architect 2>/tmp/p8.err`; `grep master_decision /tmp/p8.err` | one JSON line with `intent`, `persona="architect"`, `execution_mode="sequential"`, `risk` set, `action="auto"`, `workflow_run_id` and `decision_id` populated. |
+| 8.3 | `workflow_runs` + `governance_decisions` populated | After 8.2: `sqlite3 data/ubongo.db "SELECT id, execution_mode, outcome FROM workflow_runs"`; `sqlite3 data/ubongo.db "SELECT workflow_run_id, action FROM governance_decisions"` | each table has rows; `execution_mode='sequential'`, `outcome='success'`, `action='auto'`, FK matches. |
+| 8.4 | `/decisions` table | Send 3 messages; REPL `/decisions` | header `Recent decisions (last 10):`, 3 rows newest-first with id, decided_at, intent, persona, mode, risk, conf, action. |
+| 8.5 | `/decisions N` | `/decisions 1` after 8.4 | exactly one row (most recent). `/decisions abc` → `Usage: /decisions [N]. …`. |
+| 8.6 | High-risk passthrough | Send a destructive-looking prompt (e.g. `ubongo send "rm -rf /" --persona operator`); inspect `master_decision` log | `risk` set by classifier; `action=auto` (Phase 14 will tighten this). |
+| 8.7 | Classifier crash | `OPENROUTER_API_KEY=sk-or-v1-bogus ubongo send "hi" --persona casual` | stdout: polite error; rc 1; `master_decision` line with `confidence=0.0`, `action=auto`; `workflow_runs.outcome='failure'`; `governance_decisions` row exists. |
+| 8.8 | Pytest passes | `uv run pytest tests/` | all green (181 expected after Phase 8: prior 142 + 5 governance + 19 master + 4 master persistence + 3 store + 8 /decisions). |
 
 ## Phase 9 — First Workers (Research + Memory)
 
