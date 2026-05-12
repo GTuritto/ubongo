@@ -14,24 +14,13 @@ logger = logging.getLogger("ubongo.router")
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _ROUTING_PATH = _REPO_ROOT / "config" / "routing.yaml"
-
-# Phase-3 shortcut: maps each workflow defined in workflows.yaml to its persona.
-# Phase 8 replaces this with a workflows.yaml reader that also exposes agents,
-# mode, and risk; for Phase 3 only the persona field is needed.
-_WORKFLOW_TO_PERSONA: dict[str, str] = {
-    "technical_deep": "architect",
-    "quick_action": "operator",
-    "casual_reply": "casual",
-    "supportive_reply": "casual",
-    "research_brief": "architect",
-    "coding_session": "architect",
-    "debate_then_synthesize": "architect",
-    "speculative_brief": "operator",
-}
+_WORKFLOWS_PATH = _REPO_ROOT / "config" / "workflows.yaml"
 
 _DEFAULT_PERSONA = "casual"
+_PERSONA_AGENT_PREFIX = "persona:"
 
 _routing_cache: dict[str, Any] | None = None
+_workflows_cache: dict[str, Any] | None = None
 
 
 def _load_routing() -> dict[str, Any]:
@@ -46,20 +35,56 @@ def _load_routing() -> dict[str, Any]:
     return data
 
 
+def _load_workflows() -> dict[str, Any]:
+    global _workflows_cache
+    if _workflows_cache is not None:
+        return _workflows_cache
+    if not _WORKFLOWS_PATH.exists():
+        raise FileNotFoundError(f"workflows.yaml not found at {_WORKFLOWS_PATH}")
+    with _WORKFLOWS_PATH.open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    _workflows_cache = data
+    return data
+
+
 def reload() -> None:
-    global _routing_cache
+    global _routing_cache, _workflows_cache
     _routing_cache = None
+    _workflows_cache = None
+
+
+def workflow_agents(name: str) -> tuple[str, ...]:
+    """Return the agent list for a workflow name from workflows.yaml."""
+    data = _load_workflows()
+    workflows = data.get("workflows", {}) or {}
+    wf = workflows.get(name)
+    if wf is None:
+        default = data.get("default_workflow", "casual_reply")
+        wf = workflows.get(default, {})
+        logger.warning(
+            "router_unknown_workflow",
+            extra={"workflow": name, "fallback": default},
+        )
+    agents = wf.get("agents") or [f"{_PERSONA_AGENT_PREFIX}{_DEFAULT_PERSONA}"]
+    return tuple(agents)
+
+
+def workflow_mode(name: str) -> str:
+    data = _load_workflows()
+    wf = (data.get("workflows", {}) or {}).get(name, {})
+    return wf.get("mode", "sequential")
+
+
+def workflow_persona(name: str) -> str:
+    """Extract the persona name from the persona: agent inside the workflow."""
+    for agent in workflow_agents(name):
+        if agent.startswith(_PERSONA_AGENT_PREFIX):
+            return agent[len(_PERSONA_AGENT_PREFIX):]
+    return _DEFAULT_PERSONA
 
 
 def _persona_for_workflow(workflow: str) -> str:
-    persona = _WORKFLOW_TO_PERSONA.get(workflow)
-    if persona is None:
-        logger.warning(
-            "router_unknown_workflow",
-            extra={"workflow": workflow, "fallback_persona": _DEFAULT_PERSONA},
-        )
-        return _DEFAULT_PERSONA
-    return persona
+    return workflow_persona(workflow)
 
 
 def _matches(rule_match: dict[str, Any], classification_dict: dict[str, Any]) -> bool:
@@ -69,8 +94,8 @@ def _matches(rule_match: dict[str, Any], classification_dict: dict[str, Any]) ->
     return True
 
 
-def route(classification: Classification) -> str:
-    """Map a Classification to a persona name via routing.yaml rules."""
+def route_workflow(classification: Classification) -> str:
+    """Map a Classification to a workflow name via routing.yaml rules."""
     routing = _load_routing()
     rules: list[dict] = routing.get("rules", []) or []
     default_workflow: str = routing.get("default_workflow", "casual_reply")
@@ -79,9 +104,13 @@ def route(classification: Classification) -> str:
     for rule in rules:
         match_block = rule.get("match", {}) or {}
         if _matches(match_block, cls_dict):
-            return _persona_for_workflow(rule.get("workflow", default_workflow))
+            return rule.get("workflow", default_workflow)
+    return default_workflow
 
-    return _persona_for_workflow(default_workflow)
+
+def route(classification: Classification) -> str:
+    """Map a Classification to a persona name (via its workflow)."""
+    return workflow_persona(route_workflow(classification))
 
 
 def _confidence_threshold() -> float:

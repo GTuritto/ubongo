@@ -1,11 +1,13 @@
 """Master Agent: the single orchestration seam for every turn.
 
-Phase 8 wraps the existing single-persona flow in the Master Agent shape so
-Phase 9 workers, Phase 10 Evaluator, and Phase 14 governance can plug into the
-named-event surface without restructuring. No user-visible behavior change.
+Phase 9 delegates execute() to the WorkflowRunner; agents (Research, Memory,
+PersonaAgent wrappers) carry out the LLM work. Master remains the place that
+classifies, plans the workflow, gates governance, composes, persists the
+workflow_runs / governance_decisions rows, calls MemoryAgent for the
+assistant message, and enqueues the response.
 
 The pipeline:
-    classify -> plan -> execute -> decide -> compose -> enqueue
+    classify -> plan -> execute (runner) -> decide -> compose -> commit -> enqueue
 """
 
 from __future__ import annotations
@@ -15,16 +17,13 @@ from dataclasses import asdict, dataclass
 
 from ubongo import classifier, events, router, skills
 from ubongo.agents import personas
+from ubongo.agents.memory import default_memory_agent
 from ubongo.classifier import Classification
-from ubongo.context import build_system_prompt
 from ubongo.delivery import queue
 from ubongo.governance.decision import Decision, decide as governance_decide
-from ubongo.llm import LLMError, complete
 from ubongo.memory import store
 
 logger = logging.getLogger("ubongo.master")
-
-_LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 
 
 @dataclass(frozen=True)
@@ -63,34 +62,57 @@ class Response:
     delivery_token: queue.DeliveryToken
 
 
-def _build_message_history(conv_id: int, current_message: str) -> tuple[str | None, list[dict]]:
-    """Returns (summary_text or None, messages list ending with the current user turn)."""
-    ctx = store.recall(conv_id)
-    history: list[dict] = []
-    for msg in ctx.messages:
-        if msg.role in ("user", "assistant"):
-            history.append({"role": msg.role, "content": msg.content})
-    history.append({"role": "user", "content": current_message})
-    return ctx.summary_text, history
+_PERSONA_DEFAULT_WORKFLOW: dict[str, str] = {
+    "architect": "technical_deep",
+    "operator": "quick_action",
+    "casual": "casual_reply",
+}
+
+
+def _resolve_workflow_name(
+    chosen_persona: str,
+    suggested_workflow: str | None,
+    auto_mode: bool,
+) -> str:
+    """Decide which workflow to run.
+
+    auto_mode + hysteresis kept the suggested persona  -> use suggested workflow.
+    auto_mode + hysteresis flipped to a different one  -> persona's default.
+    auto_mode off                                       -> persona's default.
+    """
+    if auto_mode and suggested_workflow is not None:
+        if router.workflow_persona(suggested_workflow) == chosen_persona:
+            return suggested_workflow
+    return _PERSONA_DEFAULT_WORKFLOW.get(chosen_persona, "casual_reply")
 
 
 class MasterAgent:
-    """Single entry point for turn orchestration. Phase 8 = wrap, don't change behavior."""
+    """Single entry point for turn orchestration."""
+
+    def __init__(self) -> None:
+        from ubongo.runner import WorkflowRunner, default_registry
+
+        self._runner = WorkflowRunner(default_registry())
 
     def classify(self, message: str, ctx: Context) -> Classification:
-        # ctx is accepted for forward-compat (Phase 9 will thread it); ignored in Phase 8.
         return classifier.classify(message)
 
     def plan(self, classification: Classification, ctx: Context) -> Workflow:
         events.dispatch(
             "before_plan",
-            {"classification": asdict(classification), "persona": ctx.persona, "auto_mode": ctx.auto_mode},
+            {
+                "classification": asdict(classification),
+                "persona": ctx.persona,
+                "auto_mode": ctx.auto_mode,
+            },
         )
         chosen = ctx.persona
+        suggested_workflow_name: str | None = None
         suggested_skill = None
         if ctx.auto_mode:
-            suggested = router.route(classification)
-            chosen = router.apply_hysteresis(ctx.persona, suggested, classification.confidence)
+            suggested_workflow_name = router.route_workflow(classification)
+            suggested_persona = router.workflow_persona(suggested_workflow_name)
+            chosen = router.apply_hysteresis(ctx.persona, suggested_persona, classification.confidence)
             suggested_skill = classification.suggested_skill
             logger.info(
                 "classify",
@@ -100,82 +122,49 @@ class MasterAgent:
                     "task_type": classification.task_type,
                     "risk": classification.risk,
                     "confidence": classification.confidence,
-                    "suggested": suggested,
+                    "suggested_workflow": suggested_workflow_name,
+                    "suggested_persona": suggested_persona,
                     "used": chosen,
                     "suggested_skill": suggested_skill,
                 },
             )
         resolved_skill = skills.resolve(pinned=ctx.pending_skill, suggested=suggested_skill)
         skill_name = resolved_skill.name if resolved_skill else None
+        workflow_name = _resolve_workflow_name(chosen, suggested_workflow_name, ctx.auto_mode)
+        agents = router.workflow_agents(workflow_name)
+        mode = router.workflow_mode(workflow_name)
         persona = personas.get(chosen)
         workflow = Workflow(
             persona=chosen,
             model=persona.model,
             skill_name=skill_name,
-            execution_mode="sequential",
-            agents=(f"persona:{chosen}",),
+            execution_mode=mode,
+            agents=agents,
         )
         events.dispatch("after_plan", {"workflow": asdict(workflow)})
         return workflow
 
-    def execute(self, workflow: Workflow, ctx: Context, message: str) -> WorkflowResult:
+    def execute(
+        self,
+        workflow: Workflow,
+        ctx: Context,
+        message: str,
+        workflow_run_id: int | None = None,
+    ) -> WorkflowResult:
         events.dispatch(
             "before_execute",
             {"workflow": asdict(workflow), "conversation_id": ctx.conversation_id},
         )
-        persona = personas.get(workflow.persona)
-        summary_text, history = _build_message_history(ctx.conversation_id, message)
-        base = build_system_prompt(workflow.persona, skill=workflow.skill_name)
-        system_prompt = (
-            base
-            if not summary_text
-            else f"{base}\n\n## Conversation summary so far\n\n{summary_text}"
-        )
-        try:
-            completion = complete(system_prompt, history, persona.model, persona.max_tokens)
-        except LLMError as exc:
-            logger.error(
-                "llm_error",
-                extra={
-                    "persona": workflow.persona,
-                    "model": persona.model,
-                    "cause": str(exc.cause) if exc.cause else None,
-                },
-            )
-            result = WorkflowResult(
-                text=_LLM_FAILURE_MESSAGE,
-                ok=False,
-                tokens_in=0,
-                tokens_out=0,
-                model=persona.model,
-                latency_ms=0,
-            )
-            events.dispatch("after_execute", {"workflow_result": asdict(result)})
-            return result
-        logger.info(
-            "repl_turn",
-            extra={
-                "persona": workflow.persona,
-                "length": len(message),
-                "model": completion.model,
-                "tokens_in": completion.tokens_in,
-                "tokens_out": completion.tokens_out,
-                "latency_ms": completion.latency_ms,
-                "attempts": completion.attempts,
-            },
-        )
-        result = WorkflowResult(
-            text=completion.text,
-            ok=True,
-            tokens_in=completion.tokens_in,
-            tokens_out=completion.tokens_out,
-            model=completion.model,
-            latency_ms=completion.latency_ms,
-        )
+        result = self._runner.execute(workflow, ctx, message, workflow_run_id=workflow_run_id)
         events.dispatch("after_execute", {"workflow_result": asdict(result)})
         return result
 
-    def decide(self, classification: Classification, workflow_result: WorkflowResult, ctx: Context) -> Decision:
+    def decide(
+        self,
+        classification: Classification,
+        workflow_result: WorkflowResult,
+        ctx: Context,
+    ) -> Decision:
         events.dispatch(
             "before_govern",
             {
@@ -234,14 +223,25 @@ class MasterAgent:
             pending_skill=pending_skill,
         )
 
-        result = self.execute(workflow, ctx, message)
+        # Phase 9e: INSERT workflow_runs with outcome='in_progress' before the
+        # runner so it can FK-link agent_runs immediately. Patch outcome after.
+        workflow_run_id = store.append_workflow_run(
+            conversation_id=conv_id,
+            message_id=user_msg_id,
+            classification=asdict(classification),
+            workflow=asdict(workflow),
+            execution_mode=workflow.execution_mode,
+            outcome="in_progress",
+            started_at=started_at,
+        )
+
+        result = self.execute(workflow, ctx, message, workflow_run_id=workflow_run_id)
 
         assistant_msg_id = None
         if result.ok:
-            assistant_msg_id = store.append_message(
-                conv_id,
-                "assistant",
-                result.text,
+            assistant_msg_id = default_memory_agent.commit_assistant_turn(
+                conversation_id=conv_id,
+                content=result.text,
                 persona=chosen,
                 model=result.model,
                 tokens_in=result.tokens_in,
@@ -255,20 +255,13 @@ class MasterAgent:
             auto_mode=auto_mode,
         )
 
-        workflow_run_id = store.append_workflow_run(
-            conversation_id=conv_id,
-            message_id=user_msg_id,
-            classification=asdict(classification),
-            workflow=asdict(workflow),
-            execution_mode=workflow.execution_mode,
+        store.update_workflow_run_outcome(
+            workflow_run_id,
             outcome="success" if result.ok else "failure",
-            started_at=started_at,
             ended_at=ts_now,
         )
 
         decision = self.decide(classification, result, ctx)
-        # decision.action is logged but does NOT alter flow in Phase 8 (always "auto").
-
         decision_id = store.append_governance_decision(
             workflow_run_id=workflow_run_id,
             intent=classification.intent,
@@ -293,6 +286,7 @@ class MasterAgent:
                 "workflow_run_id": workflow_run_id,
                 "decision_id": decision_id,
                 "conversation_id": conv_id,
+                "agents": list(workflow.agents),
             },
         )
 

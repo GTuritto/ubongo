@@ -148,7 +148,7 @@ def test_master_handle_uses_pending_skill(tmp_path: Path) -> None:
         captured["system_prompt"] = system_prompt
         return _completion("ok")
 
-    with patch("ubongo.master.complete", side_effect=fake_complete):
+    with patch("ubongo.agents.personas.complete", side_effect=fake_complete):
         response = master.handle(
             "wrap this up please",
             "operator",
@@ -170,7 +170,7 @@ def test_master_handle_ignores_unknown_pending_skill() -> None:
         captured["system_prompt"] = system_prompt
         return _completion("ok")
 
-    with patch("ubongo.master.complete", side_effect=fake_complete):
+    with patch("ubongo.agents.personas.complete", side_effect=fake_complete):
         response = master.handle(
             "hi", "operator", auto_mode=False, pending_skill="phantom"
         )

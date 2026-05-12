@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
   execution_mode TEXT NOT NULL,
   started_at TIMESTAMP NOT NULL,
   ended_at TIMESTAMP,
-  outcome TEXT NOT NULL CHECK (outcome IN ('success', 'failure', 'repaired'))
+  outcome TEXT NOT NULL CHECK (outcome IN ('in_progress', 'success', 'failure', 'repaired'))
 );
 
 CREATE TABLE IF NOT EXISTS agent_runs (

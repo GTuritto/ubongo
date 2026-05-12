@@ -133,7 +133,7 @@ def test_execute_returns_workflow_result_on_success():
         execution_mode="sequential",
         agents=("persona:casual",),
     )
-    with patch("ubongo.master.complete", return_value=_completion("hello back")):
+    with patch("ubongo.agents.personas.complete", return_value=_completion("hello back")):
         result = agent.execute(wf, ctx, "hi")
     assert result.ok is True
     assert result.text == "hello back"
@@ -153,7 +153,7 @@ def test_execute_returns_ok_false_on_llm_error():
         execution_mode="sequential",
         agents=("persona:casual",),
     )
-    with patch("ubongo.master.complete", side_effect=LLMError("boom", cause=RuntimeError("nope"))):
+    with patch("ubongo.agents.personas.complete", side_effect=LLMError("boom", cause=RuntimeError("nope"))):
         result = agent.execute(wf, ctx, "hi")
     assert result.ok is False
     assert "Sorry, I couldn't reach the model" in result.text
@@ -175,7 +175,7 @@ def test_execute_dispatches_before_and_after_events():
         execution_mode="sequential",
         agents=("persona:casual",),
     )
-    with patch("ubongo.master.complete", return_value=_completion()):
+    with patch("ubongo.agents.personas.complete", return_value=_completion()):
         agent.execute(wf, ctx, "hi")
     assert seen == ["before", "after"]
 
@@ -240,7 +240,7 @@ def test_compose_dispatches_compose_events():
 
 
 def test_handle_happy_path_returns_response_with_token():
-    with patch("ubongo.master.complete", return_value=_completion("hello back")):
+    with patch("ubongo.agents.personas.complete", return_value=_completion("hello back")):
         response = master.handle("hi", "casual", auto_mode=False)
     assert response.ok is True
     assert response.text == "hello back"
@@ -250,14 +250,14 @@ def test_handle_happy_path_returns_response_with_token():
 
 
 def test_handle_error_path_returns_polite_message_and_ok_false():
-    with patch("ubongo.master.complete", side_effect=LLMError("boom", cause=RuntimeError("nope"))):
+    with patch("ubongo.agents.personas.complete", side_effect=LLMError("boom", cause=RuntimeError("nope"))):
         response = master.handle("hi", "casual", auto_mode=False)
     assert response.ok is False
     assert "Sorry, I couldn't reach the model" in response.text
 
 
 def test_handle_appends_user_and_assistant_messages_on_success():
-    with patch("ubongo.master.complete", return_value=_completion("hello back")):
+    with patch("ubongo.agents.personas.complete", return_value=_completion("hello back")):
         master.handle("hi", "casual", auto_mode=False)
     messages = store.last_n_messages(1, 10)
     roles = [m.role for m in messages]
@@ -266,7 +266,7 @@ def test_handle_appends_user_and_assistant_messages_on_success():
 
 
 def test_handle_does_not_append_assistant_on_failure():
-    with patch("ubongo.master.complete", side_effect=LLMError("boom", cause=RuntimeError("nope"))):
+    with patch("ubongo.agents.personas.complete", side_effect=LLMError("boom", cause=RuntimeError("nope"))):
         master.handle("hi", "casual", auto_mode=False)
     messages = store.last_n_messages(1, 10)
     roles = [m.role for m in messages]
@@ -274,7 +274,7 @@ def test_handle_does_not_append_assistant_on_failure():
 
 
 def test_handle_returns_skill_name_when_pending_skill_set():
-    with patch("ubongo.master.complete", return_value=_completion("ok")):
+    with patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
         response = master.handle(
             "wrap this up",
             "operator",
@@ -293,7 +293,7 @@ def _query_one(sql: str):
 
 
 def test_handle_persists_workflow_run_and_governance_decision_on_success():
-    with patch("ubongo.master.complete", return_value=_completion("ok")):
+    with patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
         master.handle("hi", "casual", auto_mode=False)
 
     wf = _query_one(
@@ -312,7 +312,7 @@ def test_handle_persists_workflow_run_and_governance_decision_on_success():
 
 
 def test_handle_persists_workflow_run_with_failure_outcome_on_llm_error():
-    with patch("ubongo.master.complete", side_effect=LLMError("boom", cause=RuntimeError("nope"))):
+    with patch("ubongo.agents.personas.complete", side_effect=LLMError("boom", cause=RuntimeError("nope"))):
         master.handle("hi", "casual", auto_mode=False)
 
     wf = _query_one("SELECT outcome FROM workflow_runs")
@@ -327,7 +327,7 @@ def test_handle_emits_master_decision_log(caplog):
     import logging
 
     caplog.set_level(logging.INFO, logger="ubongo.master")
-    with patch("ubongo.master.complete", return_value=_completion("ok")):
+    with patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
         master.handle("hi", "casual", auto_mode=False)
 
     md_records = [r for r in caplog.records if r.msg == "master_decision"]
@@ -346,7 +346,7 @@ def test_handle_emits_master_decision_log(caplog):
 
 def test_workflow_run_classification_json_round_trips():
     import json
-    with patch("ubongo.master.complete", return_value=_completion("ok")):
+    with patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
         master.handle("design a circuit breaker", "architect", auto_mode=False)
     row = _query_one("SELECT classification, workflow FROM workflow_runs")
     cls = json.loads(row["classification"])

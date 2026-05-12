@@ -1,0 +1,31 @@
+# Workflow templates: which agents run, in what mode.
+# Phase 9 ships sequential mode only. Phase 12 expands modes; Phase 11 adds
+# coding/execution/evaluator/critic to the agent lists where applicable.
+
+workflows:
+  technical_deep:
+    agents: ["persona:architect"]
+    mode: sequential
+  quick_action:
+    agents: ["persona:operator"]
+    mode: sequential
+  casual_reply:
+    agents: ["persona:casual"]
+    mode: sequential
+  supportive_reply:
+    agents: ["persona:casual"]
+    mode: sequential
+  research_brief:
+    agents: ["research", "persona:architect"]
+    mode: sequential
+  coding_session:
+    agents: ["persona:architect"]
+    mode: sequential
+  debate_then_synthesize:
+    agents: ["persona:architect"]
+    mode: sequential
+  speculative_brief:
+    agents: ["persona:operator"]
+    mode: sequential
+
+default_workflow: casual_reply
