@@ -34,6 +34,8 @@ htmlcov/
 # Claude Code / editor state
 .specstory/
 .history/
+.claude/worktrees/
+.claude/handoffs/
 
 # OS
 .DS_Store
