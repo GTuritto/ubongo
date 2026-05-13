@@ -22,7 +22,7 @@ _BANNER = "Ubongo REPL ready. /exit to quit."
 _AUTO_ENABLED = "Auto routing enabled."
 _LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 _HELP_COMMANDS = (
-    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /agents, /reload, /exit."
+    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /agents, /trace, /reload, /exit."
 )
 
 
@@ -49,6 +49,21 @@ def _parse_decisions_command(line: str) -> int | None:
         return None
     if len(parts) == 1:
         return 10
+    try:
+        n = int(parts[1].strip())
+    except ValueError:
+        return None
+    return n if n > 0 else None
+
+
+def _parse_trace_command(line: str) -> int | None:
+    """Returns N from `/trace [N]`. Defaults to 1; returns None for malformed args."""
+    raw = line.strip().lstrip("/")
+    parts = raw.split(maxsplit=1)
+    if parts[0].lower() != "trace":
+        return None
+    if len(parts) == 1:
+        return 1
     try:
         n = int(parts[1].strip())
     except ValueError:
@@ -98,6 +113,67 @@ def _render_decisions_table(n: int = 10) -> str:
             f"{risk:>8}  {conf:>5}  {action}"
         )
     return "\n".join(lines)
+
+
+def _render_trace(n: int = 1) -> str:
+    rows = store.last_n_workflow_runs(n)
+    if not rows:
+        return "No traces yet."
+    blocks: list[str] = [f"Recent traces (last {n}):"]
+    for r in rows:
+        cls = r["classification"] or {}
+        wf = r["workflow"] or {}
+        agents = wf.get("agents") or []
+        gov = r["governance"]
+        header = (
+            f"--- workflow_run #{r['id']} "
+            f"(conv {r['conversation_id']}, msg {r['message_id']}) ---"
+        )
+        timing = (
+            f"started: {_format_time(r['started_at'])}  "
+            f"ended: {_format_time(r['ended_at'])}  "
+            f"outcome: {r['outcome']}"
+        )
+        cls_line = (
+            "classification: "
+            f"intent={cls.get('intent', '—')} "
+            f"tone={cls.get('tone', '—')} "
+            f"task_type={cls.get('task_type', '—')} "
+            f"risk={cls.get('risk', '—')} "
+            f"confidence={cls.get('confidence', '—')}"
+        )
+        wf_line = (
+            "workflow: "
+            f"persona={wf.get('persona', '—')} "
+            f"mode={r['execution_mode']} "
+            f"agents=[{','.join(agents)}]"
+        )
+        agent_lines = ["agents:"]
+        if not r["agent_runs"]:
+            agent_lines.append("  (no agent runs)")
+        for ar in r["agent_runs"]:
+            name = (ar["agent"] or "—")[:14]
+            model = (ar["model"] or "—")[:30]
+            outcome = ar["outcome"]
+            tin = ar["tokens_in"] or 0
+            tout = ar["tokens_out"] or 0
+            latency = ar["latency_ms"] if ar["latency_ms"] is not None else 0
+            conf = "—" if ar["confidence"] is None else f"{ar['confidence']:.2f}"
+            err_suffix = f"  err={ar['error']}" if ar.get("error") else ""
+            agent_lines.append(
+                f"  {name:<14}  {model:<30}  {outcome:<8}  "
+                f"{latency:>5}ms  in={tin}/out={tout}  conf={conf}{err_suffix}"
+            )
+        if gov:
+            conf = "—" if gov["confidence"] is None else f"{gov['confidence']:.2f}"
+            gov_line = (
+                f"governance: action={gov['action']}  conf={conf}  "
+                f"intent={gov.get('intent') or '—'}  risk={gov.get('risk') or '—'}"
+            )
+        else:
+            gov_line = "governance: (no decision)"
+        blocks.append("\n".join([header, timing, cls_line, wf_line, *agent_lines, gov_line]))
+    return "\n\n".join(blocks)
 
 
 def _render_agents_table() -> str:
@@ -256,6 +332,13 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
                 continue
             if head == "agents":
                 print(_render_agents_table())
+                continue
+            if head == "trace":
+                n = _parse_trace_command(stripped)
+                if n is None:
+                    print(f"Usage: /trace [N]. {_HELP_COMMANDS}")
+                else:
+                    print(_render_trace(n))
                 continue
             if head == "reload":
                 print(_reload_all())
