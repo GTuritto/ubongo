@@ -21,7 +21,7 @@ from ubongo.agents import personas
 from ubongo.agents.memory import default_memory_agent
 from ubongo.classifier import Classification
 from ubongo.delivery import queue
-from ubongo.governance.decision import Decision, decide as governance_decide
+from ubongo.governance.decision import Action, Decision, decide as governance_decide
 from ubongo.memory import store
 
 logger = logging.getLogger("ubongo.master")
@@ -69,6 +69,17 @@ _PERSONA_DEFAULT_WORKFLOW: dict[str, str] = {
     "operator": "quick_action",
     "casual": "casual_reply",
 }
+
+# Phase 10: borderline-confidence band that triggers a Critic + persona retry.
+# Below CRITIC_LOW the turn is rejected by governance; at or above CRITIC_HIGH
+# the answer stands. Constants here; Phase 14 moves them to governance.yaml.
+CRITIC_LOW: float = 0.2
+CRITIC_HIGH: float = 0.6
+
+_REJECT_MESSAGE = (
+    "I'm not confident enough in my answer to give it. "
+    "Try rephrasing or breaking the question down."
+)
 
 
 def _resolve_workflow_name(
@@ -140,7 +151,9 @@ class MasterAgent:
         resolved_skill = skills.resolve(pinned=ctx.pending_skill, suggested=suggested_skill)
         skill_name = resolved_skill.name if resolved_skill else None
         workflow_name = _resolve_workflow_name(chosen, suggested_workflow_name, ctx.auto_mode)
-        agents = router.workflow_agents(workflow_name)
+        agents = list(router.workflow_agents(workflow_name))
+        if router.workflow_evaluate(workflow_name):
+            agents.append("evaluator")
         mode = router.workflow_mode(workflow_name)
         persona = personas.get(chosen)
         workflow = Workflow(
@@ -148,7 +161,7 @@ class MasterAgent:
             model=persona.model,
             skill_name=skill_name,
             execution_mode=mode,
-            agents=agents,
+            agents=tuple(agents),
         )
         events.dispatch("after_plan", {"workflow": asdict(workflow)})
         return workflow
@@ -183,7 +196,11 @@ class MasterAgent:
             },
         )
         try:
-            decision = governance_decide(classification, workflow_result)
+            decision = governance_decide(
+                classification,
+                workflow_result,
+                evaluator_confidence=workflow_result.evaluator_confidence,
+            )
         except Exception as exc:
             logger.warning(
                 "master_decide_failed",
@@ -247,6 +264,60 @@ class MasterAgent:
 
         result = self.execute(workflow, ctx, message, workflow_run_id=workflow_run_id)
 
+        # Phase 10: borderline evaluator confidence -> one Critic + persona retry.
+        # Same workflow_run_id so the trace shows the whole story in one row.
+        critic_used = False
+        ec = result.evaluator_confidence
+        if (
+            result.ok
+            and ec is not None
+            and CRITIC_LOW <= ec < CRITIC_HIGH
+            and chosen in personas.VALID_PERSONAS
+        ):
+            events.dispatch(
+                "borderline_confidence",
+                {"confidence": ec, "workflow_run_id": workflow_run_id},
+            )
+            critic_workflow = Workflow(
+                persona=chosen,
+                model=workflow.model,
+                skill_name=workflow.skill_name,
+                execution_mode="sequential",
+                agents=("critic", chosen),
+            )
+            retry_result = self.execute(
+                critic_workflow, ctx, message, workflow_run_id=workflow_run_id
+            )
+            if retry_result.ok and retry_result.text:
+                # Keep the original evaluator confidence on the final result;
+                # the critic-retry workflow does not include the evaluator.
+                result = WorkflowResult(
+                    text=retry_result.text,
+                    ok=True,
+                    tokens_in=retry_result.tokens_in,
+                    tokens_out=retry_result.tokens_out,
+                    model=retry_result.model,
+                    latency_ms=retry_result.latency_ms,
+                    evaluator_confidence=ec,
+                )
+                critic_used = True
+
+        # Phase 10: governance runs before the assistant-message commit so a
+        # `reject` decision can override the response text. The rejection is
+        # the assistant turn; persist it so /recall and the vault are coherent.
+        decision = self.decide(classification, result, ctx)
+        rejected = decision.action == Action.REJECT.value
+        if rejected:
+            result = WorkflowResult(
+                text=_REJECT_MESSAGE,
+                ok=True,
+                tokens_in=0,
+                tokens_out=0,
+                model="",
+                latency_ms=0,
+                evaluator_confidence=result.evaluator_confidence,
+            )
+
         assistant_msg_id = None
         if result.ok:
             mem_started = store.now_iso()
@@ -288,12 +359,19 @@ class MasterAgent:
             ended_at=ts_now,
         )
 
-        decision = self.decide(classification, result, ctx)
+        # Phase 10: governance_decisions.confidence holds the evaluator's
+        # score when present; classifier confidence is the fallback so the
+        # column doesn't NULL out for non-evaluated workflows.
+        stored_confidence = (
+            result.evaluator_confidence
+            if result.evaluator_confidence is not None
+            else classification.confidence
+        )
         decision_id = store.append_governance_decision(
             workflow_run_id=workflow_run_id,
             intent=classification.intent,
             risk=classification.risk,
-            confidence=classification.confidence,
+            confidence=stored_confidence,
             reversibility=None,
             action=decision.action,
         )
@@ -306,10 +384,13 @@ class MasterAgent:
                 "task_type": classification.task_type,
                 "risk": classification.risk,
                 "confidence": classification.confidence,
+                "evaluator_confidence": result.evaluator_confidence,
+                "critic_used": critic_used,
                 "persona": chosen,
                 "skill": workflow.skill_name,
                 "execution_mode": workflow.execution_mode,
                 "action": decision.action,
+                "decision_reason": decision.reason,
                 "workflow_run_id": workflow_run_id,
                 "decision_id": decision_id,
                 "conversation_id": conv_id,
@@ -333,9 +414,12 @@ class MasterAgent:
                 "workflow_run_id": workflow_run_id,
                 "decision_id": decision_id,
             }
+        enqueue_source = (
+            "rejected" if rejected else ("response" if result.ok else "error")
+        )
         token = queue.enqueue_for_delivery(
             text,
-            source="response" if result.ok else "error",
+            source=enqueue_source,
             after_send_payload=after_send_payload,
             metadata={
                 "persona": chosen,

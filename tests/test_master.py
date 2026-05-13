@@ -74,7 +74,24 @@ def test_plan_keeps_current_persona_when_auto_off():
     assert wf.persona == "architect"  # auto_mode=False -> hysteresis bypass
     assert wf.skill_name is None
     assert wf.execution_mode == "sequential"
-    assert wf.agents == ("architect",)
+    # technical_deep has evaluate=true -> evaluator appended
+    assert wf.agents == ("architect", "evaluator")
+
+
+def test_plan_appends_evaluator_when_workflow_evaluate_true():
+    agent = MasterAgent()
+    ctx = Context(conversation_id=None, persona="architect", auto_mode=False, pending_skill=None)
+    wf = agent.plan(_classification(), ctx)
+    assert "evaluator" in wf.agents
+    assert wf.agents[-1] == "evaluator"
+
+
+def test_plan_does_not_append_evaluator_for_casual_workflow():
+    agent = MasterAgent()
+    ctx = Context(conversation_id=None, persona="casual", auto_mode=False, pending_skill=None)
+    wf = agent.plan(_classification(intent="casual"), ctx)
+    assert "evaluator" not in wf.agents
+    assert wf.agents == ("casual",)
 
 
 def test_plan_applies_hysteresis_below_threshold():
@@ -354,3 +371,112 @@ def test_workflow_run_classification_json_round_trips():
     assert "intent" in cls
     assert wf["persona"] == "architect"
     assert wf["execution_mode"] == "sequential"
+
+
+# --- Phase 10: evaluator + critic + reject (10d) ---
+
+
+def _stub_execute_results(*results):
+    """Build a side_effect that returns successive WorkflowResults from
+    MasterAgent.execute. Each call consumes one element."""
+    iterator = iter(results)
+
+    def _side_effect(workflow, ctx, message, workflow_run_id=None):
+        return next(iterator)
+
+    return _side_effect
+
+
+def _result(text: str, *, ec: float | None = None) -> WorkflowResult:
+    return WorkflowResult(
+        text=text, ok=True, tokens_in=5, tokens_out=5, model="m",
+        latency_ms=1, evaluator_confidence=ec,
+    )
+
+
+def test_borderline_confidence_invokes_critic():
+    """Evaluator returns 0.45 -> Master runs a second pass with (critic, persona)
+    under the same workflow_run_id; final response is the retry's text."""
+    first = _result("first answer", ec=0.45)
+    retry = _result("second answer after critique", ec=0.45)
+    seen_workflows: list[Workflow] = []
+
+    def _side_effect(workflow, ctx, message, workflow_run_id=None):
+        seen_workflows.append(workflow)
+        return first if len(seen_workflows) == 1 else retry
+
+    agent = MasterAgent()
+    with patch.object(agent, "execute", side_effect=_side_effect):
+        response = agent.handle("technical question", "architect", auto_mode=False)
+    assert response.ok is True
+    assert response.text == "second answer after critique"
+    assert len(seen_workflows) == 2
+    assert seen_workflows[1].agents == ("critic", "architect")
+
+
+def test_high_confidence_skips_critic():
+    """Evaluator >= 0.6 -> no second pass."""
+    only = _result("solid answer", ec=0.85)
+    seen: list[Workflow] = []
+
+    def _side_effect(workflow, ctx, message, workflow_run_id=None):
+        seen.append(workflow)
+        return only
+
+    agent = MasterAgent()
+    with patch.object(agent, "execute", side_effect=_side_effect):
+        response = agent.handle("technical question", "architect", auto_mode=False)
+    assert response.ok is True
+    assert response.text == "solid answer"
+    assert len(seen) == 1
+
+
+def test_low_confidence_rejects():
+    """Evaluator < 0.2 -> governance returns reject; response text is the canned
+    refusal; governance_decisions.action == 'reject'."""
+    low = _result("dubious answer", ec=0.1)
+    agent = MasterAgent()
+    with patch.object(agent, "execute", return_value=low):
+        response = agent.handle("technical question", "architect", auto_mode=False)
+    assert response.ok is True  # the response still flows; it is just a refusal
+    assert "not confident enough" in response.text
+    gd = _query_one("SELECT action, confidence FROM governance_decisions")
+    assert gd["action"] == "reject"
+    assert abs(gd["confidence"] - 0.1) < 1e-6
+
+
+def test_governance_confidence_column_uses_evaluator_score():
+    """When evaluator_confidence is present, it lands in governance_decisions.confidence
+    in preference to the classifier's confidence."""
+    eval_result = _result("ok", ec=0.83)
+    agent = MasterAgent()
+    with patch.object(agent, "execute", return_value=eval_result):
+        agent.handle("technical question", "architect", auto_mode=False)
+    gd = _query_one("SELECT confidence FROM governance_decisions")
+    assert abs(gd["confidence"] - 0.83) < 1e-6
+
+
+def test_governance_confidence_falls_back_to_classifier_when_no_evaluator():
+    """No evaluator -> classifier confidence is stored (parity with Phase 8/9)."""
+    no_eval = _result("ok", ec=None)
+    agent = MasterAgent()
+    with patch.object(agent, "execute", return_value=no_eval):
+        agent.handle("hi", "casual", auto_mode=False)
+    gd = _query_one("SELECT confidence FROM governance_decisions")
+    # classification confidence default in classifier is some non-None float;
+    # at minimum, the column must not be NULL.
+    assert gd["confidence"] is not None
+
+
+def test_master_decision_log_includes_phase10_fields(caplog):
+    import logging
+    caplog.set_level(logging.INFO, logger="ubongo.master")
+    eval_result = _result("ok", ec=0.83)
+    agent = MasterAgent()
+    with patch.object(agent, "execute", return_value=eval_result):
+        agent.handle("technical question", "architect", auto_mode=False)
+    md = [r for r in caplog.records if r.msg == "master_decision"]
+    assert len(md) == 1
+    rec = md[0]
+    assert rec.evaluator_confidence == 0.83
+    assert rec.critic_used is False
