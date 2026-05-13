@@ -16,6 +16,13 @@ agents:
     max_tokens: 400
   critic:
     max_tokens: 400
+  coding:
+    max_tokens: 2048
+  repair:
+    # Per-agent model fallback used by RepairAgent.plan_retry on a single
+    # retry. Defaults are computed from models.default / models.casual when
+    # an entry is omitted. Phase 13 may broaden the recovery plan.
+    fallback_models: {}
 
 api_keys:
   openrouter:

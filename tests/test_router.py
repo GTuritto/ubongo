@@ -124,3 +124,26 @@ def test_workflow_evaluate_false_for_casual_and_quick() -> None:
 
 def test_workflow_evaluate_unknown_workflow_returns_false() -> None:
     assert router.workflow_evaluate("totally-made-up") is False
+
+
+# --- Phase 11f: coding_session + execution_session ---
+
+
+def test_coding_session_uses_coding_then_architect() -> None:
+    assert router.workflow_agents("coding_session") == ("coding", "architect")
+    assert router.workflow_evaluate("coding_session") is True
+
+
+def test_execution_session_declared_but_not_auto_routed() -> None:
+    """The workflow exists in workflows.yaml for /mode-style debug + tests,
+    but no rule in routing.yaml maps an intent/tone to it."""
+    assert router.workflow_agents("execution_session") == ("execution", "architect")
+    assert router.workflow_evaluate("execution_session") is False
+    # No routing.yaml rule should map any classification to execution_session.
+    from ubongo.classifier import Classification
+    for intent in ("technical", "casual", "work", "research", "coding", "other"):
+        cls = Classification(
+            intent=intent, tone="neutral", task_type="question",
+            suggested_skill=None, risk="low", confidence=0.9,
+        )
+        assert router.route_workflow(cls) != "execution_session"

@@ -32,9 +32,16 @@ workflows:
     mode: sequential
     evaluate: true
   coding_session:
-    agents: ["architect"]
+    agents: ["coding", "architect"]
     mode: sequential
     evaluate: true
+  execution_session:
+    # Declared but NOT auto-routed in Phase 11. Routing a turn to shell
+    # execution on classifier confidence alone belongs behind Phase 15's
+    # approval gate. /exec is the only Execution path in Phase 11.
+    agents: ["execution", "architect"]
+    mode: sequential
+    evaluate: false
   debate_then_synthesize:
     agents: ["architect"]
     mode: sequential

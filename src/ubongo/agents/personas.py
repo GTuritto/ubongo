@@ -122,12 +122,13 @@ class BasePersonaAgent:
                 label = "Research findings" if i == 1 else f"Prior agent findings #{i}"
                 sections.append(f"## {label}\n\n{finding}")
         system_prompt = "\n\n".join(sections)
+        model = input.metadata.get("override_model") or persona.model
 
         try:
             completion = complete(
                 system_prompt=system_prompt,
                 messages=list(input.history),
-                model=persona.model,
+                model=model,
                 max_tokens=persona.max_tokens,
             )
         except LLMError as exc:
@@ -136,14 +137,14 @@ class BasePersonaAgent:
                 "persona_llm_error",
                 extra={
                     "persona": self.persona_name,
-                    "model": persona.model,
+                    "model": model,
                     "cause": str(exc.cause) if exc.cause else None,
                 },
             )
             return AgentResult(
                 text=_LLM_FAILURE_MESSAGE,
                 ok=False,
-                model=persona.model,
+                model=model,
                 tokens_in=0,
                 tokens_out=0,
                 latency_ms=elapsed,

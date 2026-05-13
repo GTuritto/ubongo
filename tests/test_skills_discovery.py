@@ -147,3 +147,19 @@ def test_has_returns_bool(skills_dir: Path) -> None:
     )
     assert skills.has("summarize-conversation") is True
     assert skills.has("phantom") is False
+
+
+def test_production_constrained_bash_skill_loads() -> None:
+    """Phase 11b: the shipped constrained-bash skill must load with the
+    declared frontmatter (risk=medium, reversibility=irreversible)."""
+    skills.set_skills_dir(None)  # reset to production config/skills/
+    skills.reload()
+    try:
+        s = skills.get("constrained-bash")
+        assert s.risk == "medium"
+        assert s.reversibility == "irreversible"
+        assert s.default_persona == "operator"
+        assert "run" in s.prompts
+    finally:
+        skills.set_skills_dir(None)
+        skills.reload()

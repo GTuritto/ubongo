@@ -22,7 +22,7 @@ _BANNER = "Ubongo REPL ready. /exit to quit."
 _AUTO_ENABLED = "Auto routing enabled."
 _LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 _HELP_COMMANDS = (
-    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /agents, /trace, /reload, /exit."
+    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /agents, /trace, /exec <cmd>, /reload, /exit."
 )
 
 
@@ -71,6 +71,19 @@ def _parse_trace_command(line: str) -> int | None:
     return n if n > 0 else None
 
 
+def _parse_exec_command(line: str) -> str | None:
+    """Returns the command body from `/exec <cmd>` (everything after the
+    command word). None if `/exec` was typed with no argument. The body
+    is preserved verbatim — quotes, spaces — so the sandbox can shlex it."""
+    raw = line.strip().lstrip("/")
+    parts = raw.split(maxsplit=1)
+    if parts[0].lower() != "exec":
+        return None
+    if len(parts) == 1:
+        return None
+    return parts[1].strip() or None
+
+
 def _format_time(ts: str | None) -> str:
     if ts is None:
         return "—"
@@ -113,6 +126,25 @@ def _render_decisions_table(n: int = 10) -> str:
             f"{risk:>8}  {conf:>5}  {action}"
         )
     return "\n".join(lines)
+
+
+def _render_exec(cmd: str) -> str:
+    """Phase 11e: debug-only direct sandbox path. Bypasses master.handle —
+    no workflow_runs row, no governance, no enqueue, no vault."""
+    from ubongo import sandbox
+    try:
+        result = sandbox.run_constrained(cmd, timeout=10)
+    except sandbox.SandboxRefused as exc:
+        return f"Refused: {exc}"
+    except Exception as exc:
+        return f"Error: {type(exc).__name__}: {str(exc)[:200]}"
+    cmd_str = " ".join(result.argv)
+    return (
+        f"$ {cmd_str}\n"
+        f"exit={result.exit_code}  ({result.latency_ms}ms)\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )
 
 
 def _render_trace(n: int = 1) -> str:
@@ -160,9 +192,10 @@ def _render_trace(n: int = 1) -> str:
             latency = ar["latency_ms"] if ar["latency_ms"] is not None else 0
             conf = "—" if ar["confidence"] is None else f"{ar['confidence']:.2f}"
             err_suffix = f"  err={ar['error']}" if ar.get("error") else ""
+            retry_suffix = "  (retried)" if ar.get("retried") else ""
             agent_lines.append(
                 f"  {name:<14}  {model:<30}  {outcome:<8}  "
-                f"{latency:>5}ms  in={tin}/out={tout}  conf={conf}{err_suffix}"
+                f"{latency:>5}ms  in={tin}/out={tout}  conf={conf}{err_suffix}{retry_suffix}"
             )
         if gov:
             conf = "—" if gov["confidence"] is None else f"{gov['confidence']:.2f}"
@@ -339,6 +372,13 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
                     print(f"Usage: /trace [N]. {_HELP_COMMANDS}")
                 else:
                     print(_render_trace(n))
+                continue
+            if head == "exec":
+                cmd = _parse_exec_command(stripped)
+                if cmd is None:
+                    print(f"Usage: /exec <cmd>. {_HELP_COMMANDS}")
+                else:
+                    print(_render_exec(cmd))
                 continue
             if head == "reload":
                 print(_reload_all())

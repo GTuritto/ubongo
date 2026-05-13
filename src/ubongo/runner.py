@@ -58,6 +58,102 @@ class WorkflowRunner:
     def __init__(self, registry: dict[str, Agent]):
         self.registry = registry
 
+    def _dispatch_agent(
+        self,
+        *,
+        agent,
+        agent_name: str,
+        message: str,
+        history: list,
+        summary_text: str | None,
+        prior_findings: list[str],
+        workflow,
+        context,
+        workflow_run_id: int | None,
+        override_model: str | None,
+        retried: bool,
+    ) -> AgentResult:
+        """Run a single agent, record the agent_runs row, dispatch lifecycle
+        events. Returns the AgentResult. Used twice per failed-then-retried
+        agent (Phase 11d)."""
+        metadata: dict = {
+            "persona": workflow.persona,
+            "skill": workflow.skill_name,
+        }
+        if override_model:
+            metadata["override_model"] = override_model
+
+        input = AgentInput(
+            message=message,
+            history=tuple(history),
+            summary_text=summary_text,
+            prior_findings=tuple(prior_findings),
+            metadata=metadata,
+        )
+        events.dispatch(
+            "agent_started",
+            {"agent": agent_name, "input_message_len": len(message), "retried": retried},
+        )
+        started_at = store.now_iso()
+        t0 = time.monotonic()
+        try:
+            result = agent.run(input, context)
+        except Exception as exc:
+            elapsed = int((time.monotonic() - t0) * 1000)
+            logger.warning(
+                "agent_exception",
+                extra={"agent": agent_name, "cause": str(exc), "retried": retried},
+            )
+            result = AgentResult(
+                text="",
+                ok=False,
+                model=getattr(agent, "default_model", "") or None,
+                tokens_in=0,
+                tokens_out=0,
+                latency_ms=elapsed,
+                error=type(exc).__name__,
+            )
+        ended_at = store.now_iso()
+
+        if workflow_run_id is not None:
+            store.append_agent_run(
+                workflow_run_id=workflow_run_id,
+                agent=agent_name,
+                model=result.model,
+                input={
+                    "message_len": len(message),
+                    "history_len": len(history),
+                    "prior_findings": len(prior_findings),
+                },
+                output={"text_len": len(result.text), "error": result.error},
+                confidence=result.confidence,
+                tokens_in=result.tokens_in,
+                tokens_out=result.tokens_out,
+                latency_ms=result.latency_ms,
+                outcome="success" if result.ok else "failure",
+                started_at=started_at,
+                ended_at=ended_at,
+                retried=retried,
+            )
+
+        if result.ok:
+            events.dispatch(
+                "agent_completed",
+                {
+                    "agent": agent_name,
+                    "ok": True,
+                    "tokens_in": result.tokens_in,
+                    "tokens_out": result.tokens_out,
+                    "retried": retried,
+                },
+            )
+        else:
+            events.dispatch(
+                "agent_failed",
+                {"agent": agent_name, "error": result.error, "retried": retried},
+            )
+        return result
+
     def execute(
         self,
         workflow: "Workflow",
@@ -78,79 +174,73 @@ class WorkflowRunner:
         last_composer_result: AgentResult | None = None
         evaluator_confidence: float | None = None
         any_failure = False
+        retried_agents: set[str] = set()
+
+        repair = self.registry.get("repair")
 
         for agent_name in workflow.agents:
+            if agent_name == "repair":
+                # Repair never executes as part of a workflow; the runner consults
+                # it on agent_failed via plan_retry. Skip silently.
+                continue
+
             agent = self.registry.get(agent_name)
             if agent is None:
                 logger.warning("agent_not_registered", extra={"agent": agent_name})
                 any_failure = True
                 continue
 
-            input = AgentInput(
+            result = self._dispatch_agent(
+                agent=agent,
+                agent_name=agent_name,
                 message=message,
-                history=tuple(history),
+                history=history,
                 summary_text=summary_text,
-                prior_findings=tuple(prior_findings),
-                metadata={
-                    "persona": workflow.persona,
-                    "skill": workflow.skill_name,
-                },
+                prior_findings=prior_findings,
+                workflow=workflow,
+                context=context,
+                workflow_run_id=workflow_run_id,
+                override_model=None,
+                retried=False,
             )
-            events.dispatch(
-                "agent_started",
-                {"agent": agent_name, "input_message_len": len(message)},
-            )
-            started_at = store.now_iso()
-            t0 = time.monotonic()
-            try:
-                result = agent.run(input, context)
-            except Exception as exc:  # last-ditch safety
-                elapsed = int((time.monotonic() - t0) * 1000)
-                logger.warning(
-                    "agent_exception",
-                    extra={"agent": agent_name, "cause": str(exc)},
-                )
-                result = AgentResult(
-                    text="",
-                    ok=False,
-                    model=getattr(agent, "default_model", "") or None,
-                    tokens_in=0,
-                    tokens_out=0,
-                    latency_ms=elapsed,
-                    error=type(exc).__name__,
-                )
-            ended_at = store.now_iso()
 
-            if workflow_run_id is not None:
-                store.append_agent_run(
-                    workflow_run_id=workflow_run_id,
-                    agent=agent_name,
-                    model=result.model,
-                    input={
-                        "message_len": len(message),
-                        "history_len": len(history),
-                        "prior_findings": len(prior_findings),
-                    },
-                    output={"text_len": len(result.text), "error": result.error},
-                    confidence=result.confidence,
-                    tokens_in=result.tokens_in,
-                    tokens_out=result.tokens_out,
-                    latency_ms=result.latency_ms,
-                    outcome="success" if result.ok else "failure",
-                    started_at=started_at,
-                    ended_at=ended_at,
+            # Phase 11d: on failure, ask Repair for a single retry. Each agent
+            # is retried at most once per workflow run.
+            if (
+                not result.ok
+                and repair is not None
+                and agent_name not in retried_agents
+                and hasattr(repair, "plan_retry")
+            ):
+                input_for_plan = AgentInput(
+                    message=message,
+                    history=tuple(history),
+                    summary_text=summary_text,
+                    prior_findings=tuple(prior_findings),
+                    metadata={"persona": workflow.persona, "skill": workflow.skill_name},
                 )
+                plan = repair.plan_retry(agent_name, result, input_for_plan)
+                if plan is not None:
+                    retried_agents.add(agent_name)
+                    logger.info(
+                        "agent_retry",
+                        extra={"agent": agent_name, "model": plan.get("model")},
+                    )
+                    result = self._dispatch_agent(
+                        agent=agent,
+                        agent_name=agent_name,
+                        message=message,
+                        history=history,
+                        summary_text=summary_text,
+                        prior_findings=prior_findings,
+                        workflow=workflow,
+                        context=context,
+                        workflow_run_id=workflow_run_id,
+                        override_model=plan.get("model"),
+                        retried=True,
+                    )
 
             if result.ok:
-                events.dispatch(
-                    "agent_completed",
-                    {
-                        "agent": agent_name,
-                        "ok": True,
-                        "tokens_in": result.tokens_in,
-                        "tokens_out": result.tokens_out,
-                    },
-                )
                 if result.text:
                     prior_findings.append(result.text)
                 last_ok_result = result
@@ -160,10 +250,6 @@ class WorkflowRunner:
                     evaluator_confidence = result.confidence
             else:
                 any_failure = True
-                events.dispatch(
-                    "agent_failed",
-                    {"agent": agent_name, "error": result.error},
-                )
 
         # Phase 10: prefer the last composer agent's text (the persona) over any
         # validator agent (Evaluator / Critic) that ran after it. Falls back to
@@ -201,15 +287,19 @@ def default_registry() -> dict[str, Agent]:
     Phase 10: Persona Agents use bare registry names (architect, operator,
     casual) instead of the Phase-9 `persona:<name>` prefix. Evaluator and
     Critic land here too.
+    Phase 11: Coding, Execution, Repair workers added.
     """
+    from ubongo.agents.coding import CodingAgent
     from ubongo.agents.critic import CriticAgent
     from ubongo.agents.evaluator import EvaluatorAgent
+    from ubongo.agents.execution import ExecutionAgent
     from ubongo.agents.memory import default_memory_agent
     from ubongo.agents.personas import (
         ArchitectPersona,
         CasualPersona,
         OperatorPersona,
     )
+    from ubongo.agents.repair import default_repair_agent
     from ubongo.agents.research import ResearchAgent
 
     return {
@@ -217,6 +307,9 @@ def default_registry() -> dict[str, Agent]:
         "memory": default_memory_agent,
         "evaluator": EvaluatorAgent(),
         "critic": CriticAgent(),
+        "coding": CodingAgent(),
+        "execution": ExecutionAgent(),
+        "repair": default_repair_agent,
         "architect": ArchitectPersona(),
         "operator": OperatorPersona(),
         "casual": CasualPersona(),
