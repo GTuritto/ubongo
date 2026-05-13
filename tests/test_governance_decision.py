@@ -22,7 +22,7 @@ def _workflow(**overrides):
         "model": "openrouter/anthropic/claude-sonnet-4.5",
         "skill_name": None,
         "execution_mode": "sequential",
-        "agents": ("persona:architect",),
+        "agents": ("architect",),
     }
     base.update(overrides)
     return type("Workflow", (), base)()

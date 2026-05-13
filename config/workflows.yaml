@@ -1,31 +1,47 @@
-# Workflow templates: which agents run, in what mode.
-# Phase 9 ships sequential mode only. Phase 12 expands modes; Phase 11 adds
-# coding/execution/evaluator/critic to the agent lists where applicable.
+# Workflow templates: which agents run, in what mode, and whether the
+# Evaluator runs after the persona to feed governance.
+#
+# Phase 10 ships sequential mode only and the Evaluator/Critic agents.
+# Phase 11 adds coding/execution to the agent lists where applicable;
+# Phase 12 expands `mode` beyond sequential.
+#
+# Persona names are bare (`architect`, not `persona:architect`) as of Phase 10.
+# `evaluate: true` appends "evaluator" to `agents` at plan time; absent or
+# false skips the judge (preferred for casual/quick workflows where voice
+# and latency matter more than confidence scoring).
 
 workflows:
   technical_deep:
-    agents: ["persona:architect"]
+    agents: ["architect"]
     mode: sequential
+    evaluate: true
   quick_action:
-    agents: ["persona:operator"]
+    agents: ["operator"]
     mode: sequential
+    evaluate: false
   casual_reply:
-    agents: ["persona:casual"]
+    agents: ["casual"]
     mode: sequential
+    evaluate: false
   supportive_reply:
-    agents: ["persona:casual"]
+    agents: ["casual"]
     mode: sequential
+    evaluate: false
   research_brief:
-    agents: ["research", "persona:architect"]
+    agents: ["research", "architect"]
     mode: sequential
+    evaluate: true
   coding_session:
-    agents: ["persona:architect"]
+    agents: ["architect"]
     mode: sequential
+    evaluate: true
   debate_then_synthesize:
-    agents: ["persona:architect"]
+    agents: ["architect"]
     mode: sequential
+    evaluate: true
   speculative_brief:
-    agents: ["persona:operator"]
+    agents: ["operator"]
     mode: sequential
+    evaluate: false
 
 default_workflow: casual_reply

@@ -84,16 +84,27 @@ def reload() -> None:
     _registry.clear()
 
 
-class PersonaAgent:
-    """Wraps a persona as an Agent: builds the system prompt, runs the LLM,
-    and weaves prior agent findings (from Research, etc.) into the context."""
+class BasePersonaAgent:
+    """Concrete behavior shared by every persona agent.
 
+    Subclasses set `_persona_name` as a class attribute; the constructor
+    binds the registry name and loads the model/max_tokens from the
+    persona file. composer=True marks these as the agents whose text
+    becomes the user-facing WorkflowResult.text.
+    """
+
+    _persona_name: str = ""  # must be overridden
     role = "persona composer"
+    composer = True
 
-    def __init__(self, persona_name: str) -> None:
-        self.persona_name = persona_name
-        self.name = f"persona:{persona_name}"
-        persona = get(persona_name)
+    def __init__(self) -> None:
+        if not self._persona_name:
+            raise TypeError(
+                f"{type(self).__name__} must set _persona_name on the class"
+            )
+        self.persona_name = self._persona_name
+        self.name = self._persona_name
+        persona = get(self._persona_name)
         self.default_model = persona.model
         self._max_tokens = persona.max_tokens
 
@@ -159,3 +170,18 @@ class PersonaAgent:
             tokens_out=completion.tokens_out,
             latency_ms=completion.latency_ms,
         )
+
+
+class ArchitectPersona(BasePersonaAgent):
+    _persona_name = "architect"
+
+
+class OperatorPersona(BasePersonaAgent):
+    _persona_name = "operator"
+
+
+class CasualPersona(BasePersonaAgent):
+    _persona_name = "casual"
+
+
+VALID_PERSONAS: tuple[str, ...] = ("architect", "operator", "casual")

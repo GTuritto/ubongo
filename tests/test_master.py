@@ -74,7 +74,7 @@ def test_plan_keeps_current_persona_when_auto_off():
     assert wf.persona == "architect"  # auto_mode=False -> hysteresis bypass
     assert wf.skill_name is None
     assert wf.execution_mode == "sequential"
-    assert wf.agents == ("persona:architect",)
+    assert wf.agents == ("architect",)
 
 
 def test_plan_applies_hysteresis_below_threshold():
@@ -131,7 +131,7 @@ def test_execute_returns_workflow_result_on_success():
         model="test-model",
         skill_name=None,
         execution_mode="sequential",
-        agents=("persona:casual",),
+        agents=("casual",),
     )
     with patch("ubongo.agents.personas.complete", return_value=_completion("hello back")):
         result = agent.execute(wf, ctx, "hi")
@@ -151,7 +151,7 @@ def test_execute_returns_ok_false_on_llm_error():
         model="test-model",
         skill_name=None,
         execution_mode="sequential",
-        agents=("persona:casual",),
+        agents=("casual",),
     )
     with patch("ubongo.agents.personas.complete", side_effect=LLMError("boom", cause=RuntimeError("nope"))):
         result = agent.execute(wf, ctx, "hi")
@@ -173,7 +173,7 @@ def test_execute_dispatches_before_and_after_events():
         model="test-model",
         skill_name=None,
         execution_mode="sequential",
-        agents=("persona:casual",),
+        agents=("casual",),
     )
     with patch("ubongo.agents.personas.complete", return_value=_completion()):
         agent.execute(wf, ctx, "hi")
@@ -218,7 +218,7 @@ def test_decide_falls_back_on_internal_error():
 def test_compose_is_passthrough_in_phase_8():
     agent = MasterAgent()
     ctx = Context(conversation_id=1, persona="casual", auto_mode=False, pending_skill=None)
-    wf = Workflow(persona="casual", model="m", skill_name=None, execution_mode="sequential", agents=("persona:casual",))
+    wf = Workflow(persona="casual", model="m", skill_name=None, execution_mode="sequential", agents=("casual",))
     result = WorkflowResult(text="the answer", ok=True, tokens_in=1, tokens_out=1, model="m", latency_ms=1)
     out = agent.compose(wf, result, ctx)
     assert out == "the answer"
@@ -230,7 +230,7 @@ def test_compose_dispatches_compose_events():
     events.register("before_compose", lambda _p: seen.append("before"))
     events.register("after_compose", lambda _p: seen.append("after"))
     ctx = Context(conversation_id=1, persona="casual", auto_mode=False, pending_skill=None)
-    wf = Workflow(persona="casual", model="m", skill_name=None, execution_mode="sequential", agents=("persona:casual",))
+    wf = Workflow(persona="casual", model="m", skill_name=None, execution_mode="sequential", agents=("casual",))
     result = WorkflowResult(text="x", ok=True, tokens_in=1, tokens_out=1, model="m", latency_ms=1)
     agent.compose(wf, result, ctx)
     assert seen == ["before", "after"]

@@ -42,9 +42,17 @@ def test_render_agents_table_lists_research_and_memory():
 
 def test_render_agents_table_lists_all_three_personas():
     out = _render_agents_table()
-    assert "persona:architect" in out
-    assert "persona:operator" in out
-    assert "persona:casual" in out
+    lines = out.splitlines()
+    # Phase 10 rename: bare persona names, not `persona:<name>`.
+    assert any(line.lstrip().startswith("architect ") for line in lines)
+    assert any(line.lstrip().startswith("operator ") for line in lines)
+    assert any(line.lstrip().startswith("casual ") for line in lines)
+
+
+def test_render_agents_table_lists_evaluator_and_critic():
+    out = _render_agents_table()
+    assert "evaluator" in out
+    assert "critic" in out
 
 
 def test_render_agents_table_includes_role_and_model():

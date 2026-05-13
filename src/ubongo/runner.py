@@ -195,16 +195,29 @@ class WorkflowRunner:
 
 
 def default_registry() -> dict[str, Agent]:
-    """Build the Phase-9 agent registry. Imported lazily to avoid circular
-    imports (master/runner/agents form a cycle through Context type-hints)."""
+    """Build the agent registry. Imported lazily to avoid circular imports
+    (master/runner/agents form a cycle through Context type-hints).
+
+    Phase 10: Persona Agents use bare registry names (architect, operator,
+    casual) instead of the Phase-9 `persona:<name>` prefix. Evaluator and
+    Critic land here too.
+    """
+    from ubongo.agents.critic import CriticAgent
+    from ubongo.agents.evaluator import EvaluatorAgent
     from ubongo.agents.memory import default_memory_agent
-    from ubongo.agents.personas import PersonaAgent
+    from ubongo.agents.personas import (
+        ArchitectPersona,
+        CasualPersona,
+        OperatorPersona,
+    )
     from ubongo.agents.research import ResearchAgent
 
     return {
         "research": ResearchAgent(),
         "memory": default_memory_agent,
-        "persona:architect": PersonaAgent("architect"),
-        "persona:operator": PersonaAgent("operator"),
-        "persona:casual": PersonaAgent("casual"),
+        "evaluator": EvaluatorAgent(),
+        "critic": CriticAgent(),
+        "architect": ArchitectPersona(),
+        "operator": OperatorPersona(),
+        "casual": CasualPersona(),
     }
