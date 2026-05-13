@@ -66,7 +66,8 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   tokens_in INTEGER, tokens_out INTEGER, latency_ms INTEGER,
   outcome TEXT NOT NULL,
   started_at TIMESTAMP NOT NULL,
-  ended_at TIMESTAMP
+  ended_at TIMESTAMP,
+  retried INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS governance_decisions (

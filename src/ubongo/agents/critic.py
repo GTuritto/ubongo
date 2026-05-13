@@ -89,23 +89,24 @@ class CriticAgent:
             sections.append("## Evaluator flagged issues\n\n" + eval_findings)
         system_prompt = "\n\n".join(sections)
 
+        model = input.metadata.get("override_model") or self.default_model
         try:
             completion = complete(
                 system_prompt=system_prompt,
                 messages=[{"role": "user", "content": "Argue against the candidate response."}],
-                model=self.default_model,
+                model=model,
                 max_tokens=self.max_tokens,
             )
         except LLMError as exc:
             elapsed = int((time.monotonic() - t0) * 1000)
             logger.warning(
                 "critic_llm_error",
-                extra={"model": self.default_model, "cause": str(exc.cause) if exc.cause else None},
+                extra={"model": model, "cause": str(exc.cause) if exc.cause else None},
             )
             return AgentResult(
                 text="",
                 ok=False,
-                model=self.default_model,
+                model=model,
                 tokens_in=0,
                 tokens_out=0,
                 latency_ms=elapsed,

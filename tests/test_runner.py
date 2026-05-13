@@ -203,3 +203,115 @@ def test_history_no_conv_id_still_includes_message():
     summary, hist = build_message_history(None, "hi there")
     assert summary is None
     assert hist == [{"role": "user", "content": "hi there"}]
+
+
+# --- Phase 11d: Repair single-retry ---
+
+
+class StubRepair:
+    name = "repair"
+    role = "stub"
+    default_model = ""
+    composer = False
+
+    def __init__(self, plan: dict | None):
+        self._plan = plan
+        self.calls: list[tuple[str, AgentResult]] = []
+
+    def run(self, input, context):
+        return AgentResult(text="", ok=True, model=None, tokens_in=0, tokens_out=0, latency_ms=0)
+
+    def plan_retry(self, agent_name, original_result, input):
+        self.calls.append((agent_name, original_result))
+        return self._plan
+
+
+class FlakyAgent:
+    name = "architect"
+    role = "flaky"
+    default_model = "primary-model"
+    composer = True
+
+    def __init__(self, *, fail_first: bool = True):
+        self.calls: list[dict] = []
+        self._fail_first = fail_first
+
+    def run(self, input, context):
+        self.calls.append({"override_model": input.metadata.get("override_model")})
+        if self._fail_first and len(self.calls) == 1:
+            return AgentResult(
+                text="", ok=False, model=self.default_model,
+                tokens_in=0, tokens_out=0, latency_ms=1,
+                error="persona_llm_error",
+            )
+        return AgentResult(
+            text="recovered response", ok=True,
+            model=input.metadata.get("override_model") or self.default_model,
+            tokens_in=10, tokens_out=20, latency_ms=2,
+        )
+
+
+def test_repair_retries_failing_agent_once():
+    agent = FlakyAgent(fail_first=True)
+    repair = StubRepair(plan={"model": "fallback-model"})
+    runner = WorkflowRunner({"architect": agent, "repair": repair})
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(_wf(("architect",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
+    assert result.ok is True
+    assert result.text == "recovered response"
+    assert len(agent.calls) == 2
+    assert agent.calls[0]["override_model"] is None
+    assert agent.calls[1]["override_model"] == "fallback-model"
+    rows = store.connection().execute(
+        "SELECT outcome, retried FROM agent_runs WHERE workflow_run_id = ? ORDER BY id",
+        (wf_run_id,),
+    ).fetchall()
+    assert [(r["outcome"], r["retried"]) for r in rows] == [("failure", 0), ("success", 1)]
+
+
+def test_repair_gives_up_after_second_failure():
+    class AlwaysFail(FlakyAgent):
+        def run(self, input, context):
+            self.calls.append({"override_model": input.metadata.get("override_model")})
+            return AgentResult(
+                text="", ok=False, model=self.default_model,
+                tokens_in=0, tokens_out=0, latency_ms=1,
+                error="persona_llm_error",
+            )
+
+    agent = AlwaysFail()
+    repair = StubRepair(plan={"model": "fallback-model"})
+    runner = WorkflowRunner({"architect": agent, "repair": repair})
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(_wf(("architect",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
+    assert result.ok is False
+    assert "Sorry" in result.text
+    assert len(agent.calls) == 2
+    rows = store.connection().execute(
+        "SELECT outcome, retried FROM agent_runs WHERE workflow_run_id = ? ORDER BY id",
+        (wf_run_id,),
+    ).fetchall()
+    assert [(r["outcome"], r["retried"]) for r in rows] == [("failure", 0), ("failure", 1)]
+
+
+def test_repair_skipped_when_plan_returns_none():
+    agent = FlakyAgent(fail_first=True)
+    repair = StubRepair(plan=None)
+    runner = WorkflowRunner({"architect": agent, "repair": repair})
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(_wf(("architect",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
+    assert result.ok is False
+    assert len(agent.calls) == 1
+    assert len(repair.calls) == 1
+
+
+def test_repair_agent_in_workflow_agents_list_is_skipped():
+    """Listing 'repair' inside workflow.agents is a defensive no-op: Repair
+    is consulted via plan_retry, not run as a workflow step."""
+    agent = FlakyAgent(fail_first=False)
+    repair = StubRepair(plan={"model": "x"})
+    runner = WorkflowRunner({"architect": agent, "repair": repair})
+    result = runner.execute(_wf(("repair", "architect")), _ctx(None), "hi")
+    assert result.ok is True
+    assert result.text == "recovered response"
+    assert repair.calls == []

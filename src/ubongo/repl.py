@@ -160,9 +160,10 @@ def _render_trace(n: int = 1) -> str:
             latency = ar["latency_ms"] if ar["latency_ms"] is not None else 0
             conf = "—" if ar["confidence"] is None else f"{ar['confidence']:.2f}"
             err_suffix = f"  err={ar['error']}" if ar.get("error") else ""
+            retry_suffix = "  (retried)" if ar.get("retried") else ""
             agent_lines.append(
                 f"  {name:<14}  {model:<30}  {outcome:<8}  "
-                f"{latency:>5}ms  in={tin}/out={tout}  conf={conf}{err_suffix}"
+                f"{latency:>5}ms  in={tin}/out={tout}  conf={conf}{err_suffix}{retry_suffix}"
             )
         if gov:
             conf = "—" if gov["confidence"] is None else f"{gov['confidence']:.2f}"

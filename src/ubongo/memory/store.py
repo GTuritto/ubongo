@@ -108,6 +108,7 @@ def bootstrap() -> sqlite3.Connection:
         schema_sql = _SCHEMA_PATH.read_text(encoding="utf-8")
         _connection.executescript(schema_sql)
         _migrate_workflow_runs_in_progress(_connection)
+        _migrate_agent_runs_retried_column(_connection)
         _bootstrapped = True
     return _connection
 
@@ -145,6 +146,18 @@ def _migrate_workflow_runs_in_progress(conn: sqlite3.Connection) -> None:
         DROP TABLE workflow_runs_old;
         CREATE INDEX IF NOT EXISTS idx_workflow_runs_conv ON workflow_runs(conversation_id);
         """
+    )
+
+
+def _migrate_agent_runs_retried_column(conn: sqlite3.Connection) -> None:
+    """Phase 11d: agent_runs gained a `retried INTEGER NOT NULL DEFAULT 0`
+    column. CREATE TABLE IF NOT EXISTS is a no-op on existing DBs, so add
+    the column when missing."""
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(agent_runs)")}
+    if "retried" in cols:
+        return
+    conn.execute(
+        "ALTER TABLE agent_runs ADD COLUMN retried INTEGER NOT NULL DEFAULT 0"
     )
 
 
@@ -586,8 +599,14 @@ def append_agent_run(
     outcome: str,
     started_at: str,
     ended_at: str,
+    retried: bool = False,
 ) -> int:
-    """Persist one agent_runs row. Called by the WorkflowRunner per agent dispatch."""
+    """Persist one agent_runs row. Called by the WorkflowRunner per agent dispatch.
+
+    Phase 11d: `retried=True` marks the row as the second attempt at the
+    same agent (Repair Agent's single-retry path). The trace renderer
+    surfaces this so the operator can tell first attempt from retry.
+    """
     import json as _json
 
     conn = connection()
@@ -595,8 +614,9 @@ def append_agent_run(
         """
         INSERT INTO agent_runs
             (workflow_run_id, agent, model, input, output, confidence,
-             tokens_in, tokens_out, latency_ms, outcome, started_at, ended_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             tokens_in, tokens_out, latency_ms, outcome, started_at, ended_at,
+             retried)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             workflow_run_id,
@@ -611,6 +631,7 @@ def append_agent_run(
             outcome,
             started_at,
             ended_at,
+            1 if retried else 0,
         ),
     )
     return int(cursor.lastrowid)
@@ -726,7 +747,8 @@ def last_n_workflow_runs(n: int = 1) -> list[dict]:
     ar_rows = conn.execute(
         f"""
         SELECT id, workflow_run_id, agent, model, confidence, tokens_in,
-               tokens_out, latency_ms, outcome, started_at, ended_at, output
+               tokens_out, latency_ms, outcome, started_at, ended_at, output,
+               retried
         FROM agent_runs
         WHERE workflow_run_id IN ({placeholders})
         ORDER BY workflow_run_id, id
@@ -762,6 +784,7 @@ def last_n_workflow_runs(n: int = 1) -> list[dict]:
             "started_at": row["started_at"],
             "ended_at": row["ended_at"],
             "error": err,
+            "retried": bool(row["retried"]),
         })
 
     gd_by_wf: dict[int, dict] = {}
