@@ -61,6 +61,7 @@ A continuous Genetic Programming loop runs in the background on its own asyncio 
 ## Documentation Map
 
 - [README.md](README.md) — this file. Goal, setup, usage, roadmap, contributing.
+- [docs/system-architecture.md](docs/system-architecture.md) — current implementation architecture with Mermaid diagrams (runtime flow, events, data model).
 - [UBONGO_BUILD.md](UBONGO_BUILD.md) — full v0.1 build specification, 22 phases with sub-phases and per-phase testing plans. Source of truth.
 - [UBONGO_VISION.md](UBONGO_VISION.md) — design exposition the v0.1 build realizes.
 - [CLAUDE.md](CLAUDE.md) — context for Claude Code sessions.
