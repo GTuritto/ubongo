@@ -107,8 +107,45 @@ def bootstrap() -> sqlite3.Connection:
     if not _bootstrapped:
         schema_sql = _SCHEMA_PATH.read_text(encoding="utf-8")
         _connection.executescript(schema_sql)
+        _migrate_workflow_runs_in_progress(_connection)
         _bootstrapped = True
     return _connection
+
+
+def _migrate_workflow_runs_in_progress(conn: sqlite3.Connection) -> None:
+    """Phase 9e: workflow_runs.outcome CHECK gained 'in_progress'. Existing DBs
+    created under the prior schema keep the old constraint until we rebuild
+    the table. Detects the old constraint and rewrites if needed.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='workflow_runs'"
+    ).fetchone()
+    if row is None or "in_progress" in (row["sql"] or ""):
+        return
+    conn.executescript(
+        """
+        ALTER TABLE workflow_runs RENAME TO workflow_runs_old;
+        CREATE TABLE workflow_runs (
+          id INTEGER PRIMARY KEY,
+          conversation_id INTEGER NOT NULL,
+          message_id INTEGER NOT NULL,
+          classification JSON NOT NULL,
+          workflow JSON NOT NULL,
+          execution_mode TEXT NOT NULL,
+          started_at TIMESTAMP NOT NULL,
+          ended_at TIMESTAMP,
+          outcome TEXT NOT NULL CHECK (outcome IN ('in_progress', 'success', 'failure', 'repaired'))
+        );
+        INSERT INTO workflow_runs
+            (id, conversation_id, message_id, classification, workflow,
+             execution_mode, started_at, ended_at, outcome)
+        SELECT id, conversation_id, message_id, classification, workflow,
+             execution_mode, started_at, ended_at, outcome
+        FROM workflow_runs_old;
+        DROP TABLE workflow_runs_old;
+        CREATE INDEX IF NOT EXISTS idx_workflow_runs_conv ON workflow_runs(conversation_id);
+        """
+    )
 
 
 def connection() -> sqlite3.Connection:
@@ -203,6 +240,29 @@ def last_n_messages(conversation_id: int, n: int) -> list[Message]:
         ) ORDER BY id ASC
         """,
         (conversation_id, n),
+    ).fetchall()
+    return [_row_to_message(r) for r in rows]
+
+
+def last_n_messages_global(n: int) -> list[Message]:
+    """Return the last N messages across ALL conversations, oldest first.
+
+    Phase-9 helper used by the Research Agent for cross-session retrieval.
+    Phase 20 will replace with sqlite-vec semantic recall.
+    """
+    if n <= 0:
+        return []
+    conn = connection()
+    rows = conn.execute(
+        """
+        SELECT * FROM (
+            SELECT id, conversation_id, role, content, timestamp, persona, model, tokens_in, tokens_out
+            FROM messages
+            ORDER BY id DESC
+            LIMIT ?
+        ) ORDER BY id ASC
+        """,
+        (n,),
     ).fetchall()
     return [_row_to_message(r) for r in rows]
 
@@ -489,6 +549,68 @@ def append_workflow_run(
             started_at,
             ended_at,
             outcome,
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
+def update_workflow_run_outcome(
+    workflow_run_id: int,
+    *,
+    outcome: str,
+    ended_at: str | None = None,
+) -> None:
+    """Patch outcome (and optionally ended_at) on a workflow_runs row.
+
+    Phase 9e: workflows are INSERTed with outcome='in_progress' before the
+    runner dispatches agents, then UPDATEd to success/failure when done.
+    """
+    conn = connection()
+    conn.execute(
+        "UPDATE workflow_runs SET outcome = ?, ended_at = COALESCE(?, ended_at) WHERE id = ?",
+        (outcome, ended_at, workflow_run_id),
+    )
+
+
+def append_agent_run(
+    workflow_run_id: int,
+    *,
+    agent: str,
+    model: str | None,
+    input: dict,
+    output: dict,
+    confidence: float | None,
+    tokens_in: int,
+    tokens_out: int,
+    latency_ms: int,
+    outcome: str,
+    started_at: str,
+    ended_at: str,
+) -> int:
+    """Persist one agent_runs row. Called by the WorkflowRunner per agent dispatch."""
+    import json as _json
+
+    conn = connection()
+    cursor = conn.execute(
+        """
+        INSERT INTO agent_runs
+            (workflow_run_id, agent, model, input, output, confidence,
+             tokens_in, tokens_out, latency_ms, outcome, started_at, ended_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            workflow_run_id,
+            agent,
+            model,
+            _json.dumps(input),
+            _json.dumps(output),
+            confidence,
+            tokens_in,
+            tokens_out,
+            latency_ms,
+            outcome,
+            started_at,
+            ended_at,
         ),
     )
     return int(cursor.lastrowid)

@@ -9,6 +9,7 @@ import pytest
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo import context, events, oneshot, repl, skills  # noqa: E402
+from ubongo.agents import memory as _agents_memory  # noqa: E402
 from ubongo.delivery import queue  # noqa: E402
 from ubongo.llm import CompletionResult, LLMError  # noqa: E402
 from ubongo.memory import store, vault  # noqa: E402
@@ -27,10 +28,10 @@ def _clean_env(tmp_path: Path):
     context.reload()
     events.clear()
     # re-register the production handlers nuked by events.clear()
-    events.register("after_send", vault._after_send_handler)
+    events.register("after_send", _agents_memory.default_memory_agent.project_vault)
     yield
     events.clear()
-    events.register("after_send", vault._after_send_handler)
+    events.register("after_send", _agents_memory.default_memory_agent.project_vault)
     skills.set_skills_dir(None)
     skills.reload()
     context.reload()
@@ -46,7 +47,7 @@ def _queue_rows():
 
 
 def test_happy_path_response_flows_through_queue(capsys) -> None:
-    with patch("ubongo.master.complete", return_value=_completion("hello back")):
+    with patch("ubongo.agents.personas.complete", return_value=_completion("hello back")):
         rc = oneshot.run("hi", "casual")
 
     assert rc == 0
@@ -66,7 +67,7 @@ def test_before_send_fires_before_after_send() -> None:
     events.register("before_send", lambda _p: sequence.append("before"))
     events.register("after_send", lambda _p: sequence.append("after"))
 
-    with patch("ubongo.master.complete", return_value=_completion("ok")):
+    with patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
         oneshot.run("hi", "casual")
 
     assert sequence == ["before", "after"]
@@ -76,7 +77,7 @@ def test_before_send_payload_includes_row_and_metadata() -> None:
     captured: list[dict] = []
     events.register("before_send", captured.append)
 
-    with patch("ubongo.master.complete", return_value=_completion("ok")):
+    with patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
         oneshot.run("hi", "casual")
 
     assert len(captured) == 1
@@ -94,7 +95,7 @@ def test_error_path_enqueues_with_source_error_and_skips_after_send(capsys) -> N
     events.register("before_send", before_sends.append)
     events.register("after_send", after_sends.append)
 
-    with patch("ubongo.master.complete", side_effect=LLMError("simulated", cause=RuntimeError("nope"))):
+    with patch("ubongo.agents.personas.complete", side_effect=LLMError("simulated", cause=RuntimeError("nope"))):
         rc = oneshot.run("hi", "casual")
 
     assert rc == 1
@@ -112,24 +113,26 @@ def test_error_path_enqueues_with_source_error_and_skips_after_send(capsys) -> N
 
 
 def test_vault_still_writes_on_happy_path() -> None:
-    import datetime
+    from datetime import datetime, timezone
 
-    with patch("ubongo.master.complete", return_value=_completion("hello back")):
+    with patch("ubongo.agents.personas.complete", return_value=_completion("hello back")):
         oneshot.run("hi", "casual")
 
-    note = vault.daily_note_path(datetime.date.today())
+    # vault files are keyed on UTC dates (via store.now_iso); using local-date
+    # here would be brittle around midnight in non-UTC timezones.
+    note = vault.daily_note_path(datetime.now(timezone.utc).date())
     assert note.exists()
     body = note.read_text(encoding="utf-8")
     assert "hello back" in body
 
 
 def test_vault_does_not_write_on_error_path() -> None:
-    import datetime
+    from datetime import datetime, timezone
 
-    with patch("ubongo.master.complete", side_effect=LLMError("simulated", cause=RuntimeError("nope"))):
+    with patch("ubongo.agents.personas.complete", side_effect=LLMError("simulated", cause=RuntimeError("nope"))):
         oneshot.run("hi", "casual")
 
-    note = vault.daily_note_path(datetime.date.today())
+    note = vault.daily_note_path(datetime.now(timezone.utc).date())
     assert not note.exists()
 
 
@@ -140,7 +143,7 @@ def test_enqueue_failure_still_prints_and_skips_events(capsys) -> None:
     events.register("after_send", after_sends.append)
 
     with (
-        patch("ubongo.master.complete", return_value=_completion("hello back")),
+        patch("ubongo.agents.personas.complete", return_value=_completion("hello back")),
         patch("ubongo.delivery.queue.enqueue", side_effect=RuntimeError("db down")),
     ):
         rc = oneshot.run("hi", "casual")

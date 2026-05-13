@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import date as date_type
 from datetime import datetime
 from datetime import time as time_type
@@ -95,6 +96,78 @@ def append_to_daily_note(
     return path
 
 
+@dataclass(frozen=True)
+class VaultSnippet:
+    path: str
+    snippet: str
+
+
+def search_daily_notes(
+    query: str,
+    max_snippets: int = 5,
+    max_files: int = 30,
+    window: int = 200,
+) -> list[VaultSnippet]:
+    """Phase-9 retrieval: grep daily notes for any content word in `query`.
+
+    Walks the latest `max_files` daily-note files (by mtime, newest first) and
+    returns up to `max_snippets` (path, snippet) hits, with `window`-char
+    context around the first match per file. Intentionally dumb; Phase 20
+    swaps in embeddings.
+    """
+    if not query.strip():
+        return []
+    daily_dir = _vault_root() / _daily_subdir()
+    if not daily_dir.exists():
+        return []
+
+    words = [w.lower() for w in _tokenize(query) if len(w) >= 3 and w.lower() not in _STOPWORDS]
+    if not words:
+        return []
+
+    files = sorted(
+        (p for p in daily_dir.glob("*.md") if p.is_file() and not p.name.startswith(".")),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )[:max_files]
+
+    snippets: list[VaultSnippet] = []
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        lower = text.lower()
+        for w in words:
+            idx = lower.find(w)
+            if idx >= 0:
+                start = max(0, idx - window // 2)
+                end = min(len(text), idx + window // 2)
+                rel = path.relative_to(_vault_root())
+                snippets.append(VaultSnippet(path=str(rel), snippet=text[start:end].strip()))
+                break
+        if len(snippets) >= max_snippets:
+            break
+    return snippets
+
+
+_STOPWORDS = frozenset({
+    "the", "a", "an", "and", "or", "but", "if", "then", "so", "for", "of",
+    "to", "in", "on", "at", "by", "with", "from", "as", "is", "are", "was",
+    "were", "be", "been", "being", "do", "does", "did", "this", "that",
+    "these", "those", "it", "its", "we", "you", "i", "they", "he", "she",
+    "what", "which", "who", "when", "where", "why", "how", "can", "could",
+    "should", "would", "will", "shall", "may", "might", "must", "about",
+    "into", "out", "over", "under", "again", "further", "than", "too",
+    "very", "just", "also",
+})
+
+
+def _tokenize(text: str) -> list[str]:
+    import re
+    return re.findall(r"[A-Za-z0-9_]+", text)
+
+
 def _parse_iso(s: str) -> datetime:
     if s.endswith("Z"):
         s = s[:-1] + "+00:00"
@@ -121,4 +194,6 @@ def _after_send_handler(payload: dict) -> None:
     )
 
 
-events.register("after_send", _after_send_handler)
+# Phase 9c: registration moved to agents.memory so the MemoryAgent owns the
+# write path (single-writer rule). The handler body lives here as
+# `_after_send_handler` and is invoked through MemoryAgent.project_vault.

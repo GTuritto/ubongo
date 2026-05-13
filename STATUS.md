@@ -4,7 +4,7 @@ Last updated: 2026-05-12
 
 ## Overall
 
-Phases 0–7 merged. Phase 8 (Master Agent) complete on `phase-8-master` branch, awaiting user merge. `MasterAgent.handle(message, persona, auto_mode, pending_skill)` is the single orchestration seam for every turn: `classify → plan → execute → decide → compose → enqueue`. REPL and oneshot both delegate to it. Every turn writes a `workflow_runs` row (`execution_mode='sequential'`, outcome success/failure) and a `governance_decisions` row (action=`auto` from the Phase-8 stub; real matrix in Phase 14) and emits a `master_decision` log line. New `/decisions [N]` REPL command renders recent decisions. The remaining named events ship as passthroughs (`before_plan`/`after_plan`/`before_execute`/`after_execute`/`before_govern`/`after_govern`/`before_compose`/`after_compose`) so Phase 13 Repair, Phase 14 governance, and v0.2 Telegram have their hook points without further restructuring. No user-visible behavior change. v0.1 scope is multi-agent + self-improving + CLI; see [UBONGO_BUILD.md](UBONGO_BUILD.md).
+Phases 0–8 merged. Phase 9 (First Workers: Research + Memory) complete on `phase-9-research-memory` branch, awaiting user merge. Real worker agents enter the system: `MasterAgent.execute` is a thin delegate to `WorkflowRunner.execute`, which dispatches the agents listed in `workflow.agents` in sequential order, threads each agent's output forward via `AgentInput.prior_findings`, and writes one `agent_runs` row per dispatch. `config/workflows.yaml` declares the agents + mode per workflow name; `research_brief` runs `["research", "persona:architect"]` and other workflows stay single-persona. The Research Agent retrieves cross-conversation messages by keyword overlap and greps recent daily-note files; the Memory Agent owns the assistant-message write and the `after_send` vault projection (single-writer rule; soft enforcement in production, strict-mode pytest fixture verifies). `workflow_runs` rows are INSERTed with `outcome='in_progress'` before execute and UPDATEd after, so the runner can FK-link `agent_runs` immediately. `/agents` lists the registered workers. v0.1 scope is multi-agent + self-improving + CLI; see [UBONGO_BUILD.md](UBONGO_BUILD.md).
 
 ## Phase Tracker
 
@@ -19,7 +19,7 @@ Phases 0–7 merged. Phase 8 (Master Agent) complete on `phase-8-master` branch,
 | 6 | Foundation | Skills + Progressive Disclosure | `phase-6-skills` | Complete (2026-05-11) |
 | 7 | Foundation | Minimal Outbound Queue | `phase-7-queue` | Complete (2026-05-12) |
 | 8 | Multi-Agent | Master Agent | `phase-8-master` | Complete (2026-05-12) |
-| 9 | Multi-Agent | First Workers (Research + Memory) | `phase-9-research-memory` | Not started |
+| 9 | Multi-Agent | First Workers (Research + Memory) | `phase-9-research-memory` | Complete (2026-05-12) |
 | 10 | Multi-Agent | Evaluator + Critic + Persona Agents | `phase-10-evaluator-critic` | Not started |
 | 11 | Multi-Agent | Coding + Execution + Repair Agents | `phase-11-remaining-workers` | Not started |
 | 12 | Multi-Agent | Execution Modes (all six) | `phase-12-modes` | Not started |
@@ -37,7 +37,7 @@ Each phase is built on its own branch. Don't start Phase N+1 until Phase N's tes
 
 ## Lines of Code
 
-2648 / ~15,000 soft target (excluding tests). Phases 0-8: skeleton, config, context loader, JSON logger, REPL + one-shot, persona registry, LiteLLM wrapper, event bus, tone classifier, routing + hysteresis, SQLite store + sessions, cumulative compaction, cross-session summary inheritance, Markdown vault projection, skills registry with lazy body / prompt loading, classifier skill suggestion, summarize-conversation skill + /summary, /skill /skills /reload REPL commands, minimal outbound queue (delivery/queue.py) with before_send + after_send dispatch around every response, /queue inspection command, MasterAgent orchestrator (master.py) wrapping classify→plan→execute→decide→compose→enqueue with all named-event dispatch sites, governance/decision.py always-auto stub, workflow_runs + governance_decisions writes per turn, master_decision log line, /decisions inspection command.
+3513 / ~15,000 soft target (excluding tests). Phases 0-9 adds: Agent protocol + AgentInput/AgentResult dataclasses (agents/base.py), Research Agent with cross-conversation keyword retrieval + daily-note grep (agents/research.py), Memory Agent owning assistant-message + vault writes under a ContextVar single-writer token (agents/memory.py), PersonaAgent wrapper turning each persona into an Agent (agents/personas.py), WorkflowRunner.execute for sequential mode with agent_runs writes + agent_started/_completed/_failed dispatch (runner.py), workflows.yaml declaring agents+mode per workflow name, router.route_workflow/workflow_agents/workflow_persona helpers, workflow_runs INSERT-before/UPDATE-after lifecycle with schema migration shim for the 'in_progress' outcome, /agents REPL command.
 
 ## v0.1 Acceptance Criteria
 
