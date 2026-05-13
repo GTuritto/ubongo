@@ -91,9 +91,16 @@ class MasterAgent:
     """Single entry point for turn orchestration."""
 
     def __init__(self) -> None:
-        from ubongo.runner import WorkflowRunner, default_registry
+        # Runner + registry are built lazily on first dispatch so module import
+        # does not require a valid config (Phase 0 missing-key scenario).
+        self._runner = None
 
-        self._runner = WorkflowRunner(default_registry())
+    def _ensure_runner(self):
+        if self._runner is None:
+            from ubongo.runner import WorkflowRunner, default_registry
+
+            self._runner = WorkflowRunner(default_registry())
+        return self._runner
 
     def classify(self, message: str, ctx: Context) -> Classification:
         return classifier.classify(message)
@@ -156,7 +163,8 @@ class MasterAgent:
             "before_execute",
             {"workflow": asdict(workflow), "conversation_id": ctx.conversation_id},
         )
-        result = self._runner.execute(workflow, ctx, message, workflow_run_id=workflow_run_id)
+        runner = self._ensure_runner()
+        result = runner.execute(workflow, ctx, message, workflow_run_id=workflow_run_id)
         events.dispatch("after_execute", {"workflow_result": asdict(result)})
         return result
 
