@@ -52,6 +52,7 @@ class WorkflowResult:
     tokens_out: int
     model: str
     latency_ms: int
+    evaluator_confidence: float | None = None
 
 
 @dataclass(frozen=True)

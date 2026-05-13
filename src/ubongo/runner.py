@@ -75,6 +75,8 @@ class WorkflowRunner:
         summary_text, history = build_message_history(context.conversation_id, message)
         prior_findings: list[str] = []
         last_ok_result: AgentResult | None = None
+        last_composer_result: AgentResult | None = None
+        evaluator_confidence: float | None = None
         any_failure = False
 
         for agent_name in workflow.agents:
@@ -152,6 +154,10 @@ class WorkflowRunner:
                 if result.text:
                     prior_findings.append(result.text)
                 last_ok_result = result
+                if getattr(agent, "composer", False):
+                    last_composer_result = result
+                if result.confidence is not None:
+                    evaluator_confidence = result.confidence
             else:
                 any_failure = True
                 events.dispatch(
@@ -159,7 +165,12 @@ class WorkflowRunner:
                     {"agent": agent_name, "error": result.error},
                 )
 
-        if last_ok_result is None:
+        # Phase 10: prefer the last composer agent's text (the persona) over any
+        # validator agent (Evaluator / Critic) that ran after it. Falls back to
+        # last_ok_result so Phase 9 single-agent workflows behave unchanged when
+        # no agent declares composer=True (research-only test fixtures, etc.).
+        text_source = last_composer_result or last_ok_result
+        if text_source is None:
             return _WR(
                 text=LLM_FAILURE_MESSAGE,
                 ok=False,
@@ -167,20 +178,19 @@ class WorkflowRunner:
                 tokens_out=0,
                 model="",
                 latency_ms=0,
+                evaluator_confidence=evaluator_confidence,
             )
 
-        # Aggregate token counts across the workflow.
-        total_in = sum(r for r in (last_ok_result.tokens_in,))  # placeholder; see below
-        # Walk prior_findings was lossy for token counts; re-walk via agent_runs
-        # would require an extra query. For Phase 9 we report the last successful
-        # agent's tokens — the per-agent breakdown lives in agent_runs.
+        # Per-agent token breakdown lives in agent_runs; WorkflowResult reports
+        # the composer's tokens — the user-facing response is what matters here.
         return _WR(
-            text=last_ok_result.text,
-            ok=not any_failure or last_ok_result.ok,
-            tokens_in=last_ok_result.tokens_in,
-            tokens_out=last_ok_result.tokens_out,
-            model=last_ok_result.model or "",
-            latency_ms=last_ok_result.latency_ms,
+            text=text_source.text,
+            ok=not any_failure or text_source.ok,
+            tokens_in=text_source.tokens_in,
+            tokens_out=text_source.tokens_out,
+            model=text_source.model or "",
+            latency_ms=text_source.latency_ms,
+            evaluator_confidence=evaluator_confidence,
         )
 
 

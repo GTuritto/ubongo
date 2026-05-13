@@ -12,6 +12,10 @@ models:
 agents:
   research:
     max_tokens: 800
+  evaluator:
+    max_tokens: 400
+  critic:
+    max_tokens: 400
 
 api_keys:
   openrouter:
