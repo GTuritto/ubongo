@@ -78,3 +78,10 @@ Soft target: under ~15,000 lines of Python (excluding tests). The full multi-age
 ## Testing
 
 Each phase has a testing plan with concrete scenarios in [UBONGO_BUILD.md](UBONGO_BUILD.md). End-to-end manual testability after every phase: the cumulative playbook lives at `tests/manual/smoke_test.md` and grows phase by phase. Pytest tests for each module are listed in the spec's `tests/` layout. Held-out conversation samples for evolution evaluation live at `tests/manual/fixtures/sample_conversations.json` (curated, anonymized).
+
+## Development Environment
+- OS: macOS 25.4.0
+- Shell: /bin/zsh
+- Path format: Unix
+- File system: Case-sensitive (default)
+- Line endings: LF

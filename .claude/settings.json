@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk 'NR==40 {print substr\\($0, 510, 80\\)}' STATUS.md)",
+      "Bash(tar -czf /tmp/ubongo-smoke11/vault.bak.tgz vault/)",
+      "Bash(sqlite3 data/ubongo.db ' *)",
+      "Bash(rm -f vault/daily/*.md)",
+      "Bash(tar -xzf /tmp/ubongo-smoke11/vault.bak.tgz -C .)"
+    ]
+  }
+}
