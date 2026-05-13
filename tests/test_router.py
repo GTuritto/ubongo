@@ -93,3 +93,34 @@ def test_hysteresis_threshold_read_from_settings() -> None:
     # 0.69 should not flip; 0.70 should.
     assert router.apply_hysteresis("architect", "casual", 0.69) == "architect"
     assert router.apply_hysteresis("architect", "casual", 0.70) == "casual"
+
+
+# --- workflows.yaml helpers (Phase 10) ---
+
+
+def test_workflow_agents_returns_bare_persona_names() -> None:
+    assert router.workflow_agents("technical_deep") == ("architect",)
+    assert router.workflow_agents("research_brief") == ("research", "architect")
+
+
+def test_workflow_persona_extracts_from_bare_name_set() -> None:
+    assert router.workflow_persona("technical_deep") == "architect"
+    assert router.workflow_persona("casual_reply") == "casual"
+    assert router.workflow_persona("research_brief") == "architect"
+
+
+def test_workflow_evaluate_true_for_technical_workflows() -> None:
+    assert router.workflow_evaluate("technical_deep") is True
+    assert router.workflow_evaluate("research_brief") is True
+    assert router.workflow_evaluate("coding_session") is True
+
+
+def test_workflow_evaluate_false_for_casual_and_quick() -> None:
+    assert router.workflow_evaluate("casual_reply") is False
+    assert router.workflow_evaluate("supportive_reply") is False
+    assert router.workflow_evaluate("quick_action") is False
+    assert router.workflow_evaluate("speculative_brief") is False
+
+
+def test_workflow_evaluate_unknown_workflow_returns_false() -> None:
+    assert router.workflow_evaluate("totally-made-up") is False

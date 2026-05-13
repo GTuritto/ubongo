@@ -72,7 +72,7 @@ def _seed_workflow_run() -> int:
         conversation_id=conv_id,
         message_id=msg_id,
         classification={"intent": "technical"},
-        workflow={"persona": "architect", "agents": ["persona:architect"]},
+        workflow={"persona": "architect", "agents": ["architect"]},
         execution_mode="sequential",
         outcome="success",
         started_at=store.now_iso(),
@@ -80,10 +80,10 @@ def _seed_workflow_run() -> int:
 
 
 def test_single_agent_workflow_returns_that_agents_text():
-    agent = FakeAgent("persona:architect", text="hello")
-    runner = WorkflowRunner({"persona:architect": agent})
+    agent = FakeAgent("architect", text="hello")
+    runner = WorkflowRunner({"architect": agent})
     conv_id = store.current_or_new_conversation("architect")
-    result = runner.execute(_wf(("persona:architect",)), _ctx(conv_id), "hi")
+    result = runner.execute(_wf(("architect",)), _ctx(conv_id), "hi")
     assert result.ok is True
     assert result.text == "hello"
     assert len(agent.calls) == 1
@@ -91,10 +91,10 @@ def test_single_agent_workflow_returns_that_agents_text():
 
 def test_sequential_dispatch_threads_findings():
     a = FakeAgent("research", text="findings A")
-    b = FakeAgent("persona:architect", text="response B")
-    runner = WorkflowRunner({"research": a, "persona:architect": b})
+    b = FakeAgent("architect", text="response B")
+    runner = WorkflowRunner({"research": a, "architect": b})
     conv_id = store.current_or_new_conversation("architect")
-    result = runner.execute(_wf(("research", "persona:architect")), _ctx(conv_id), "hi")
+    result = runner.execute(_wf(("research", "architect")), _ctx(conv_id), "hi")
     assert result.text == "response B"
     # second agent saw the first's findings
     assert b.calls[0].prior_findings == ("findings A",)
@@ -103,38 +103,38 @@ def test_sequential_dispatch_threads_findings():
 
 def test_agent_runs_rows_written_when_workflow_run_id_provided():
     a = FakeAgent("research")
-    b = FakeAgent("persona:architect")
-    runner = WorkflowRunner({"research": a, "persona:architect": b})
+    b = FakeAgent("architect")
+    runner = WorkflowRunner({"research": a, "architect": b})
     wf_run_id = _seed_workflow_run()
-    runner.execute(_wf(("research", "persona:architect")), _ctx(1), "hi", workflow_run_id=wf_run_id)
+    runner.execute(_wf(("research", "architect")), _ctx(1), "hi", workflow_run_id=wf_run_id)
     rows = store.connection().execute(
         "SELECT agent, outcome FROM agent_runs WHERE workflow_run_id = ? ORDER BY id",
         (wf_run_id,),
     ).fetchall()
-    assert [r["agent"] for r in rows] == ["research", "persona:architect"]
+    assert [r["agent"] for r in rows] == ["research", "architect"]
     assert all(r["outcome"] == "success" for r in rows)
 
 
 def test_agent_started_and_completed_events_dispatched_in_order():
     a = FakeAgent("research")
-    b = FakeAgent("persona:architect")
-    runner = WorkflowRunner({"research": a, "persona:architect": b})
+    b = FakeAgent("architect")
+    runner = WorkflowRunner({"research": a, "architect": b})
     seen: list[str] = []
     events.register("agent_started", lambda p: seen.append(f"start:{p['agent']}"))
     events.register("agent_completed", lambda p: seen.append(f"done:{p['agent']}"))
     conv_id = store.current_or_new_conversation("architect")
-    runner.execute(_wf(("research", "persona:architect")), _ctx(conv_id), "hi")
-    assert seen == ["start:research", "done:research", "start:persona:architect", "done:persona:architect"]
+    runner.execute(_wf(("research", "architect")), _ctx(conv_id), "hi")
+    assert seen == ["start:research", "done:research", "start:architect", "done:architect"]
 
 
 def test_agent_failed_dispatched_on_ok_false_and_runner_continues():
     a = FakeAgent("research", ok=False, text="", error="boom")
-    b = FakeAgent("persona:architect", text="response B")
-    runner = WorkflowRunner({"research": a, "persona:architect": b})
+    b = FakeAgent("architect", text="response B")
+    runner = WorkflowRunner({"research": a, "architect": b})
     seen: list[dict] = []
     events.register("agent_failed", lambda p: seen.append(p))
     conv_id = store.current_or_new_conversation("architect")
-    result = runner.execute(_wf(("research", "persona:architect")), _ctx(conv_id), "hi")
+    result = runner.execute(_wf(("research", "architect")), _ctx(conv_id), "hi")
     assert len(seen) == 1
     assert seen[0]["agent"] == "research"
     assert result.text == "response B"
@@ -146,7 +146,7 @@ def test_unknown_execution_mode_raises():
     runner = WorkflowRunner({})
     wf = Workflow(
         persona="architect", model="m", skill_name=None,
-        execution_mode="parallel", agents=("persona:architect",),
+        execution_mode="parallel", agents=("architect",),
     )
     conv_id = store.current_or_new_conversation("architect")
     with pytest.raises(NotImplementedError):
@@ -155,20 +155,20 @@ def test_unknown_execution_mode_raises():
 
 def test_all_agents_fail_returns_failure_result():
     a = FakeAgent("research", ok=False, text="", error="boom1")
-    b = FakeAgent("persona:architect", ok=False, text="", error="boom2")
-    runner = WorkflowRunner({"research": a, "persona:architect": b})
+    b = FakeAgent("architect", ok=False, text="", error="boom2")
+    runner = WorkflowRunner({"research": a, "architect": b})
     conv_id = store.current_or_new_conversation("architect")
-    result = runner.execute(_wf(("research", "persona:architect")), _ctx(conv_id), "hi")
+    result = runner.execute(_wf(("research", "architect")), _ctx(conv_id), "hi")
     assert result.ok is False
     assert "Sorry, I couldn't reach the model" in result.text
 
 
 def test_agent_exception_recorded_as_failure_with_typename_error():
     a = FakeAgent("research", raises=ValueError("nope"))
-    b = FakeAgent("persona:architect", text="response B")
-    runner = WorkflowRunner({"research": a, "persona:architect": b})
+    b = FakeAgent("architect", text="response B")
+    runner = WorkflowRunner({"research": a, "architect": b})
     wf_run_id = _seed_workflow_run()
-    result = runner.execute(_wf(("research", "persona:architect")), _ctx(1), "hi", workflow_run_id=wf_run_id)
+    result = runner.execute(_wf(("research", "architect")), _ctx(1), "hi", workflow_run_id=wf_run_id)
     assert result.text == "response B"
     rows = store.connection().execute(
         "SELECT agent, outcome FROM agent_runs WHERE workflow_run_id = ? ORDER BY id",

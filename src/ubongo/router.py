@@ -17,7 +17,8 @@ _ROUTING_PATH = _REPO_ROOT / "config" / "routing.yaml"
 _WORKFLOWS_PATH = _REPO_ROOT / "config" / "workflows.yaml"
 
 _DEFAULT_PERSONA = "casual"
-_PERSONA_AGENT_PREFIX = "persona:"
+# Phase 10: Persona Agents live in the registry under bare names.
+_PERSONA_AGENT_NAMES: tuple[str, ...] = ("architect", "operator", "casual")
 
 _routing_cache: dict[str, Any] | None = None
 _workflows_cache: dict[str, Any] | None = None
@@ -65,7 +66,7 @@ def workflow_agents(name: str) -> tuple[str, ...]:
             "router_unknown_workflow",
             extra={"workflow": name, "fallback": default},
         )
-    agents = wf.get("agents") or [f"{_PERSONA_AGENT_PREFIX}{_DEFAULT_PERSONA}"]
+    agents = wf.get("agents") or [_DEFAULT_PERSONA]
     return tuple(agents)
 
 
@@ -76,11 +77,18 @@ def workflow_mode(name: str) -> str:
 
 
 def workflow_persona(name: str) -> str:
-    """Extract the persona name from the persona: agent inside the workflow."""
+    """Return the persona-agent name from the workflow's agent list."""
     for agent in workflow_agents(name):
-        if agent.startswith(_PERSONA_AGENT_PREFIX):
-            return agent[len(_PERSONA_AGENT_PREFIX):]
+        if agent in _PERSONA_AGENT_NAMES:
+            return agent
     return _DEFAULT_PERSONA
+
+
+def workflow_evaluate(name: str) -> bool:
+    """Phase 10: per-workflow flag that appends `evaluator` to agents."""
+    data = _load_workflows()
+    wf = (data.get("workflows", {}) or {}).get(name, {})
+    return bool(wf.get("evaluate", False))
 
 
 def _persona_for_workflow(workflow: str) -> str:

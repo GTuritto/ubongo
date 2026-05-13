@@ -691,3 +691,110 @@ def last_n_governance_decisions(n: int = 10) -> list[dict]:
             "persona": persona,
         })
     return out
+
+
+def last_n_workflow_runs(n: int = 1) -> list[dict]:
+    """Return the last N workflow_runs joined with their agent_runs and the
+    governance_decision for each. Used by the /trace REPL command (Phase 10).
+
+    Each dict carries:
+      id, conversation_id, message_id, classification (parsed JSON),
+      workflow (parsed JSON), execution_mode, outcome, started_at, ended_at,
+      agent_runs: list of {agent, model, confidence, tokens_in, tokens_out,
+                            latency_ms, outcome, started_at, ended_at, error},
+      governance: {id, action, reason, confidence, intent, risk} | None
+    """
+    import json as _json
+
+    if n <= 0:
+        return []
+    conn = connection()
+    wf_rows = conn.execute(
+        """
+        SELECT id, conversation_id, message_id, classification, workflow,
+               execution_mode, started_at, ended_at, outcome
+        FROM workflow_runs
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (n,),
+    ).fetchall()
+    if not wf_rows:
+        return []
+    wf_ids = [row["id"] for row in wf_rows]
+    placeholders = ",".join("?" for _ in wf_ids)
+    ar_rows = conn.execute(
+        f"""
+        SELECT id, workflow_run_id, agent, model, confidence, tokens_in,
+               tokens_out, latency_ms, outcome, started_at, ended_at, output
+        FROM agent_runs
+        WHERE workflow_run_id IN ({placeholders})
+        ORDER BY workflow_run_id, id
+        """,
+        wf_ids,
+    ).fetchall()
+    gd_rows = conn.execute(
+        f"""
+        SELECT id, workflow_run_id, intent, risk, confidence, action
+        FROM governance_decisions
+        WHERE workflow_run_id IN ({placeholders})
+        ORDER BY workflow_run_id, id
+        """,
+        wf_ids,
+    ).fetchall()
+
+    ar_by_wf: dict[int, list[dict]] = {wf_id: [] for wf_id in wf_ids}
+    for row in ar_rows:
+        err = None
+        try:
+            out_json = _json.loads(row["output"]) if row["output"] else {}
+            err = out_json.get("error")
+        except Exception:
+            err = None
+        ar_by_wf.setdefault(row["workflow_run_id"], []).append({
+            "agent": row["agent"],
+            "model": row["model"],
+            "confidence": row["confidence"],
+            "tokens_in": row["tokens_in"],
+            "tokens_out": row["tokens_out"],
+            "latency_ms": row["latency_ms"],
+            "outcome": row["outcome"],
+            "started_at": row["started_at"],
+            "ended_at": row["ended_at"],
+            "error": err,
+        })
+
+    gd_by_wf: dict[int, dict] = {}
+    for row in gd_rows:
+        gd_by_wf[row["workflow_run_id"]] = {
+            "id": row["id"],
+            "action": row["action"],
+            "confidence": row["confidence"],
+            "intent": row["intent"],
+            "risk": row["risk"],
+        }
+
+    out: list[dict] = []
+    for row in wf_rows:
+        try:
+            cls = _json.loads(row["classification"]) if row["classification"] else {}
+        except Exception:
+            cls = {}
+        try:
+            wf = _json.loads(row["workflow"]) if row["workflow"] else {}
+        except Exception:
+            wf = {}
+        out.append({
+            "id": row["id"],
+            "conversation_id": row["conversation_id"],
+            "message_id": row["message_id"],
+            "classification": cls,
+            "workflow": wf,
+            "execution_mode": row["execution_mode"],
+            "outcome": row["outcome"],
+            "started_at": row["started_at"],
+            "ended_at": row["ended_at"],
+            "agent_runs": ar_by_wf.get(row["id"], []),
+            "governance": gd_by_wf.get(row["id"]),
+        })
+    return out

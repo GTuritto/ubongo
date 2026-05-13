@@ -22,7 +22,7 @@ def _workflow(**overrides):
         "model": "openrouter/anthropic/claude-sonnet-4.5",
         "skill_name": None,
         "execution_mode": "sequential",
-        "agents": ("persona:architect",),
+        "agents": ("architect",),
     }
     base.update(overrides)
     return type("Workflow", (), base)()
@@ -39,11 +39,29 @@ def test_decide_returns_auto_for_high_risk_destructive_stub_does_not_gate():
     assert d.action == "auto"
 
 
-def test_decide_ignores_evaluator_confidence_in_phase_8():
-    d_none = decide(_classification(), _workflow(), evaluator_confidence=None)
-    d_low = decide(_classification(), _workflow(), evaluator_confidence=0.0)
-    d_high = decide(_classification(), _workflow(), evaluator_confidence=1.0)
-    assert d_none.action == d_low.action == d_high.action == "auto"
+def test_decide_returns_auto_when_evaluator_confidence_absent():
+    d = decide(_classification(), _workflow(), evaluator_confidence=None)
+    assert d.action == "auto"
+    assert d.reason is None
+
+
+def test_decide_returns_auto_when_evaluator_confidence_high():
+    d = decide(_classification(), _workflow(), evaluator_confidence=0.85)
+    assert d.action == "auto"
+
+
+def test_decide_rejects_when_evaluator_confidence_below_floor():
+    d = decide(_classification(), _workflow(), evaluator_confidence=0.1)
+    assert d.action == "reject"
+    assert d.reason is not None
+    assert "below_floor" in d.reason
+    assert "0.10" in d.reason
+
+
+def test_decide_floor_is_inclusive_at_threshold():
+    # 0.2 is the floor itself: at-floor stays auto; just below rejects.
+    assert decide(_classification(), _workflow(), evaluator_confidence=0.2).action == "auto"
+    assert decide(_classification(), _workflow(), evaluator_confidence=0.199).action == "reject"
 
 
 def test_action_enum_values_match_schema_vocabulary():
