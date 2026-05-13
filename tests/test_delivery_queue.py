@@ -127,3 +127,74 @@ def test_fake_now_drives_created_at(monkeypatch):
     row = queue.dequeue_deliverable()
     assert row is not None
     assert row.created_at.startswith("2030-06-15T12:00:00")
+
+
+# --- Code-review regression tests (2026-05-13) ---
+
+
+def test_enqueue_for_delivery_succeeds_with_stale_undelivered_row():
+    """Regression for review finding #3: a stale undelivered row from a prior
+    turn must not break delivery of the current row."""
+    from ubongo import events
+
+    events.clear()
+    stale_id = queue.enqueue("stale leftover", source="response")
+    token = queue.enqueue_for_delivery(
+        "fresh response",
+        source="response",
+        after_send_payload={"persona": "casual"},
+    )
+    assert token.row_id is not None
+    assert token.row_id != stale_id
+    queue.flush_delivered(token)
+    fresh = queue.get_row(token.row_id)
+    assert fresh is not None
+    assert fresh.delivered_at is not None
+    # stale row remains undelivered (caller responsibility)
+    stale = queue.get_row(stale_id)
+    assert stale is not None and stale.delivered_at is None
+
+
+def test_flush_delivered_keeps_row_pending_when_after_send_fails():
+    """Regression for review finding #4: after_send handler exception must not
+    leave the row marked delivered (silent data loss otherwise)."""
+    from ubongo import events
+
+    events.clear()
+
+    def boom(_payload):
+        raise RuntimeError("vault disk full")
+
+    events.register("after_send", boom)
+    token = queue.enqueue_for_delivery(
+        "fresh response",
+        source="response",
+        after_send_payload={"persona": "casual"},
+    )
+    assert token.row_id is not None
+    queue.flush_delivered(token)
+    row = queue.get_row(token.row_id)
+    assert row is not None
+    assert row.delivered_at is None  # still pending; can be retried
+
+
+def test_flush_delivered_marks_delivered_when_after_send_ok():
+    """Companion to the failing case: a successful handler still marks
+    the row delivered."""
+    from ubongo import events
+
+    events.clear()
+    seen: list = []
+    events.register("after_send", seen.append)
+
+    token = queue.enqueue_for_delivery(
+        "fresh response",
+        source="response",
+        after_send_payload={"persona": "casual"},
+    )
+    assert token.row_id is not None
+    queue.flush_delivered(token)
+    row = queue.get_row(token.row_id)
+    assert row is not None
+    assert row.delivered_at is not None
+    assert seen == [{"persona": "casual"}]

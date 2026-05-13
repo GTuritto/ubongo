@@ -17,7 +17,7 @@ _ENV_REF = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_SETTINGS_PATH = _REPO_ROOT / "config" / "settings.yaml"
 
-_cache: dict[str, Any] | None = None
+_cache: dict[Path, dict[str, Any]] = {}
 _dotenv_loaded = False
 
 
@@ -56,12 +56,18 @@ def _validate_required(cfg: dict[str, Any]) -> None:
 
 
 def load_config(path: Path | None = None, *, force_reload: bool = False) -> dict[str, Any]:
-    global _cache
-    if _cache is not None and not force_reload:
-        return _cache
+    """Load settings.yaml, with a per-path cache.
 
+    The earlier single-slot cache returned the first-loaded config regardless
+    of the `path` argument on subsequent calls (review finding #5). Tests and
+    tools that ask for a different config file silently got stale data — a
+    real risk for security/feature toggles. Now keyed by resolved path.
+    """
     _ensure_dotenv()
-    settings_path = path or _DEFAULT_SETTINGS_PATH
+    settings_path = (path or _DEFAULT_SETTINGS_PATH).resolve()
+    if not force_reload and settings_path in _cache:
+        return _cache[settings_path]
+
     if not settings_path.exists():
         raise ConfigError(f"settings.yaml not found at {settings_path}")
 
@@ -70,10 +76,9 @@ def load_config(path: Path | None = None, *, force_reload: bool = False) -> dict
 
     cfg = _resolve_env_refs(raw)
     _validate_required(cfg)
-    _cache = cfg
+    _cache[settings_path] = cfg
     return cfg
 
 
 def reload() -> None:
-    global _cache
-    _cache = None
+    _cache.clear()

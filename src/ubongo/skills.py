@@ -161,10 +161,25 @@ def prompt(name: str, key: str) -> str:
     if key not in skill.prompts:
         raise KeyError(f"Skill {name} has no prompt named {key!r}")
     rel = skill.prompts[key]
-    path = skill.dir / rel
-    if not path.exists():
-        raise FileNotFoundError(f"Skill {name} prompt {key!r} not found at {path}")
-    text = path.read_text(encoding="utf-8")
+    # Confine the prompt path to skill.dir. A malicious or compromised SKILL.md
+    # could declare prompts: { x: ../../../.env } and exfiltrate secrets into
+    # the LLM prompt; reject anything that escapes the skill root or is an
+    # absolute path.
+    from pathlib import PurePath
+
+    if PurePath(rel).is_absolute():
+        raise ValueError(f"Skill {name} prompt {key!r} path must be relative")
+    skill_root = skill.dir.resolve()
+    candidate = (skill.dir / rel).resolve()
+    try:
+        candidate.relative_to(skill_root)
+    except ValueError:
+        raise ValueError(
+            f"Skill {name} prompt {key!r} escapes skill directory: {rel!r}"
+        ) from None
+    if not candidate.exists():
+        raise FileNotFoundError(f"Skill {name} prompt {key!r} not found at {candidate}")
+    text = candidate.read_text(encoding="utf-8")
     _prompt_cache[(name, key)] = text
     logger.info("skill_prompt_loaded", extra={"skill_name": name, "prompt_key": key})
     return text

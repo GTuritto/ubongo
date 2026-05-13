@@ -109,6 +109,22 @@ def dequeue_deliverable(now: str | None = None) -> QueueRow | None:
     return _row_to_queue(row)
 
 
+def get_row(row_id: int) -> QueueRow | None:
+    conn = store.connection()
+    row = conn.execute(
+        """
+        SELECT id, content, urgency, source, created_at,
+               deliver_after, delivered_at, expires_at, metadata
+        FROM notification_queue
+        WHERE id = ?
+        """,
+        (row_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return _row_to_queue(row)
+
+
 def mark_delivered(row_id: int, when: str | None = None) -> None:
     ts = when or store.now_iso()
     conn = store.connection()
@@ -149,12 +165,13 @@ def enqueue_for_delivery(
     except Exception as exc:
         logger.warning("queue_enqueue_failed", extra={"cause": str(exc), "source": source})
         return DeliveryToken(row_id=None, after_send_payload=None)
-    row = dequeue_deliverable()
-    if row is None or row.id != row_id:
-        logger.warning(
-            "queue_dequeue_inconsistent",
-            extra={"row_id": row_id, "got": row.id if row else None},
-        )
+    # Fetch by inserted row_id directly. Earlier versions used a global
+    # dequeue + equality check, which broke whenever any prior undelivered
+    # row existed: ORDER BY created_at would return the stale row first,
+    # the equality check failed, and the current turn was silently dropped.
+    row = get_row(row_id)
+    if row is None:
+        logger.warning("queue_row_missing_after_enqueue", extra={"row_id": row_id})
         return DeliveryToken(row_id=None, after_send_payload=None)
     events.dispatch(
         "before_send",
@@ -170,17 +187,30 @@ def enqueue_for_delivery(
 
 
 def flush_delivered(token: DeliveryToken) -> None:
-    """Dispatch after_send (when present) and mark the row delivered."""
+    """Dispatch after_send (when present) and mark the row delivered.
+
+    If any after_send handler raises, the row is kept pending so durable
+    side-effects (vault projection, future subscribers) can be retried —
+    silent data-loss otherwise.
+    """
+    failures = 0
     if token.after_send_payload is not None:
-        events.dispatch("after_send", token.after_send_payload)
-    if token.row_id is not None:
-        try:
-            mark_delivered(token.row_id)
-        except Exception as exc:
-            logger.warning(
-                "queue_mark_delivered_failed",
-                extra={"row_id": token.row_id, "cause": str(exc)},
-            )
+        failures = events.dispatch("after_send", token.after_send_payload)
+    if token.row_id is None:
+        return
+    if failures > 0:
+        logger.warning(
+            "queue_keep_pending_after_send_failed",
+            extra={"row_id": token.row_id, "failed_handlers": failures},
+        )
+        return
+    try:
+        mark_delivered(token.row_id)
+    except Exception as exc:
+        logger.warning(
+            "queue_mark_delivered_failed",
+            extra={"row_id": token.row_id, "cause": str(exc)},
+        )
 
 
 def last_n(n: int = 10) -> list[QueueRow]:

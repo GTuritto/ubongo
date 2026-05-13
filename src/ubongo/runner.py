@@ -30,7 +30,13 @@ LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 
 
 def build_message_history(conv_id: int | None, current_message: str) -> tuple[str | None, list[dict]]:
-    """Returns (summary_text or None, messages list ending with the current user turn)."""
+    """Returns (summary_text or None, messages list ending with the current user turn).
+
+    Master writes the user message to the store BEFORE calling the runner, so
+    store.recall already includes it as the last entry. Appending current_message
+    here as well duplicated the user turn in the LLM payload (review finding #2).
+    For the conv_id=None branch (no persisted history yet) we still append.
+    """
     history: list[dict] = []
     summary_text: str | None = None
     if conv_id is not None:
@@ -39,7 +45,12 @@ def build_message_history(conv_id: int | None, current_message: str) -> tuple[st
         for msg in ctx.messages:
             if msg.role in ("user", "assistant"):
                 history.append({"role": msg.role, "content": msg.content})
-    history.append({"role": "user", "content": current_message})
+        # Defensive: if recall returned nothing or didn't end with the current
+        # user message (e.g. tests that bypass append_message), still append.
+        if not history or history[-1].get("content") != current_message or history[-1].get("role") != "user":
+            history.append({"role": "user", "content": current_message})
+    else:
+        history.append({"role": "user", "content": current_message})
     return summary_text, history
 
 

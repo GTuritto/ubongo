@@ -176,3 +176,30 @@ def test_agent_exception_recorded_as_failure_with_typename_error():
     ).fetchall()
     assert rows[0]["agent"] == "research"
     assert rows[0]["outcome"] == "failure"
+
+
+# --- Code-review regression test (2026-05-13) ---
+
+
+def test_history_contains_user_message_exactly_once(tmp_path):
+    """Regression for review finding #2: master writes the user message to the
+    store, then the runner builds history via store.recall (which includes it)
+    AND used to append current_message a second time. Result: every turn sent
+    the user message twice to the LLM."""
+    from ubongo.runner import build_message_history
+
+    conv_id = store.current_or_new_conversation("casual")
+    store.append_message(conv_id, "user", "hello world", persona="casual")
+    summary, hist = build_message_history(conv_id, "hello world")
+    user_lines = [m for m in hist if m["role"] == "user" and m["content"] == "hello world"]
+    assert len(user_lines) == 1
+
+
+def test_history_no_conv_id_still_includes_message():
+    """Edge case: when conv_id is None (no persisted history), the runner must
+    still surface the current user message as the single user turn."""
+    from ubongo.runner import build_message_history
+
+    summary, hist = build_message_history(None, "hi there")
+    assert summary is None
+    assert hist == [{"role": "user", "content": "hi there"}]
