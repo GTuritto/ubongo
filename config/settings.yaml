@@ -16,6 +16,8 @@ agents:
     max_tokens: 400
   critic:
     max_tokens: 400
+  coding:
+    max_tokens: 2048
 
 api_keys:
   openrouter:
