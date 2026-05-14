@@ -206,6 +206,7 @@ class WorkflowRunner:
             "sequential": self._run_sequential,
             "parallel": self._run_parallel,
             "competitive": self._run_competitive,
+            "collaborative": self._run_collaborative,
         }
         strategy = strategies.get(workflow.execution_mode)
         if strategy is None:
@@ -547,6 +548,131 @@ class WorkflowRunner:
             model=winner_result.model or "",
             latency_ms=winner_result.latency_ms,
             evaluator_confidence=winner_score,
+        )
+
+
+    # ---------- collaborative mode (Phase 12c) ----------
+
+    async def _run_collaborative(
+        self,
+        *,
+        workflow: "Workflow",
+        context: "Context",
+        message: str,
+        summary_text: str | None,
+        history: list,
+        workflow_run_id: int | None,
+    ) -> "WorkflowResult":
+        """All producers run in parallel with role-driven specialization;
+        outputs are merged structurally under "## <role>" headings.
+
+        - workflow.agents producers run in parallel; if 'evaluator' is the
+          LAST entry (Phase-10 auto-append from evaluate=true), it runs
+          SEQUENTIALLY after the merge to score the merged document.
+        - prior_findings is empty for each producer; they specialize via
+          their existing system prompts (research = facts, critic = risks).
+        - WorkflowResult.text = merged document; ok=any producer ok.
+        """
+        from ubongo.master import WorkflowResult as _WR
+
+        evaluator_name: str | None = None
+        producer_names: list[str] = []
+        producer_agents: list = []
+        # Strip trailing evaluator if present (auto-appended by master.plan
+        # via the Phase-10 evaluate flag) so it can run sequentially after
+        # the merge instead of in parallel with the producers.
+        agents_list = list(workflow.agents)
+        if agents_list and agents_list[-1] == "evaluator":
+            evaluator_name = "evaluator"
+            agents_list = agents_list[:-1]
+
+        for name in agents_list:
+            if name == "repair":
+                continue
+            agent = self.registry.get(name)
+            if agent is None:
+                logger.warning("agent_not_registered", extra={"agent": name})
+                continue
+            producer_names.append(name)
+            producer_agents.append(agent)
+
+        if not producer_agents:
+            return self._build_workflow_result(None, None, None, True)
+
+        tasks = [
+            self._dispatch_agent_async(
+                agent=agent,
+                agent_name=name,
+                message=message,
+                history=history,
+                summary_text=summary_text,
+                prior_findings=[],
+                workflow=workflow,
+                context=context,
+                workflow_run_id=workflow_run_id,
+                override_model=None,
+                retried=False,
+            )
+            for name, agent in zip(producer_names, producer_agents)
+        ]
+        results: list[AgentResult] = await asyncio.gather(*tasks)
+
+        # Structural merge: one section per ok producer, ordered by
+        # workflow.agents (deterministic).
+        sections: list[str] = []
+        any_failure = False
+        any_ok = False
+        for name, agent, result in zip(producer_names, producer_agents, results):
+            if not result.ok:
+                any_failure = True
+                continue
+            any_ok = True
+            heading = getattr(agent, "role", name)
+            sections.append(f"## {heading}\n\n{result.text}")
+        if not sections:
+            return _WR(
+                text=LLM_FAILURE_MESSAGE, ok=False,
+                tokens_in=0, tokens_out=0, model="",
+                latency_ms=0, evaluator_confidence=None,
+            )
+
+        merged_text = "\n\n".join(sections)
+        total_tokens_in = sum(r.tokens_in for r in results if r.ok)
+        total_tokens_out = sum(r.tokens_out for r in results if r.ok)
+        max_latency = max((r.latency_ms for r in results if r.ok), default=0)
+
+        # Sequential post-step: evaluator scores the merged document if present.
+        evaluator_confidence: float | None = None
+        if evaluator_name is not None:
+            evaluator = self.registry.get(evaluator_name)
+            if evaluator is not None:
+                # Synthesize an AgentInput where prior_findings = [merged_text]
+                # so EvaluatorAgent.run picks it up via its existing
+                # "candidate = prior_findings[-1]" path.
+                eval_result = await self._dispatch_agent_async(
+                    agent=evaluator,
+                    agent_name=evaluator_name,
+                    message=message,
+                    history=history,
+                    summary_text=summary_text,
+                    prior_findings=[merged_text],
+                    workflow=workflow,
+                    context=context,
+                    workflow_run_id=workflow_run_id,
+                    override_model=None,
+                    retried=False,
+                )
+                if eval_result.ok and eval_result.confidence is not None:
+                    evaluator_confidence = eval_result.confidence
+
+        return _WR(
+            text=merged_text,
+            ok=any_ok,
+            tokens_in=total_tokens_in,
+            tokens_out=total_tokens_out,
+            model="collaborative",
+            latency_ms=max_latency,
+            evaluator_confidence=evaluator_confidence,
         )
 
 

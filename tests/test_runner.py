@@ -553,3 +553,86 @@ def test_competitive_all_competitors_failing_returns_failure():
     result = runner.execute(_wf_competitive(("coding", "architect", "evaluator")), _ctx(conv_id), "x")
     assert result.ok is False
     assert evaluator.calls == []  # rank never called when no ok candidates
+
+
+# --- Phase 12c: Collaborative mode ---
+
+
+def _wf_collab(agents: tuple[str, ...]) -> Workflow:
+    return Workflow(
+        persona="architect", model="fake-model", skill_name=None,
+        execution_mode="collaborative", agents=agents,
+    )
+
+
+def test_collaborative_merges_under_role_headings():
+    a = FakeAgent("research", text="Postgres has X.")
+    a.role = "retrieval and synthesis"
+    b = FakeAgent("critic", text="X has risk Y.")
+    b.role = "contrarian challenger"
+    runner = WorkflowRunner({"research": a, "critic": b})
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(_wf_collab(("research", "critic")), _ctx(conv_id), "brief on X")
+    assert result.ok is True
+    # Headings under "## <role>" in workflow.agents order.
+    assert result.text.startswith("## retrieval and synthesis")
+    assert "## contrarian challenger" in result.text
+    assert "Postgres has X." in result.text
+    assert "X has risk Y." in result.text
+    # Model carries the strategy marker.
+    assert result.model == "collaborative"
+
+
+def test_collaborative_drops_failing_section_keeps_others():
+    a = FakeAgent("research", text="facts")
+    a.role = "retrieval and synthesis"
+    b = FakeAgent("critic", ok=False, text="", error="boom")
+    b.role = "contrarian challenger"
+    runner = WorkflowRunner({"research": a, "critic": b})
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(_wf_collab(("research", "critic")), _ctx(conv_id), "x")
+    assert result.ok is True  # at least one producer ok
+    assert "retrieval and synthesis" in result.text
+    assert "contrarian challenger" not in result.text  # failed; section dropped
+
+
+def test_collaborative_all_failing_returns_failure_message():
+    a = FakeAgent("research", ok=False, text="", error="boom1")
+    b = FakeAgent("critic", ok=False, text="", error="boom2")
+    runner = WorkflowRunner({"research": a, "critic": b})
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(_wf_collab(("research", "critic")), _ctx(conv_id), "x")
+    assert result.ok is False
+    assert "Sorry" in result.text
+
+
+def test_collaborative_runs_trailing_evaluator_sequentially_after_merge():
+    """Phase 10 evaluate-flag interaction: evaluator runs AFTER the parallel
+    section, sees the merged document, scores it."""
+    a = FakeAgent("research", text="facts")
+    a.role = "retrieval and synthesis"
+    b = FakeAgent("critic", text="risks")
+    b.role = "contrarian challenger"
+    seen_findings: list[tuple] = []
+
+    class CapturingEvaluator(FakeAgent):
+        composer = False
+
+        def run(self, input, context):
+            seen_findings.append(input.prior_findings)
+            return AgentResult(
+                text="conf 0.8", ok=True, model="m",
+                tokens_in=0, tokens_out=0, latency_ms=1, confidence=0.8,
+            )
+
+    evaluator = CapturingEvaluator("evaluator")
+    runner = WorkflowRunner({"research": a, "critic": b, "evaluator": evaluator})
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(_wf_collab(("research", "critic", "evaluator")), _ctx(conv_id), "x")
+    assert result.ok is True
+    # Evaluator saw the merged document as its sole prior finding.
+    assert len(seen_findings) == 1 and len(seen_findings[0]) == 1
+    merged_seen = seen_findings[0][0]
+    assert "## retrieval and synthesis" in merged_seen
+    assert "## contrarian challenger" in merged_seen
+    assert result.evaluator_confidence == 0.8
