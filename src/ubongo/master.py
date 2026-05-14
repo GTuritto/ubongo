@@ -33,6 +33,9 @@ class Context:
     persona: str
     auto_mode: bool
     pending_skill: str | None
+    # Phase 12g: one-shot workflow override (set via /mode <workflow>).
+    # Cleared after the next turn (mirrors pending_skill).
+    pending_workflow: str | None = None
 
 
 @dataclass(frozen=True)
@@ -154,7 +157,13 @@ class MasterAgent:
             )
         resolved_skill = skills.resolve(pinned=ctx.pending_skill, suggested=suggested_skill)
         skill_name = resolved_skill.name if resolved_skill else None
-        workflow_name = _resolve_workflow_name(chosen, suggested_workflow_name, ctx.auto_mode)
+        # Phase 12g: /mode <workflow> overrides routing for the next turn.
+        # The pending workflow's persona is honored verbatim (overrides hysteresis).
+        if ctx.pending_workflow and ctx.pending_workflow in router.workflow_names():
+            workflow_name = ctx.pending_workflow
+            chosen = router.workflow_persona(workflow_name)
+        else:
+            workflow_name = _resolve_workflow_name(chosen, suggested_workflow_name, ctx.auto_mode)
         agents = list(router.workflow_agents(workflow_name))
         mode = router.workflow_mode(workflow_name)
         # Phase 12b: competitive mode requires its own trailing evaluator as
@@ -238,6 +247,7 @@ class MasterAgent:
         persona_name: str,
         auto_mode: bool = False,
         pending_skill: str | None = None,
+        pending_workflow: str | None = None,
     ) -> Response:
         """End-to-end orchestration. Returns a Response; caller prints + flushes."""
         ctx = Context(
@@ -245,6 +255,7 @@ class MasterAgent:
             persona=persona_name,
             auto_mode=auto_mode,
             pending_skill=pending_skill,
+            pending_workflow=pending_workflow,
         )
         started_at = store.now_iso()
         classification = self.classify(message, ctx)
@@ -258,6 +269,7 @@ class MasterAgent:
             persona=chosen,
             auto_mode=auto_mode,
             pending_skill=pending_skill,
+            pending_workflow=pending_workflow,
         )
 
         # Phase 9e: INSERT workflow_runs with outcome='in_progress' before the
@@ -457,5 +469,6 @@ def handle(
     persona_name: str,
     auto_mode: bool = False,
     pending_skill: str | None = None,
+    pending_workflow: str | None = None,
 ) -> Response:
-    return default_master.handle(message, persona_name, auto_mode, pending_skill)
+    return default_master.handle(message, persona_name, auto_mode, pending_skill, pending_workflow)

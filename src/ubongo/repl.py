@@ -22,7 +22,7 @@ _BANNER = "Ubongo REPL ready. /exit to quit."
 _AUTO_ENABLED = "Auto routing enabled."
 _LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 _HELP_COMMANDS = (
-    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /agents, /trace, /exec <cmd>, /reload, /exit."
+    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /agents, /trace, /exec <cmd>, /mode <workflow>, /reload, /exit."
 )
 
 
@@ -84,6 +84,27 @@ def _parse_exec_command(line: str) -> str | None:
     return parts[1].strip() or None
 
 
+_MODE_LIST_SENTINEL = "__list__"
+
+
+def _parse_mode_command(line: str) -> str | None:
+    """Returns the workflow name from `/mode <name>`, the sentinel
+    "__list__" for `/mode list`, or None for `/mode` (no arg) or other
+    commands."""
+    raw = line.strip().lstrip("/")
+    parts = raw.split(maxsplit=1)
+    if parts[0].lower() != "mode":
+        return None
+    if len(parts) == 1:
+        return None
+    arg = parts[1].strip()
+    if not arg:
+        return None
+    if arg.lower() == "list":
+        return _MODE_LIST_SENTINEL
+    return arg
+
+
 def _format_time(ts: str | None) -> str:
     if ts is None:
         return "—"
@@ -125,6 +146,20 @@ def _render_decisions_table(n: int = 10) -> str:
             f"{intent:>10}  {persona:>10}  {mode:>10}  "
             f"{risk:>8}  {conf:>5}  {action}"
         )
+    return "\n".join(lines)
+
+
+def _render_mode_list() -> str:
+    """Phase 12g: list every workflow declared in workflows.yaml with its mode."""
+    from ubongo import router
+    names = router.workflow_names()
+    if not names:
+        return "No workflows declared."
+    lines = ["Available workflows:"]
+    for name in names:
+        mode = router.workflow_mode(name)
+        agents = ", ".join(router.workflow_agents(name))
+        lines.append(f"  {name:<26}  mode={mode:<14}  agents=[{agents}]")
     return "\n".join(lines)
 
 
@@ -328,6 +363,7 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
         persona = default_persona
         auto_mode = False
     pending_skill: str | None = None
+    pending_workflow: str | None = None
     print(_BANNER)
     while True:
         try:
@@ -380,6 +416,19 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
                 else:
                     print(_render_exec(cmd))
                 continue
+            if head == "mode":
+                from ubongo import router as _router
+                arg = _parse_mode_command(stripped)
+                if arg is None:
+                    print(f"Usage: /mode <workflow_name> | /mode list. {_HELP_COMMANDS}")
+                elif arg == _MODE_LIST_SENTINEL:
+                    print(_render_mode_list())
+                elif arg not in _router.workflow_names():
+                    print(f"Unknown workflow: {arg}.")
+                else:
+                    pending_workflow = arg
+                    print(f"Next turn will use workflow: {arg}.")
+                continue
             if head == "reload":
                 print(_reload_all())
                 continue
@@ -403,8 +452,13 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
                 return 0
             continue
 
-        response = master.handle(stripped, persona, auto_mode, pending_skill=pending_skill)
+        response = master.handle(
+            stripped, persona, auto_mode,
+            pending_skill=pending_skill,
+            pending_workflow=pending_workflow,
+        )
         pending_skill = None  # one-shot
+        pending_workflow = None  # one-shot
         print(response.text)
         queue.flush_delivered(response.delivery_token)
         if auto_mode:
