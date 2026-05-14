@@ -12,7 +12,7 @@ A governance layer evaluates risk, confidence, and reversibility per turn and ga
 
 ## Status
 
-> **v0.1 specification complete; no implementation yet.** Setup / Run / Usage below describe the *intended* v0.1 behavior — the binaries don't exist on disk yet.
+**Phases 0 through 11 complete and merged to `main`.** The CLI runs end-to-end: classify, plan, execute through the worker fleet, govern, compose, enqueue, persist. Ten worker agents are registered (Architect, Operator, Casual personas + Research, Memory, Evaluator, Critic, Coding, Execution, Repair). The Evaluator scores every technical turn, the Critic challenges borderline-confidence answers, the Repair Agent retries a failing agent once with a model fallback, and the constrained-bash sandbox grounds shell execution. Sequential execution mode only; parallel + competitive + collaborative + debate + speculative ship in Phase 12. The GP self-improvement loop ships in Phases 16 through 19.
 
 The build runs across **22 phases in 6 tiers**. Each phase is implemented on its own branch, ships a working system, and ends with a manual end-to-end smoke test before merging to `main`. See [STATUS.md](STATUS.md) for the live phase tracker and [UBONGO_BUILD.md](UBONGO_BUILD.md) for sub-phases and per-phase testing plans.
 
@@ -89,8 +89,6 @@ No FastAPI, Redis, Docker, LangGraph, Temporal, Ray, or Kubernetes. `python-tele
 
 ## Setup
 
-> *These steps describe the v0.1 target. They will not work until at least Phase 0 of [UBONGO_BUILD.md](UBONGO_BUILD.md) is complete and merged.*
-
 ```bash
 git clone <repo-url> ubongo
 cd ubongo
@@ -132,40 +130,40 @@ In REPL mode, type messages naturally. Ubongo classifies intent and tone, plans 
 
 Slash commands (REPL only; one-shot uses CLI flags):
 
+Implemented today (Phases 0 through 11):
+
 ### Persona and workflow control
 
 - `/architect`, `/operator`, `/casual` — force a persona for the current session
 - `/auto` — return to automatic persona selection
-- `/mode <workflow>` — force a specific workflow (sequential / parallel / competitive / collaborative / debate / speculative)
 
 ### Inspection
 
-- `/agents` — list registered worker agents
+- `/agents` — list registered worker agents (10 today: architect, casual, coding, critic, evaluator, execution, memory, operator, repair, research)
 - `/skills` — list available skills
-- `/decisions` — last N Master Agent decisions for this session
-- `/trace <n>` — full execution trace for the n-th most recent turn (classification, workflow, per-agent timings)
-- `/queue` — outbound queue contents
-- `/recall` — what was recalled (recency + semantic) for the last turn
-- `/policy` — current governance rules and thresholds
-- `/audit` — unified audit log (governance decisions + evolution events)
+- `/decisions [N]` — last N Master Agent decisions for this session (default 10)
+- `/trace [N]` — full execution trace for the N most recent turns: classification, workflow agents, per-agent timings + tokens + confidence, governance decision (default 1)
+- `/queue [N]` — outbound queue contents (default 10)
+- `/exec <cmd>` — run one command through the constrained-bash sandbox; debug-only, bypasses the workflow runner
 
 ### Skills
 
-- `/summary` — summarize the current conversation
-
-### Self-improvement
-
-- `/optimize <target>` — generate variants of a target (e.g., `persona:architect`, `routing:rules`)
-- `/evaluate <target>` — score the most recent variant generation against held-out samples
-- `/improvements` — pending GP promotions; approve / reject / rollback
-- `/evolution status | pause | resume | off` — control the GP loop
+- `/skill <name>` — pin a skill for the next turn (one-shot)
+- `/summary` — summarize the current conversation (uses the `summarize-conversation` skill)
 
 ### System
 
-- `/reload` — reload personas, skills, global context, and (where safe) settings
+- `/reload` — reload `UBONGO.md`, personas, and skill metadata
 - `/exit` — exit the REPL
 
-For one-shot mode, use flags: `--persona <name>`, `--skill <name>`, `--mode <workflow>`.
+Planned (later phases):
+
+- `/mode <workflow>` — force a specific execution mode (Phase 12 brings parallel / competitive / collaborative / debate / speculative)
+- `/recall` — what was recalled for the last turn (Phase 20: semantic recall + vault graph)
+- `/policy`, `/audit` — governance rules and unified audit log (Phases 14, 21)
+- `/optimize <target>`, `/evaluate <target>`, `/improvements`, `/evolution status|pause|resume|off` — GP loop control (Phases 16 through 19)
+
+For one-shot mode, use flags: `--persona <name>`. Skill pinning and mode override are REPL-only today.
 
 ## Configuration
 
@@ -193,53 +191,54 @@ In Phases 5–20 the vault is write-only. Phase 21 enables bidirectional sync: f
 
 ## Project Structure
 
-> *Planned layout (does not yet exist on disk).*
-
 ```text
 ubongo/
-  config/                # all user-editable configuration
-    UBONGO.md            # global identity (hierarchical root)
-    settings.yaml
-    routing.yaml         # tone/intent -> workflow rules
-    workflows.yaml       # named workflow templates (agents, execution mode)
-    governance.yaml      # risk rules, decision-matrix thresholds
-    personas/
+  config/                          # all user-editable configuration
+    UBONGO.md                      # global identity (hierarchical root)
+    settings.yaml                  # models, agent budgets, governance, evolution
+    routing.yaml                   # tone/intent -> workflow rules
+    workflows.yaml                 # named workflow templates (agents, mode, evaluate)
+    personas/                      # Architect, Operator, Casual
     skills/
+      summarize-conversation/      # Phase 6
+      constrained-bash/            # Phase 11 (metadata + prompt; safety in code)
   src/ubongo/
-    __main__.py          # entry: python -m ubongo
-    repl.py              # interactive REPL
-    oneshot.py           # one-shot send command
-    master.py            # Master Agent (orchestrator)
+    __main__.py                    # entry: python -m ubongo
+    repl.py                        # interactive REPL
+    oneshot.py                     # one-shot send command
+    master.py                      # Master Agent (orchestrator)
     classifier.py
-    router.py            # internal helper used by Master Agent.plan
-    runner.py            # workflow runner (six execution modes)
-    composer.py          # response composition
-    skills.py            # skill registry with progressive disclosure
+    router.py                      # workflow + persona resolution from yaml
+    runner.py                      # workflow runner (sequential today; Phase 12 adds modes)
+    skills.py                      # skill registry with progressive disclosure
+    sandbox.py                     # Phase 11: shell-execution safety contract
     context.py
     events.py
     llm.py
     config.py
     logging.py
-    agents/              # worker agents
-      base.py            # Agent protocol
-      research.py
-      coding.py
-      evaluator.py
-      repair.py
-      memory.py
-      critic.py
-      execution.py
-      personas.py        # Architect, Operator, Casual
-    governance/          # risk, confidence, reversibility, decision matrix, approval
-    evolution/           # GP loop: generator, sandbox, fitness, lineage, promotion
-    delivery/queue.py    # minimal SQLite-backed outbound queue
-    memory/              # SQLite store, compaction, vault, embeddings, graph
-  vault/                 # generated daily notes + audit log (gitignored)
+    agents/
+      base.py                      # Agent protocol; AgentInput / AgentResult
+      personas.py                  # Architect / Operator / Casual subclasses
+      research.py                  # cross-conversation + vault retrieval + synthesis
+      memory.py                    # single writer for messages + vault + embeddings
+      evaluator.py                 # LLM-as-judge: confidence + flagged issues
+      critic.py                    # contrarian frame on borderline confidence
+      coding.py                    # code-first system prompt + strong coding model
+      execution.py                 # bridge to sandbox.run_constrained
+      repair.py                    # plan_retry: single-retry with model fallback
+    governance/
+      decision.py                  # reject-on-low-confidence stub; Phase 14 expands
+    delivery/queue.py              # minimal SQLite-backed outbound queue
+    memory/                        # SQLite store, schema, compaction, vault projection
+  data/ubongo.db                   # canonical SQLite store (gitignored)
+  vault/daily/YYYY-MM-DD.md        # projected Markdown daily notes (gitignored)
+  Plans/                           # archived plan-mode plans, one per phase
   tests/
-    manual/              # smoke_test.md + sample_conversations fixture
+    manual/smoke_test.md           # cumulative end-to-end playbook
 ```
 
-See [UBONGO_BUILD.md](UBONGO_BUILD.md) for the full architecture and the 22-phase plan.
+Sub-trees that exist as scaffolding for later phases (`evolution/`, `governance/risk.py`, `governance/approval.py`, `memory/embeddings.py`, `memory/graph.py`) are not in the layout above; they ship in their respective phases. See [UBONGO_BUILD.md](UBONGO_BUILD.md) for the full architecture and the 22-phase plan, and [docs/system-architecture.md](docs/system-architecture.md) for the current implementation diagrams.
 
 ## Implementation Workflow
 
