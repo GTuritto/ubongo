@@ -42,6 +42,10 @@ class Workflow:
     skill_name: str | None
     execution_mode: str
     agents: tuple[str, ...]
+    # Phase 12 mode-specific config. Optional; carried into workflow_runs.workflow
+    # JSON via asdict() so the trace records the mode parameters.
+    rounds: int | None = None       # 12d: debate mode
+    timeout_s: int | None = None    # 12e: speculative mode
 
 
 @dataclass(frozen=True)

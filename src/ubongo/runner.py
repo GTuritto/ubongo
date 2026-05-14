@@ -207,6 +207,7 @@ class WorkflowRunner:
             "parallel": self._run_parallel,
             "competitive": self._run_competitive,
             "collaborative": self._run_collaborative,
+            "debate": self._run_debate,
         }
         strategy = strategies.get(workflow.execution_mode)
         if strategy is None:
@@ -673,6 +674,103 @@ class WorkflowRunner:
             model="collaborative",
             latency_ms=max_latency,
             evaluator_confidence=evaluator_confidence,
+        )
+
+
+    # ---------- debate mode (Phase 12d) ----------
+
+    async def _run_debate(
+        self,
+        *,
+        workflow: "Workflow",
+        context: "Context",
+        message: str,
+        summary_text: str | None,
+        history: list,
+        workflow_run_id: int | None,
+    ) -> "WorkflowResult":
+        """Two debaters argue N rounds; synthesizer summarizes.
+
+        Convention: workflow.agents = [debater_a, debater_b, ..., synthesizer].
+        First two entries are the debaters; the LAST entry is the synthesizer.
+        workflow.rounds (default 2) = number of full rounds (both debaters speak
+        once per round). Each debater sees the full prior transcript via
+        prior_findings; the synthesizer sees the full transcript and produces
+        the final response.
+        """
+        if len(workflow.agents) < 3:
+            raise ValueError(
+                "debate workflows need at least 3 entries: [debater_a, debater_b, synthesizer]"
+            )
+        debater_a_name = workflow.agents[0]
+        debater_b_name = workflow.agents[1]
+        synthesizer_name = workflow.agents[-1]
+        rounds = workflow.rounds if workflow.rounds is not None else 2
+
+        for name in (debater_a_name, debater_b_name, synthesizer_name):
+            if name not in self.registry:
+                raise ValueError(f"debate workflow references unknown agent {name!r}")
+
+        transcript: list[tuple[str, str]] = []  # [(speaker, text), ...]
+        any_failure = False
+
+        for round_no in range(rounds):
+            for speaker in (debater_a_name, debater_b_name):
+                agent = self.registry[speaker]
+                prior = [f"## Round {i // 2 + 1} — {sp}\n\n{txt}"
+                         for i, (sp, txt) in enumerate(transcript)]
+                debate_role = "challenge" if transcript else None
+                result = await self._dispatch_agent_async(
+                    agent=agent,
+                    agent_name=speaker,
+                    message=message,
+                    history=history,
+                    summary_text=summary_text,
+                    prior_findings=prior,
+                    workflow=workflow,
+                    context=context,
+                    workflow_run_id=workflow_run_id,
+                    override_model=None,
+                    retried=False,
+                    extra_metadata=({"debate_role": debate_role} if debate_role else None),
+                )
+                if not result.ok:
+                    any_failure = True
+                    logger.warning(
+                        "debate_short_circuit",
+                        extra={"speaker": speaker, "round": round_no + 1},
+                    )
+                    break
+                transcript.append((speaker, result.text))
+            else:
+                continue
+            break  # debate short-circuited; jump to synthesis with whatever exists
+
+        synth_agent = self.registry[synthesizer_name]
+        synth_prior = [f"## {sp}\n\n{txt}" for sp, txt in transcript]
+        synth_result = await self._dispatch_agent_async(
+            agent=synth_agent,
+            agent_name=synthesizer_name,
+            message=message,
+            history=history,
+            summary_text=summary_text,
+            prior_findings=synth_prior,
+            workflow=workflow,
+            context=context,
+            workflow_run_id=workflow_run_id,
+            override_model=None,
+            retried=False,
+            extra_metadata={"debate_role": "synthesize"},
+        )
+
+        if not synth_result.ok:
+            return self._build_workflow_result(None, None, None, True)
+
+        last_composer = synth_result if getattr(synth_agent, "composer", False) else None
+        return self._build_workflow_result(
+            last_composer, synth_result,
+            synth_result.confidence if synth_result.confidence is not None else None,
+            any_failure,
         )
 
 

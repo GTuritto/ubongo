@@ -606,6 +606,114 @@ def test_collaborative_all_failing_returns_failure_message():
     assert "Sorry" in result.text
 
 
+def test_debate_full_2_rounds_plus_synthesis():
+    """5 agent_runs rows expected: A, B, A, B, synth. Each turn shows the
+    correct debate_role and an increasing transcript."""
+
+    seen_metadata: list[dict] = []
+
+    class TurnCountingAgent(FakeAgent):
+        """Returns a different text on each call so synth's output is
+        distinguishable from the debater's first turn."""
+        composer = True
+
+        def __init__(self, name: str):
+            super().__init__(name, text="")
+            self._call_no = 0
+
+        def run(self, input, context):
+            self._call_no += 1
+            seen_metadata.append({
+                "agent": self.name,
+                "debate_role": input.metadata.get("debate_role"),
+                "prior_findings_len": len(input.prior_findings),
+                "call_no": self._call_no,
+            })
+            return AgentResult(
+                text=f"{self.name} turn #{self._call_no}",
+                ok=True, model=self.default_model,
+                tokens_in=2, tokens_out=3, latency_ms=1,
+            )
+
+    a = TurnCountingAgent("architect")
+    b = TurnCountingAgent("operator")
+    runner = WorkflowRunner({"architect": a, "operator": b})
+    wf = Workflow(
+        persona="architect", model="m", skill_name=None,
+        execution_mode="debate", agents=("architect", "operator", "architect"),
+        rounds=2,
+    )
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(wf, _ctx(conv_id), "should we adopt microservices?")
+    assert result.ok is True
+    # Synth is the LAST architect call (call_no=3 for architect; total 5 dispatches).
+    assert result.text == "architect turn #3"
+    assert len(seen_metadata) == 5
+    # First A turn has no challenge role; subsequent debater turns do; synth tagged.
+    assert seen_metadata[0]["debate_role"] is None
+    assert seen_metadata[1]["debate_role"] == "challenge"
+    assert seen_metadata[2]["debate_role"] == "challenge"
+    assert seen_metadata[3]["debate_role"] == "challenge"
+    assert seen_metadata[4]["debate_role"] == "synthesize"
+    # Transcript grows: dispatch 0 sees nothing, dispatch 4 sees all 4 prior.
+    assert seen_metadata[1]["prior_findings_len"] == 1
+    assert seen_metadata[3]["prior_findings_len"] == 3
+    assert seen_metadata[4]["prior_findings_len"] == 4
+
+
+def test_debate_rounds_1():
+    """3 rows: A, B, synth."""
+    a = _composer_agent("architect", text="A says X")
+    b = _composer_agent("operator", text="B says Y")
+    runner = WorkflowRunner({"architect": a, "operator": b})
+    wf = Workflow(
+        persona="architect", model="m", skill_name=None,
+        execution_mode="debate", agents=("architect", "operator", "architect"),
+        rounds=1,
+    )
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(wf, _ctx(conv_id), "q")
+    assert result.ok is True
+    # FakeAgent (architect) is reused for synth; same text returned for synth.
+    # 3 total dispatches: a (round 1), b (round 1), a (synth).
+    assert len(a.calls) == 2  # architect spoke twice (round 1 + synth)
+    assert len(b.calls) == 1
+
+
+def test_debate_requires_at_least_3_agents():
+    a = _composer_agent("architect")
+    b = _composer_agent("operator")
+    runner = WorkflowRunner({"architect": a, "operator": b})
+    wf = Workflow(
+        persona="architect", model="m", skill_name=None,
+        execution_mode="debate", agents=("architect", "operator"),
+        rounds=2,
+    )
+    conv_id = store.current_or_new_conversation("architect")
+    with pytest.raises(ValueError, match="3 entries"):
+        runner.execute(wf, _ctx(conv_id), "q")
+
+
+def test_debate_short_circuits_on_debater_failure_synth_still_runs():
+    """If a debater fails mid-round, the runner stops the debate loop but
+    still calls the synthesizer with whatever transcript exists."""
+    a = _composer_agent("architect", text="A's only turn")
+    b = FakeAgent("operator", ok=False, text="", error="boom")
+    runner = WorkflowRunner({"architect": a, "operator": b})
+    wf = Workflow(
+        persona="architect", model="m", skill_name=None,
+        execution_mode="debate", agents=("architect", "operator", "architect"),
+        rounds=2,
+    )
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(wf, _ctx(conv_id), "q")
+    # Synthesizer (architect, reused) ran with the truncated transcript.
+    assert result.ok is True
+    # architect spoke twice: round 1 + synth. b failed once.
+    assert len(a.calls) == 2
+    assert len(b.calls) == 1
+
+
 def test_collaborative_runs_trailing_evaluator_sequentially_after_merge():
     """Phase 10 evaluate-flag interaction: evaluator runs AFTER the parallel
     section, sees the merged document, scores it."""
