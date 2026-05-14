@@ -147,3 +147,62 @@ def test_execution_session_declared_but_not_auto_routed() -> None:
             suggested_skill=None, risk="low", confidence=0.9,
         )
         assert router.route_workflow(cls) != "execution_session"
+
+
+# --- Phase 12f: mode helpers + new workflows ---
+
+
+def test_workflow_mode_for_each_new_workflow() -> None:
+    assert router.workflow_mode("research_brief_parallel") == "parallel"
+    assert router.workflow_mode("coding_competitive") == "competitive"
+    assert router.workflow_mode("brief_collaborative") == "collaborative"
+    assert router.workflow_mode("debate_then_synthesize") == "debate"
+    assert router.workflow_mode("speculative_brief") == "speculative"
+
+
+def test_workflow_agents_for_each_new_workflow() -> None:
+    assert router.workflow_agents("research_brief_parallel") == ("research", "architect")
+    assert router.workflow_agents("coding_competitive") == ("coding", "architect", "evaluator")
+    assert router.workflow_agents("brief_collaborative") == ("research", "critic", "architect")
+    assert router.workflow_agents("debate_then_synthesize") == ("architect", "operator", "architect")
+    assert router.workflow_agents("speculative_brief") == ("casual", "architect", "evaluator")
+
+
+def test_workflow_rounds_for_debate() -> None:
+    assert router.workflow_rounds("debate_then_synthesize") == 2
+    assert router.workflow_rounds("technical_deep") is None
+    assert router.workflow_rounds("totally-made-up") is None
+
+
+def test_workflow_timeout_s_for_speculative() -> None:
+    assert router.workflow_timeout_s("speculative_brief") == 10
+    assert router.workflow_timeout_s("technical_deep") is None
+
+
+def test_workflow_names_lists_all_declared() -> None:
+    names = router.workflow_names()
+    assert "research_brief_parallel" in names
+    assert "coding_competitive" in names
+    assert "brief_collaborative" in names
+    assert "debate_then_synthesize" in names
+    assert "speculative_brief" in names
+    assert "technical_deep" in names
+    assert "execution_session" in names
+
+
+def test_unknown_mode_in_workflows_yaml_falls_back_to_sequential(tmp_path, monkeypatch):
+    """Phase 12f: if a workflow declares an unknown mode, router logs a
+    warning and falls back to 'sequential'."""
+    bad_yaml = tmp_path / "workflows.yaml"
+    bad_yaml.write_text(
+        "workflows:\n  weird_workflow:\n    agents: [\"casual\"]\n    mode: phantom-mode\n"
+        "default_workflow: weird_workflow\n",
+        encoding="utf-8",
+    )
+    import ubongo.router as router_mod
+    monkeypatch.setattr(router_mod, "_WORKFLOWS_PATH", bad_yaml)
+    router_mod.reload()
+    try:
+        assert router_mod.workflow_mode("weird_workflow") == "sequential"
+    finally:
+        router_mod.reload()

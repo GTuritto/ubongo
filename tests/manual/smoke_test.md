@@ -32,7 +32,7 @@ Each section's scenarios are run in order. If a scenario fails, the phase is not
 | 1.4 | `/exit` clean quit | type `/exit` | `Goodbye.` rc 0. |
 | 1.5 | One-shot with `--persona` | `uv run python -m ubongo send "hello" --persona operator` | stdout: a real operator-voiced reply (terse, actionable). rc 0. (Pre-Phase-2 this was the literal echo `[operator] hello`; from Phase 2 onward oneshot routes through the LLM.) |
 | 1.6 | One-shot default persona | `uv run python -m ubongo send "hi"` | stdout: a real architect-voiced reply. rc 0. (Pre-Phase-2: `[architect] hi`.) |
-| 1.7 | Unknown slash command | In REPL: `/foo` | `Unknown command: /foo. Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /agents, /trace, /exec <cmd>, /reload, /exit.` Loop continues. (Help line grows as later phases add commands.) |
+| 1.7 | Unknown slash command | In REPL: `/foo` | `Unknown command: /foo. Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /agents, /trace, /exec <cmd>, /mode <workflow>, /reload, /exit.` Loop continues. (Help line grows as later phases add commands.) |
 | 1.8 | One-shot bad persona | `uv run python -m ubongo send "x" --persona bogus` | stderr: `Error: unknown persona 'bogus'. Choose from: architect, operator, casual.` rc 1. |
 | 1.9 | EOF (Ctrl+D) | In REPL: press Ctrl+D | `Goodbye.` rc 0. |
 | 1.10 | Pytest passes | `uv run pytest tests/test_repl.py` | All tests pass. |
@@ -190,7 +190,23 @@ Three new workers and the `coding_session` workflow go live. **Coding Agent** (`
 
 ## Phase 12 — Execution Modes (all six)
 
-*(Populated when Phase 12 is implemented.)*
+End of Tier 2 (Multi-Agent System). The WorkflowRunner now supports all six execution modes. Internally it is async (each mode is a strategy coroutine selected off `workflow.execution_mode`) but its public `execute()` stays sync via `asyncio.run`, so `master.handle` and the REPL stay sync. Sequential agents run serially with Phase 11 Repair retry; parallel/competitive/collaborative use `asyncio.gather` (no Repair in fan-out modes — cancel-and-retry semantics are ambiguous; Phase 13 may revisit). `EvaluatorAgent` gained `rank()` (competitive winner picker, returns `{winner, winner_index, reason, scores}`) and `agree()` (speculative agreement check; bool/None). `Workflow` dataclass gained optional `rounds` (debate; default 2) and `timeout_s` (speculative; default 10). PersonaAgents read `debate_role` from `input.metadata` (`"challenge"` for round-2+ debaters, `"synthesize"` for the synthesizer). `/mode <workflow>` REPL command pins a workflow for the next turn (mirrors `/skill`'s one-shot pattern); `/mode list` prints every declared workflow with its mode. `master.plan` skips the Phase-10 evaluator-append for competitive (the trailing evaluator is part of the mode contract).
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 12.1 | Sequential regression | Any technical question via `/architect` | Same as Phase 10 baseline; agent_runs in order; `mode=sequential`. |
+| 12.2 | Parallel via `/mode` | `rm -f data/ubongo.db`; in REPL: `/mode research_brief_parallel`; `compare Postgres vs DynamoDB for an event store` | Response composed by architect; `agent_runs` shows `research` + `architect` with overlapping `started_at` / `ended_at` (parallel); `sqlite3 data/ubongo.db "SELECT json_extract(workflow,'$.execution_mode') FROM workflow_runs ORDER BY id DESC LIMIT 1"` → `"parallel"`. Total wall time near max(research, architect), not sum. |
+| 12.3 | Competitive via `/mode` | `/mode coding_competitive`; `write a Python function that reverses a list` | Two competitor `agent_runs` rows (`coding`, `architect`); one `evaluator` row with `confidence` populated and `output.winner` set to the winning agent's name; `WorkflowResult.text` matches the winner's text. |
+| 12.4 | Collaborative via `/mode` | `/mode brief_collaborative`; `give me a brief on adopting microservices` | Response is a structured document with `## retrieval and synthesis ...`, `## contrarian challenger ...`, `## persona composer` headings (under each agent's role). `agent_runs` shows research, critic, architect (parallel), then evaluator (sequential after merge). |
+| 12.5 | Debate via `/mode` | `/mode debate_then_synthesize`; `should we use microservices for a 5-engineer team` | 5 agent_runs rows: architect, operator, architect, operator, architect (synthesizer). Synthesizer's text is the response; reads as a synthesis (recommendation + residual risk). |
+| 12.6 | Speculative agree | `/mode speculative_brief`; `what is the capital of France` | Response is the cheap (casual) reply; no `[Correction]` block. agent_runs shows casual, architect, evaluator (agreement check, `output.agree=true`). Total wall time bounded by `timeout_s` (10s). |
+| 12.7 | Speculative disagree (correction-block path) | `uv run pytest tests/test_runner.py::test_speculative_both_ok_disagree_appends_correction` | Pass. Mock evaluator returns `agree=false`; `WorkflowResult.text` begins with cheap's text, then `---`, then `[Correction (slower model):]` block with strong's text. **Manual REPL trigger is non-deterministic by design**: with current frontier models (haiku-4.5 + sonnet-4.5) the cheap and strong responses substantively converge on common-knowledge engineering prompts. The triage attempts during the 2026-05-14 walkthrough (list.insert complexity, dedup-preserving-order, K8s-vs-VM, underspecified database, GIL during HTTP I/O) all returned `agree=true`. The pytest test is the gate; this manual scenario is satisfied when the pytest passes. |
+| 12.8 | `/mode list` | `/mode list` | Lists all workflows from `workflows.yaml` with `mode=` and `agents=[...]` columns. Includes the 5 Phase-12 workflows. |
+| 12.9 | `/mode unknown` | `/mode phantom` | `Unknown workflow: phantom.` REPL state unchanged. |
+| 12.10 | `/mode` is one-shot | `/mode brief_collaborative`, then any turn, then another turn | Second turn does NOT use brief_collaborative (back to routed default). |
+| 12.11 | Unknown mode in workflows.yaml falls back | `uv run pytest tests/test_router.py::test_unknown_mode_in_workflows_yaml_falls_back_to_sequential` | Pass. router.workflow_mode logs a warning and returns `sequential` for unknown declared modes. |
+| 12.12 | Help line includes `/mode` | `/foo` | Help banner lists `/mode <workflow>`. |
+| 12.13 | Pytest passes | `uv run pytest tests/` | All green (~381 expected after Phase 12: Phase-11's 326 + 8 parallel + 13 evaluator (rank+agree+parsers) + 5 competitive + 4 collaborative + 4 debate + 7 speculative + 6 router + 6 /mode). |
 
 ## Phase 13 — Repair Agent Activated
 

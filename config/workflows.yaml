@@ -1,14 +1,16 @@
 # Workflow templates: which agents run, in what mode, and whether the
 # Evaluator runs after the persona to feed governance.
 #
-# Phase 10 ships sequential mode only and the Evaluator/Critic agents.
-# Phase 11 adds coding/execution to the agent lists where applicable;
-# Phase 12 expands `mode` beyond sequential.
+# Phase 10 ships sequential mode + Evaluator/Critic. Phase 11 adds
+# Coding/Execution/Repair. Phase 12 lights up parallel / competitive /
+# collaborative / debate / speculative modes.
 #
 # Persona names are bare (`architect`, not `persona:architect`) as of Phase 10.
 # `evaluate: true` appends "evaluator" to `agents` at plan time; absent or
 # false skips the judge (preferred for casual/quick workflows where voice
-# and latency matter more than confidence scoring).
+# and latency matter more than confidence scoring). Competitive workflows
+# carry the evaluator as part of the mode contract; master.plan skips the
+# auto-append for them.
 
 workflows:
   technical_deep:
@@ -42,13 +44,45 @@ workflows:
     agents: ["execution", "architect"]
     mode: sequential
     evaluate: false
-  debate_then_synthesize:
-    agents: ["architect"]
-    mode: sequential
+
+  # --- Phase 12: example workflows for the new modes ---
+
+  research_brief_parallel:
+    # Phase 12a parallel: research + architect run concurrently; max-not-sum
+    # latency. Both agents see only the user message (no prior_findings
+    # threading in parallel mode).
+    agents: ["research", "architect"]
+    mode: parallel
+    evaluate: false   # parallel mode skips the auto-appended evaluator
+  coding_competitive:
+    # Phase 12b competitive: coding + architect both produce candidates;
+    # EvaluatorAgent.rank picks a winner. Trailing 'evaluator' is required
+    # by the mode contract (master.plan skips the evaluate-append).
+    agents: ["coding", "architect", "evaluator"]
+    mode: competitive
+    evaluate: false
+  brief_collaborative:
+    # Phase 12c collaborative: research/critic/architect run in parallel
+    # with role-driven specialization; outputs merged under "## <role>"
+    # headings. Evaluator runs sequentially after the merge.
+    agents: ["research", "critic", "architect"]
+    mode: collaborative
     evaluate: true
+  debate_then_synthesize:
+    # Phase 12d debate: architect debates operator for `rounds` rounds;
+    # architect synthesizes. Last agent in the list IS the synthesizer
+    # (registry entry reused).
+    agents: ["architect", "operator", "architect"]
+    mode: debate
+    rounds: 2
+    evaluate: false
   speculative_brief:
-    agents: ["operator"]
-    mode: sequential
+    # Phase 12e speculative: cheap (casual) + strong (architect) run
+    # concurrently with `timeout_s` hard cap; cheap is the leader text;
+    # EvaluatorAgent.agree decides whether to append a correction block.
+    agents: ["casual", "architect", "evaluator"]
+    mode: speculative
+    timeout_s: 10
     evaluate: false
 
 default_workflow: casual_reply

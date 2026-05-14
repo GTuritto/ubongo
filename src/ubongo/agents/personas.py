@@ -121,6 +121,24 @@ class BasePersonaAgent:
             for i, finding in enumerate(input.prior_findings, start=1):
                 label = "Research findings" if i == 1 else f"Prior agent findings #{i}"
                 sections.append(f"## {label}\n\n{finding}")
+        # Phase 12d: debate mode tags the second-and-onward speaker with
+        # debate_role="challenge" so they argue against the prior position.
+        # A debate_role="synthesize" tag is set on the synthesizer turn.
+        debate_role = input.metadata.get("debate_role")
+        if debate_role == "challenge":
+            sections.append(
+                "## Debate role: challenge\n\nYou are in a debate. Read the prior turns above "
+                "and argue against the position they take. Find the load-bearing assumption "
+                "they did not name; surface the most likely failure mode. Be specific; do not "
+                "restate their points."
+            )
+        elif debate_role == "synthesize":
+            sections.append(
+                "## Debate role: synthesize\n\nYou are synthesizing a debate. Read the full "
+                "transcript above and produce a single answer: state where the debaters agreed, "
+                "where they did not, and the recommendation that survives the disagreement. "
+                "Pick a side when the evidence supports one; name the residual risk."
+            )
         system_prompt = "\n\n".join(sections)
         model = input.metadata.get("override_model") or persona.model
 
