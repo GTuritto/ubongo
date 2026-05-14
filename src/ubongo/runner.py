@@ -1,18 +1,26 @@
 """Workflow runner: dispatches the agents listed in workflow.agents.
 
-Phase 9 ships sequential mode only. Phase 12 adds parallel / competitive /
-collaborative / debate / speculative — the call site (master.execute) does
-not move; this module extends.
+Phase 12: the runner is async-internally, sync-externally. WorkflowRunner.execute
+keeps its sync signature so master.handle / repl.run / oneshot.run stay sync;
+internally it bridges to _execute_async via asyncio.run. Each execution mode
+is a strategy coroutine (_run_sequential, _run_parallel, ...) selected off
+workflow.execution_mode. Agents themselves stay sync; the runner wraps each
+agent.run call in asyncio.to_thread when fanning out.
 
-The runner threads prior findings forward: each agent sees the prior agents'
-output text via AgentInput.prior_findings. Last successful agent's text
-becomes the WorkflowResult.text. Per-agent failures are recorded in
-agent_runs and dispatched as `agent_failed`, but the runner keeps going —
-Phase 13 Repair Agent will turn that into real recovery.
+Mode coverage:
+- sequential   : Phase 9 baseline; threads prior_findings forward; Repair retry.
+- parallel     : Phase 12a; asyncio.gather; agents see no prior_findings;
+                 no Repair retry (cancel-and-retry semantics in fan-out are
+                 ambiguous; Phase 13 may revisit).
+- competitive  : Phase 12b; planned.
+- collaborative: Phase 12c; planned.
+- debate       : Phase 12d; planned.
+- speculative  : Phase 12e; planned.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -27,6 +35,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger("ubongo.runner")
 
 LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
+
+KNOWN_MODES: tuple[str, ...] = (
+    "sequential",
+    "parallel",
+    "competitive",
+    "collaborative",
+    "debate",
+    "speculative",
+)
 
 
 def build_message_history(conv_id: int | None, current_message: str) -> tuple[str | None, list[dict]]:
@@ -45,8 +62,6 @@ def build_message_history(conv_id: int | None, current_message: str) -> tuple[st
         for msg in ctx.messages:
             if msg.role in ("user", "assistant"):
                 history.append({"role": msg.role, "content": msg.content})
-        # Defensive: if recall returned nothing or didn't end with the current
-        # user message (e.g. tests that bypass append_message), still append.
         if not history or history[-1].get("content") != current_message or history[-1].get("role") != "user":
             history.append({"role": "user", "content": current_message})
     else:
@@ -58,7 +73,9 @@ class WorkflowRunner:
     def __init__(self, registry: dict[str, Agent]):
         self.registry = registry
 
-    def _dispatch_agent(
+    # ---------- agent dispatch (async; sync agents wrapped via asyncio.to_thread) ----------
+
+    async def _dispatch_agent_async(
         self,
         *,
         agent,
@@ -72,16 +89,19 @@ class WorkflowRunner:
         workflow_run_id: int | None,
         override_model: str | None,
         retried: bool,
+        extra_metadata: dict | None = None,
     ) -> AgentResult:
-        """Run a single agent, record the agent_runs row, dispatch lifecycle
-        events. Returns the AgentResult. Used twice per failed-then-retried
-        agent (Phase 11d)."""
+        """Run a single agent off-thread, record the agent_runs row, dispatch
+        lifecycle events. Used by every mode strategy; the only place we cross
+        the sync/async boundary into agent code."""
         metadata: dict = {
             "persona": workflow.persona,
             "skill": workflow.skill_name,
         }
         if override_model:
             metadata["override_model"] = override_model
+        if extra_metadata:
+            metadata.update(extra_metadata)
 
         input = AgentInput(
             message=message,
@@ -97,7 +117,7 @@ class WorkflowRunner:
         started_at = store.now_iso()
         t0 = time.monotonic()
         try:
-            result = agent.run(input, context)
+            result = await asyncio.to_thread(agent.run, input, context)
         except Exception as exc:
             elapsed = int((time.monotonic() - t0) * 1000)
             logger.warning(
@@ -154,6 +174,8 @@ class WorkflowRunner:
             )
         return result
 
+    # ---------- public sync entry; bridges to _execute_async ----------
+
     def execute(
         self,
         workflow: "Workflow",
@@ -161,14 +183,90 @@ class WorkflowRunner:
         message: str,
         workflow_run_id: int | None = None,
     ) -> "WorkflowResult":
+        """Sync entry point. Bridges to the async strategy via asyncio.run.
+
+        master.handle / repl.run / oneshot.run remain sync; concurrency lives
+        inside the strategy methods where it pays off (parallel, competitive,
+        collaborative, debate, speculative).
+        """
+        return asyncio.run(
+            self._execute_async(workflow, context, message, workflow_run_id)
+        )
+
+    async def _execute_async(
+        self,
+        workflow: "Workflow",
+        context: "Context",
+        message: str,
+        workflow_run_id: int | None,
+    ) -> "WorkflowResult":
         from ubongo.master import WorkflowResult as _WR
 
-        if workflow.execution_mode != "sequential":
+        strategies = {
+            "sequential": self._run_sequential,
+            "parallel": self._run_parallel,
+        }
+        strategy = strategies.get(workflow.execution_mode)
+        if strategy is None:
+            known = ", ".join(sorted(strategies))
             raise NotImplementedError(
-                f"Phase 9: only sequential mode is implemented. Got: {workflow.execution_mode}"
+                f"Phase 12: unknown mode {workflow.execution_mode!r}. Known: {known}."
             )
 
         summary_text, history = build_message_history(context.conversation_id, message)
+        return await strategy(
+            workflow=workflow,
+            context=context,
+            message=message,
+            summary_text=summary_text,
+            history=history,
+            workflow_run_id=workflow_run_id,
+        )
+
+    # ---------- shared composer + result selection ----------
+
+    def _build_workflow_result(
+        self,
+        last_composer_result: AgentResult | None,
+        last_ok_result: AgentResult | None,
+        evaluator_confidence: float | None,
+        any_failure: bool,
+    ) -> "WorkflowResult":
+        from ubongo.master import WorkflowResult as _WR
+
+        text_source = last_composer_result or last_ok_result
+        if text_source is None:
+            return _WR(
+                text=LLM_FAILURE_MESSAGE,
+                ok=False,
+                tokens_in=0,
+                tokens_out=0,
+                model="",
+                latency_ms=0,
+                evaluator_confidence=evaluator_confidence,
+            )
+        return _WR(
+            text=text_source.text,
+            ok=not any_failure or text_source.ok,
+            tokens_in=text_source.tokens_in,
+            tokens_out=text_source.tokens_out,
+            model=text_source.model or "",
+            latency_ms=text_source.latency_ms,
+            evaluator_confidence=evaluator_confidence,
+        )
+
+    # ---------- sequential mode (Phase 9 baseline + Phase 11 Repair) ----------
+
+    async def _run_sequential(
+        self,
+        *,
+        workflow: "Workflow",
+        context: "Context",
+        message: str,
+        summary_text: str | None,
+        history: list,
+        workflow_run_id: int | None,
+    ) -> "WorkflowResult":
         prior_findings: list[str] = []
         last_ok_result: AgentResult | None = None
         last_composer_result: AgentResult | None = None
@@ -180,8 +278,6 @@ class WorkflowRunner:
 
         for agent_name in workflow.agents:
             if agent_name == "repair":
-                # Repair never executes as part of a workflow; the runner consults
-                # it on agent_failed via plan_retry. Skip silently.
                 continue
 
             agent = self.registry.get(agent_name)
@@ -190,7 +286,7 @@ class WorkflowRunner:
                 any_failure = True
                 continue
 
-            result = self._dispatch_agent(
+            result = await self._dispatch_agent_async(
                 agent=agent,
                 agent_name=agent_name,
                 message=message,
@@ -204,8 +300,7 @@ class WorkflowRunner:
                 retried=False,
             )
 
-            # Phase 11d: on failure, ask Repair for a single retry. Each agent
-            # is retried at most once per workflow run.
+            # Phase 11d: on failure, ask Repair for a single retry (sequential only).
             if (
                 not result.ok
                 and repair is not None
@@ -226,7 +321,7 @@ class WorkflowRunner:
                         "agent_retry",
                         extra={"agent": agent_name, "model": plan.get("model")},
                     )
-                    result = self._dispatch_agent(
+                    result = await self._dispatch_agent_async(
                         agent=agent,
                         agent_name=agent_name,
                         message=message,
@@ -251,32 +346,80 @@ class WorkflowRunner:
             else:
                 any_failure = True
 
-        # Phase 10: prefer the last composer agent's text (the persona) over any
-        # validator agent (Evaluator / Critic) that ran after it. Falls back to
-        # last_ok_result so Phase 9 single-agent workflows behave unchanged when
-        # no agent declares composer=True (research-only test fixtures, etc.).
-        text_source = last_composer_result or last_ok_result
-        if text_source is None:
-            return _WR(
-                text=LLM_FAILURE_MESSAGE,
-                ok=False,
-                tokens_in=0,
-                tokens_out=0,
-                model="",
-                latency_ms=0,
-                evaluator_confidence=evaluator_confidence,
-            )
+        return self._build_workflow_result(
+            last_composer_result, last_ok_result, evaluator_confidence, any_failure
+        )
 
-        # Per-agent token breakdown lives in agent_runs; WorkflowResult reports
-        # the composer's tokens — the user-facing response is what matters here.
-        return _WR(
-            text=text_source.text,
-            ok=not any_failure or text_source.ok,
-            tokens_in=text_source.tokens_in,
-            tokens_out=text_source.tokens_out,
-            model=text_source.model or "",
-            latency_ms=text_source.latency_ms,
-            evaluator_confidence=evaluator_confidence,
+    # ---------- parallel mode (Phase 12a) ----------
+
+    async def _run_parallel(
+        self,
+        *,
+        workflow: "Workflow",
+        context: "Context",
+        message: str,
+        summary_text: str | None,
+        history: list,
+        workflow_run_id: int | None,
+    ) -> "WorkflowResult":
+        """Fan out every agent in workflow.agents via asyncio.gather.
+
+        - Every agent sees prior_findings == () (no inter-agent threading).
+        - Repair retry does not fire in parallel mode (cancel-and-retry semantics
+          are ambiguous; Phase 13 may revisit).
+        - last-composer-wins still holds, picked by INDEX in workflow.agents
+          (deterministic, even though tasks finish in any order).
+        - WorkflowResult.ok requires every agent to succeed.
+        """
+        agent_names: list[str] = []
+        agents: list = []
+        for name in workflow.agents:
+            if name == "repair":
+                continue
+            agent = self.registry.get(name)
+            if agent is None:
+                logger.warning("agent_not_registered", extra={"agent": name})
+                continue
+            agent_names.append(name)
+            agents.append(agent)
+
+        if not agents:
+            return self._build_workflow_result(None, None, None, True)
+
+        tasks = [
+            self._dispatch_agent_async(
+                agent=agent,
+                agent_name=name,
+                message=message,
+                history=history,
+                summary_text=summary_text,
+                prior_findings=[],
+                workflow=workflow,
+                context=context,
+                workflow_run_id=workflow_run_id,
+                override_model=None,
+                retried=False,
+            )
+            for name, agent in zip(agent_names, agents)
+        ]
+        results: list[AgentResult] = await asyncio.gather(*tasks)
+
+        last_ok_result: AgentResult | None = None
+        last_composer_result: AgentResult | None = None
+        evaluator_confidence: float | None = None
+        any_failure = False
+        for name, agent, result in zip(agent_names, agents, results):
+            if result.ok:
+                last_ok_result = result
+                if getattr(agent, "composer", False):
+                    last_composer_result = result
+                if result.confidence is not None:
+                    evaluator_confidence = result.confidence
+            else:
+                any_failure = True
+
+        return self._build_workflow_result(
+            last_composer_result, last_ok_result, evaluator_confidence, any_failure
         )
 
 

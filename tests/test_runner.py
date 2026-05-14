@@ -143,10 +143,11 @@ def test_agent_failed_dispatched_on_ok_false_and_runner_continues():
 
 
 def test_unknown_execution_mode_raises():
+    """Phase 12: 'parallel' is implemented; use a genuinely-unknown mode."""
     runner = WorkflowRunner({})
     wf = Workflow(
         persona="architect", model="m", skill_name=None,
-        execution_mode="parallel", agents=("architect",),
+        execution_mode="phantom-mode", agents=("architect",),
     )
     conv_id = store.current_or_new_conversation("architect")
     with pytest.raises(NotImplementedError):
@@ -315,3 +316,141 @@ def test_repair_agent_in_workflow_agents_list_is_skipped():
     assert result.ok is True
     assert result.text == "recovered response"
     assert repair.calls == []
+
+
+# --- Phase 12a: Parallel mode ---
+
+
+def _wf_parallel(agents: tuple[str, ...]) -> Workflow:
+    return Workflow(
+        persona="architect", model="fake-model", skill_name=None,
+        execution_mode="parallel", agents=agents,
+    )
+
+
+class SlowFakeAgent(FakeAgent):
+    """Sleeps `delay_ms` before returning. Used for latency assertions."""
+    def __init__(self, name: str, *, delay_ms: int, text: str = "ok"):
+        super().__init__(name, text=text)
+        self._delay_ms = delay_ms
+
+    def run(self, input, context):
+        import time as _t
+        _t.sleep(self._delay_ms / 1000.0)
+        return super().run(input, context)
+
+
+def _composer_agent(name: str, *, text: str = "composed", ok: bool = True) -> FakeAgent:
+    """A composer-flagged FakeAgent (composer=True via attribute)."""
+    a = FakeAgent(name, text=text, ok=ok)
+    a.composer = True
+    return a
+
+
+def test_parallel_two_agents_both_succeed():
+    a = FakeAgent("research", text="findings A")
+    b = _composer_agent("architect", text="response B")
+    runner = WorkflowRunner({"research": a, "architect": b})
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(_wf_parallel(("research", "architect")), _ctx(conv_id), "hi")
+    assert result.ok is True
+    assert result.text == "response B"  # last-composer-wins
+    assert len(a.calls) == 1 and len(b.calls) == 1
+
+
+def test_parallel_latency_is_max_not_sum():
+    """Two slow agents in parallel run in roughly max(delay_a, delay_b),
+    not sum. Generous tolerance to avoid CI flakes."""
+    a = SlowFakeAgent("research", delay_ms=200)
+    b = SlowFakeAgent("architect", delay_ms=200)
+    runner = WorkflowRunner({"research": a, "architect": b})
+    conv_id = store.current_or_new_conversation("architect")
+    import time as _t
+    t0 = _t.monotonic()
+    runner.execute(_wf_parallel(("research", "architect")), _ctx(conv_id), "hi")
+    elapsed_ms = (_t.monotonic() - t0) * 1000
+    assert elapsed_ms < 350, f"parallel took {elapsed_ms}ms; expected < 350 (max+overhead)"
+
+
+def test_parallel_one_failing_keeps_composer_text_with_ok_true():
+    """Mirrors sequential semantics: if the composer succeeded, the workflow's
+    response is valid even when an upstream agent failed. The failing agent's
+    row is still persisted in agent_runs."""
+    a = FakeAgent("research", ok=False, text="", error="boom")
+    b = _composer_agent("architect", text="ok")
+    runner = WorkflowRunner({"research": a, "architect": b})
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(_wf_parallel(("research", "architect")), _ctx(1), "hi", workflow_run_id=wf_run_id)
+    assert result.ok is True
+    assert result.text == "ok"
+    rows = store.connection().execute(
+        "SELECT agent, outcome FROM agent_runs WHERE workflow_run_id = ? ORDER BY agent",
+        (wf_run_id,),
+    ).fetchall()
+    assert {(r["agent"], r["outcome"]) for r in rows} == {
+        ("architect", "success"),
+        ("research", "failure"),
+    }
+
+
+def test_parallel_all_failing_returns_failure_result():
+    """When NO agent succeeds, WorkflowResult.ok=False and text=LLM_FAILURE_MESSAGE."""
+    a = FakeAgent("research", ok=False, text="", error="boom1")
+    b = FakeAgent("architect", ok=False, text="", error="boom2")
+    runner = WorkflowRunner({"research": a, "architect": b})
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(_wf_parallel(("research", "architect")), _ctx(conv_id), "hi")
+    assert result.ok is False
+    assert "Sorry" in result.text
+
+
+def test_parallel_does_not_retry_on_failure():
+    """Sequential mode consults RepairAgent on agent_failed; parallel does not.
+    Cancel-and-retry semantics in fan-out are ambiguous; Phase 13 may revisit."""
+    agent = FlakyAgent(fail_first=True)
+    repair = StubRepair(plan={"model": "fallback"})
+    runner = WorkflowRunner({"architect": agent, "repair": repair})
+    conv_id = store.current_or_new_conversation("architect")
+    runner.execute(_wf_parallel(("architect",)), _ctx(conv_id), "hi")
+    # Only one call, never retried.
+    assert len(agent.calls) == 1
+    assert repair.calls == []  # Repair was not consulted in parallel mode
+
+
+def test_parallel_agents_see_no_prior_findings():
+    """Parallel mode does NOT thread findings; every agent sees prior_findings=()."""
+    a = FakeAgent("research", text="findings A")
+    b = FakeAgent("architect", text="response B")
+    runner = WorkflowRunner({"research": a, "architect": b})
+    conv_id = store.current_or_new_conversation("architect")
+    runner.execute(_wf_parallel(("research", "architect")), _ctx(conv_id), "hi")
+    assert a.calls[0].prior_findings == ()
+    assert b.calls[0].prior_findings == ()
+
+
+def test_parallel_composer_pick_uses_workflow_order_not_completion_order():
+    """Even if a non-composer finishes after the composer, last-composer-wins
+    is decided by the agent's INDEX in workflow.agents (deterministic)."""
+    a = _composer_agent("architect", text="first composer")
+    b = _composer_agent("coding", text="second composer")
+    runner = WorkflowRunner({"architect": a, "coding": b})
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(_wf_parallel(("architect", "coding")), _ctx(conv_id), "hi")
+    # workflow.agents = ("architect", "coding") -> coding is last in the list
+    assert result.text == "second composer"
+
+
+def test_parallel_writes_one_agent_runs_row_per_agent():
+    a = FakeAgent("research")
+    b = _composer_agent("architect")
+    runner = WorkflowRunner({"research": a, "architect": b})
+    wf_run_id = _seed_workflow_run()
+    runner.execute(_wf_parallel(("research", "architect")), _ctx(1), "hi", workflow_run_id=wf_run_id)
+    rows = store.connection().execute(
+        "SELECT agent, outcome FROM agent_runs WHERE workflow_run_id = ? ORDER BY agent",
+        (wf_run_id,),
+    ).fetchall()
+    assert {(r["agent"], r["outcome"]) for r in rows} == {
+        ("architect", "success"),
+        ("research", "success"),
+    }
