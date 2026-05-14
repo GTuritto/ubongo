@@ -456,6 +456,35 @@ def test_parallel_writes_one_agent_runs_row_per_agent():
     }
 
 
+def test_parallel_agent_can_read_store_from_worker_thread():
+    """Phase 12a regression: agents that touch store via asyncio.to_thread
+    used to crash with 'SQLite objects created in a thread can only be used
+    in that same thread'. The bootstrap() now passes check_same_thread=False
+    so the singleton connection is safe to read from worker threads."""
+
+    class StoreReadingAgent(FakeAgent):
+        composer = True
+
+        def __init__(self, name: str):
+            super().__init__(name, text="ok")
+
+        def run(self, input, context):
+            # Touch the store (would have raised pre-fix in the parallel-mode
+            # asyncio.to_thread worker thread).
+            _ = store.last_n_messages_global(5)
+            return super().run(input, context)
+
+    a = StoreReadingAgent("research")
+    b = StoreReadingAgent("architect")
+    runner = WorkflowRunner({"research": a, "architect": b})
+    conv_id = store.current_or_new_conversation("architect")
+    store.append_message(conv_id, "user", "warm-up", persona="architect")
+    result = runner.execute(_wf_parallel(("research", "architect")), _ctx(conv_id), "hi")
+    # Pre-fix: this would have raised "SQLite objects created in a thread..."
+    # before reaching this assertion.
+    assert result.ok is True
+
+
 # --- Phase 12b: Competitive mode ---
 
 

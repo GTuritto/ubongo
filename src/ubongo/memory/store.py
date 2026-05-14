@@ -101,7 +101,17 @@ def bootstrap() -> sqlite3.Connection:
     global _connection, _bootstrapped
     if _connection is None:
         _ensure_dir()
-        _connection = sqlite3.connect(_DB_PATH, isolation_level=None)
+        # check_same_thread=False: Phase 12a put agents in asyncio.to_thread
+        # workers; the singleton connection is now read from threads other
+        # than the one that created it (e.g., ResearchAgent.run reading
+        # store.last_n_messages_global from a parallel-mode worker thread).
+        # The store is autocommit (isolation_level=None) and SQLite serializes
+        # concurrent operations on a single connection internally; this is
+        # safe for the read-heavy single-process workload. Phase 16+ revisits
+        # if write contention becomes a concern.
+        _connection = sqlite3.connect(
+            _DB_PATH, isolation_level=None, check_same_thread=False,
+        )
         _connection.row_factory = sqlite3.Row
         _connection.execute("PRAGMA foreign_keys = ON")
     if not _bootstrapped:
