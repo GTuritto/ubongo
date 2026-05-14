@@ -205,6 +205,7 @@ class WorkflowRunner:
         strategies = {
             "sequential": self._run_sequential,
             "parallel": self._run_parallel,
+            "competitive": self._run_competitive,
         }
         strategy = strategies.get(workflow.execution_mode)
         if strategy is None:
@@ -420,6 +421,132 @@ class WorkflowRunner:
 
         return self._build_workflow_result(
             last_composer_result, last_ok_result, evaluator_confidence, any_failure
+        )
+
+
+    # ---------- competitive mode (Phase 12b) ----------
+
+    async def _run_competitive(
+        self,
+        *,
+        workflow: "Workflow",
+        context: "Context",
+        message: str,
+        summary_text: str | None,
+        history: list,
+        workflow_run_id: int | None,
+    ) -> "WorkflowResult":
+        """N candidate agents run in parallel; Evaluator picks a winner.
+
+        Convention: workflow.agents[:-1] are competitors; workflow.agents[-1]
+        MUST be 'evaluator'. Runner validates at execute time.
+        - Repair retry NOT consulted in competitive mode (same fan-out reason
+          as parallel; Phase 13 may revisit).
+        - WorkflowResult.text = winning candidate's text.
+        - WorkflowResult.evaluator_confidence = winner's score (so it still
+          feeds governance via the existing Phase 10 path).
+        - On rank() failure (parse error / LLM error): fall back to the FIRST
+          ok candidate; if none ok, WorkflowResult.ok=False.
+        """
+        from ubongo.master import WorkflowResult as _WR
+
+        if not workflow.agents or workflow.agents[-1] != "evaluator":
+            raise ValueError(
+                "competitive workflows must end with 'evaluator'; got "
+                f"{list(workflow.agents)!r}"
+            )
+        evaluator = self.registry.get("evaluator")
+        if evaluator is None or not hasattr(evaluator, "rank"):
+            raise ValueError("competitive mode requires an EvaluatorAgent with rank()")
+
+        competitor_names: list[str] = []
+        competitor_agents: list = []
+        for name in workflow.agents[:-1]:
+            if name == "repair":
+                continue
+            agent = self.registry.get(name)
+            if agent is None:
+                logger.warning("agent_not_registered", extra={"agent": name})
+                continue
+            competitor_names.append(name)
+            competitor_agents.append(agent)
+
+        if not competitor_agents:
+            return self._build_workflow_result(None, None, None, True)
+
+        tasks = [
+            self._dispatch_agent_async(
+                agent=agent,
+                agent_name=name,
+                message=message,
+                history=history,
+                summary_text=summary_text,
+                prior_findings=[],
+                workflow=workflow,
+                context=context,
+                workflow_run_id=workflow_run_id,
+                override_model=None,
+                retried=False,
+            )
+            for name, agent in zip(competitor_names, competitor_agents)
+        ]
+        results: list[AgentResult] = await asyncio.gather(*tasks)
+
+        ok_pairs = [(n, r) for n, r in zip(competitor_names, results) if r.ok]
+        if not ok_pairs:
+            return self._build_workflow_result(None, None, None, True)
+
+        # Evaluator.rank is a sync LLM call; off-thread it.
+        rank_started = store.now_iso()
+        ranking = await asyncio.to_thread(
+            evaluator.rank,
+            message,
+            [(n, r.text) for n, r in ok_pairs],
+        )
+        rank_ended = store.now_iso()
+
+        # Pick winner: rank result if present, else first ok candidate.
+        if ranking is None:
+            logger.warning("competitive_rank_fallback", extra={"reason": "rank_returned_none"})
+            winner_name, winner_result = ok_pairs[0]
+            winner_score = None
+        else:
+            winner_name = ranking["winner"]
+            # Find the winner's AgentResult by name; ranking guarantees it's in ok_pairs.
+            winner_result = next(r for n, r in ok_pairs if n == winner_name)
+            winner_scores = ranking.get("scores") or []
+            winner_score = next(
+                (s["score"] for s in winner_scores if s.get("index") == ranking["winner_index"]),
+                None,
+            )
+
+        # Persist the evaluator's ranking as an agent_runs row so /trace shows
+        # the judging step. confidence carries the winner's score (or None).
+        if workflow_run_id is not None:
+            store.append_agent_run(
+                workflow_run_id=workflow_run_id,
+                agent="evaluator",
+                model=getattr(evaluator, "default_model", None),
+                input={"candidates": len(ok_pairs), "message_len": len(message)},
+                output={"winner": winner_name, "ranking": ranking},
+                confidence=winner_score,
+                tokens_in=0,
+                tokens_out=0,
+                latency_ms=0,  # off-thread; the wrapping rank() call already logs its own latency
+                outcome="success" if ranking is not None else "failure",
+                started_at=rank_started,
+                ended_at=rank_ended,
+                retried=False,
+            )
+
+        return _WR(
+            text=winner_result.text,
+            ok=True,
+            tokens_in=winner_result.tokens_in,
+            tokens_out=winner_result.tokens_out,
+            model=winner_result.model or "",
+            latency_ms=winner_result.latency_ms,
+            evaluator_confidence=winner_score,
         )
 
 

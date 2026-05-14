@@ -10,7 +10,7 @@ os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo import context, events, skills  # noqa: E402
 from ubongo.agents.base import AgentInput  # noqa: E402
-from ubongo.agents.evaluator import EvaluatorAgent, _parse_judgment  # noqa: E402
+from ubongo.agents.evaluator import EvaluatorAgent, _parse_agree, _parse_judgment, _parse_ranking  # noqa: E402
 from ubongo.llm import CompletionResult, LLMError  # noqa: E402
 from ubongo.memory import store, vault  # noqa: E402
 
@@ -118,3 +118,113 @@ def test_evaluator_default_model_and_max_tokens_from_settings():
     assert agent.default_model
     assert agent.max_tokens == 400
     assert agent.composer is False
+
+
+# --- Phase 12b: rank() ---
+
+
+def _rank_completion(text: str) -> CompletionResult:
+    return CompletionResult(text=text, model="test-eval", tokens_in=30, tokens_out=20, latency_ms=10, attempts=1)
+
+
+def test_parse_ranking_happy_path():
+    raw = '{"winner_index": 1, "reason": "B is more complete", "scores": [{"index": 0, "score": 0.6, "note": "ok"}, {"index": 1, "score": 0.85, "note": "good"}]}'
+    out = _parse_ranking(raw, n_candidates=2)
+    assert out is not None
+    idx, reason, scores = out
+    assert idx == 1
+    assert "complete" in reason
+    assert len(scores) == 2 and scores[1]["score"] == 0.85
+
+
+def test_parse_ranking_rejects_out_of_range_index():
+    raw = '{"winner_index": 5, "reason": "x", "scores": []}'
+    assert _parse_ranking(raw, n_candidates=2) is None
+
+
+def test_parse_ranking_rejects_garbage():
+    assert _parse_ranking("not json", n_candidates=2) is None
+
+
+def test_rank_happy_path():
+    agent = EvaluatorAgent()
+    raw = '{"winner_index": 0, "reason": "concise and correct", "scores": [{"index": 0, "score": 0.9, "note": "tight"}]}'
+    with patch("ubongo.agents.evaluator.complete", return_value=_rank_completion(raw)) as m:
+        out = agent.rank(
+            "what is 2+2",
+            [("coding", "4"), ("architect", "The answer is four; here is a proof...")],
+        )
+    assert out is not None
+    assert out["winner"] == "coding"
+    assert out["winner_index"] == 0
+    assert "concise" in out["reason"]
+    m.assert_called_once()
+
+
+def test_rank_returns_none_on_parse_error():
+    agent = EvaluatorAgent()
+    with patch("ubongo.agents.evaluator.complete", return_value=_rank_completion("not json")):
+        assert agent.rank("q", [("a", "x"), ("b", "y")]) is None
+
+
+def test_rank_returns_none_on_llm_error():
+    agent = EvaluatorAgent()
+    with patch("ubongo.agents.evaluator.complete", side_effect=LLMError("boom", cause=RuntimeError("x"))):
+        assert agent.rank("q", [("a", "x"), ("b", "y")]) is None
+
+
+def test_rank_returns_none_on_empty_candidates():
+    agent = EvaluatorAgent()
+    assert agent.rank("q", []) is None
+
+
+def test_rank_truncates_large_candidates_in_prompt():
+    """Per-candidate truncation prevents prompt bloat. Verify by inspecting
+    captured system_prompt."""
+    agent = EvaluatorAgent()
+    huge = "x" * 5000
+    raw = '{"winner_index": 0, "reason": "ok", "scores": []}'
+    with patch("ubongo.agents.evaluator.complete", return_value=_rank_completion(raw)) as m:
+        agent.rank("q", [("a", huge), ("b", "small")])
+    sys_prompt = m.call_args.kwargs["system_prompt"]
+    # Truncation marker present; full 5000 'x' run not in the prompt.
+    assert "…" in sys_prompt
+    assert "x" * 2000 not in sys_prompt
+    # The small candidate is intact.
+    assert "small" in sys_prompt
+
+
+def test_rank_honors_override_model():
+    agent = EvaluatorAgent()
+    raw = '{"winner_index": 0, "reason": "ok", "scores": []}'
+    with patch("ubongo.agents.evaluator.complete", return_value=_rank_completion(raw)) as m:
+        agent.rank("q", [("a", "x"), ("b", "y")], override_model="fallback-model")
+    assert m.call_args.kwargs["model"] == "fallback-model"
+
+
+# --- Phase 12e: agree() ---
+
+
+def test_parse_agree_true_and_false_and_garbage():
+    assert _parse_agree('{"agree": true, "reason": "same answer"}') is True
+    assert _parse_agree('{"agree": false, "reason": "different"}') is False
+    assert _parse_agree('{"agree": "yes"}') is None  # not a bool
+    assert _parse_agree("not json") is None
+
+
+def test_agree_happy_path():
+    agent = EvaluatorAgent()
+    with patch("ubongo.agents.evaluator.complete", return_value=_rank_completion('{"agree": true, "reason": "x"}')):
+        assert agent.agree("q", "answer is 4", "the answer is four") is True
+
+
+def test_agree_returns_none_on_empty_input():
+    agent = EvaluatorAgent()
+    assert agent.agree("q", "", "y") is None
+    assert agent.agree("q", "x", "  ") is None
+
+
+def test_agree_returns_none_on_llm_error():
+    agent = EvaluatorAgent()
+    with patch("ubongo.agents.evaluator.complete", side_effect=LLMError("boom", cause=RuntimeError("x"))):
+        assert agent.agree("q", "a", "b") is None

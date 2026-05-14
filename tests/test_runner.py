@@ -454,3 +454,102 @@ def test_parallel_writes_one_agent_runs_row_per_agent():
         ("architect", "success"),
         ("research", "success"),
     }
+
+
+# --- Phase 12b: Competitive mode ---
+
+
+def _wf_competitive(agents: tuple[str, ...]) -> Workflow:
+    return Workflow(
+        persona="architect", model="fake-model", skill_name=None,
+        execution_mode="competitive", agents=agents,
+    )
+
+
+class FakeEvaluator:
+    """Minimum surface for competitive: rank()."""
+    name = "evaluator"
+    role = "fake judge"
+    default_model = "test-eval"
+    composer = False
+
+    def __init__(self, *, ranking: dict | None):
+        self._ranking = ranking
+        self.calls: list[dict] = []
+
+    def rank(self, message, candidates, override_model=None):
+        self.calls.append({"message": message, "candidates": candidates})
+        return self._ranking
+
+
+def test_competitive_picks_winner_via_rank():
+    a = _composer_agent("coding", text="def f(): pass")
+    b = _composer_agent("architect", text="here's a longer explanation...")
+    evaluator = FakeEvaluator(ranking={
+        "winner": "architect", "winner_index": 1,
+        "reason": "more complete",
+        "scores": [{"index": 0, "score": 0.7, "note": "ok"},
+                   {"index": 1, "score": 0.9, "note": "complete"}],
+    })
+    runner = WorkflowRunner({"coding": a, "architect": b, "evaluator": evaluator})
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(_wf_competitive(("coding", "architect", "evaluator")), _ctx(conv_id), "write a fn")
+    assert result.ok is True
+    assert result.text == "here's a longer explanation..."
+    assert result.evaluator_confidence == 0.9
+    assert len(evaluator.calls) == 1
+    assert [n for n, _ in evaluator.calls[0]["candidates"]] == ["coding", "architect"]
+
+
+def test_competitive_requires_evaluator_as_last_agent():
+    a = _composer_agent("coding")
+    b = _composer_agent("architect")
+    runner = WorkflowRunner({"coding": a, "architect": b})
+    conv_id = store.current_or_new_conversation("architect")
+    with pytest.raises(ValueError, match="evaluator"):
+        runner.execute(_wf_competitive(("coding", "architect")), _ctx(conv_id), "x")
+
+
+def test_competitive_falls_back_to_first_ok_when_rank_returns_none():
+    a = _composer_agent("coding", text="A text")
+    b = _composer_agent("architect", text="B text")
+    evaluator = FakeEvaluator(ranking=None)  # parse error path
+    runner = WorkflowRunner({"coding": a, "architect": b, "evaluator": evaluator})
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(_wf_competitive(("coding", "architect", "evaluator")), _ctx(conv_id), "x")
+    assert result.ok is True
+    assert result.text == "A text"  # first ok candidate
+
+
+def test_competitive_writes_evaluator_agent_runs_row():
+    a = _composer_agent("coding", text="A text")
+    b = _composer_agent("architect", text="B text")
+    evaluator = FakeEvaluator(ranking={
+        "winner": "coding", "winner_index": 0,
+        "reason": "x",
+        "scores": [{"index": 0, "score": 0.8, "note": "ok"}],
+    })
+    runner = WorkflowRunner({"coding": a, "architect": b, "evaluator": evaluator})
+    wf_run_id = _seed_workflow_run()
+    runner.execute(_wf_competitive(("coding", "architect", "evaluator")), _ctx(1), "x",
+                   workflow_run_id=wf_run_id)
+    rows = store.connection().execute(
+        "SELECT agent, confidence, outcome FROM agent_runs WHERE workflow_run_id = ? ORDER BY id",
+        (wf_run_id,),
+    ).fetchall()
+    agent_names = [r["agent"] for r in rows]
+    assert agent_names == ["coding", "architect", "evaluator"]
+    eval_row = rows[-1]
+    assert eval_row["confidence"] == 0.8
+    assert eval_row["outcome"] == "success"
+
+
+def test_competitive_all_competitors_failing_returns_failure():
+    a = FakeAgent("coding", ok=False, text="", error="boom1")
+    b = FakeAgent("architect", ok=False, text="", error="boom2")
+    evaluator = FakeEvaluator(ranking=None)
+    runner = WorkflowRunner({"coding": a, "architect": b, "evaluator": evaluator})
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(_wf_competitive(("coding", "architect", "evaluator")), _ctx(conv_id), "x")
+    assert result.ok is False
+    assert evaluator.calls == []  # rank never called when no ok candidates

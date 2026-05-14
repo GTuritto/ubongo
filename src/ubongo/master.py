@@ -152,9 +152,11 @@ class MasterAgent:
         skill_name = resolved_skill.name if resolved_skill else None
         workflow_name = _resolve_workflow_name(chosen, suggested_workflow_name, ctx.auto_mode)
         agents = list(router.workflow_agents(workflow_name))
-        if router.workflow_evaluate(workflow_name):
-            agents.append("evaluator")
         mode = router.workflow_mode(workflow_name)
+        # Phase 12b: competitive mode requires its own trailing evaluator as
+        # part of the mode contract; skip the auto-append to avoid a duplicate.
+        if router.workflow_evaluate(workflow_name) and mode != "competitive":
+            agents.append("evaluator")
         persona = personas.get(chosen)
         workflow = Workflow(
             persona=chosen,
