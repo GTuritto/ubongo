@@ -5,7 +5,20 @@
       "Bash(tar -czf /tmp/ubongo-smoke11/vault.bak.tgz vault/)",
       "Bash(sqlite3 data/ubongo.db ' *)",
       "Bash(rm -f vault/daily/*.md)",
-      "Bash(tar -xzf /tmp/ubongo-smoke11/vault.bak.tgz -C .)"
+      "Bash(tar -xzf /tmp/ubongo-smoke11/vault.bak.tgz -C .)",
+      "Bash(tar -czf /tmp/ubongo-smoke-full/vault.bak.tgz vault/)",
+      "Bash(python3 -c \"import sys,json; d=json.loads\\(sys.stdin.read\\(\\)\\); print\\(f'intent={d[\\\\\"intent\\\\\"]} used={d[\\\\\"used\\\\\"]}'\\)\")",
+      "Bash(echo \"actual rc=$?\")",
+      "Bash(python3 -c \"import sys,json; d=json.loads\\(sys.stdin.read\\(\\)\\); print\\(f'intent={d[\\\\\"intent\\\\\"]} conf={d[\\\\\"confidence\\\\\"]} used={d[\\\\\"used\\\\\"]}'\\)\")",
+      "Bash(python3 -c \"import sys,json; d=json.loads\\(sys.stdin.read\\(\\)\\); print\\(f'intent={d[\\\\\"intent\\\\\"]} tone={d[\\\\\"tone\\\\\"]} used={d[\\\\\"used\\\\\"]}'\\)\")",
+      "Bash(sqlite3 data/ubongo.db 'SELECT active_persona, auto_mode FROM sessions')",
+      "Bash(echo \"session: $\\(sqlite3 data/ubongo.db 'SELECT active_persona, auto_mode FROM sessions'\\)\")",
+      "Bash(sqlite3 data/ubongo.db 'SELECT outcome FROM workflow_runs')",
+      "Bash(echo \"workflow_runs.outcome: $\\(sqlite3 data/ubongo.db 'SELECT outcome FROM workflow_runs'\\)\")",
+      "Bash(sqlite3 data/ubongo.db 'SELECT COUNT\\(*\\) FROM governance_decisions')",
+      "Bash(echo \"governance_decisions count: $\\(sqlite3 data/ubongo.db 'SELECT COUNT\\(*\\) FROM governance_decisions'\\)\")",
+      "Bash(echo \"last workflow.agents: $\\(sqlite3 data/ubongo.db \"SELECT json_extract\\(workflow,'\\\\$.agents'\\) FROM workflow_runs ORDER BY id DESC LIMIT 1\"\\)\")",
+      "Bash(echo \"workflow.agents: $\\(sqlite3 data/ubongo.db \"SELECT json_extract\\(workflow,'\\\\$.agents'\\) FROM workflow_runs ORDER BY id DESC LIMIT 1\"\\)\")"
     ]
   }
 }
