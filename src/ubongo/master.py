@@ -161,6 +161,8 @@ class MasterAgent:
         # part of the mode contract; skip the auto-append to avoid a duplicate.
         if router.workflow_evaluate(workflow_name) and mode != "competitive":
             agents.append("evaluator")
+        rounds = router.workflow_rounds(workflow_name)
+        timeout_s = router.workflow_timeout_s(workflow_name)
         persona = personas.get(chosen)
         workflow = Workflow(
             persona=chosen,
@@ -168,6 +170,8 @@ class MasterAgent:
             skill_name=skill_name,
             execution_mode=mode,
             agents=tuple(agents),
+            rounds=rounds,
+            timeout_s=timeout_s,
         )
         events.dispatch("after_plan", {"workflow": asdict(workflow)})
         return workflow

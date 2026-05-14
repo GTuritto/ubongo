@@ -71,9 +71,54 @@ def workflow_agents(name: str) -> tuple[str, ...]:
 
 
 def workflow_mode(name: str) -> str:
+    """Return the execution mode for a workflow. Falls back to 'sequential'
+    if the workflow declares an unknown mode (with a warning)."""
+    from ubongo.runner import KNOWN_MODES
+
     data = _load_workflows()
     wf = (data.get("workflows", {}) or {}).get(name, {})
-    return wf.get("mode", "sequential")
+    mode = wf.get("mode", "sequential")
+    if mode not in KNOWN_MODES:
+        logger.warning(
+            "router_unknown_mode_fallback",
+            extra={"workflow": name, "declared_mode": mode, "fallback": "sequential"},
+        )
+        return "sequential"
+    return mode
+
+
+def workflow_rounds(name: str) -> int | None:
+    """Phase 12d: optional `rounds` field on debate-mode workflows."""
+    data = _load_workflows()
+    wf = (data.get("workflows", {}) or {}).get(name, {})
+    val = wf.get("rounds")
+    if val is None:
+        return None
+    try:
+        n = int(val)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def workflow_timeout_s(name: str) -> int | None:
+    """Phase 12e: optional `timeout_s` field on speculative-mode workflows."""
+    data = _load_workflows()
+    wf = (data.get("workflows", {}) or {}).get(name, {})
+    val = wf.get("timeout_s")
+    if val is None:
+        return None
+    try:
+        n = int(val)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def workflow_names() -> list[str]:
+    """Phase 12g: enumerate all declared workflow names (for `/mode list`)."""
+    data = _load_workflows()
+    return sorted((data.get("workflows", {}) or {}).keys())
 
 
 def workflow_persona(name: str) -> str:
