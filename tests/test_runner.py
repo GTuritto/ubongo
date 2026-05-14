@@ -714,6 +714,123 @@ def test_debate_short_circuits_on_debater_failure_synth_still_runs():
     assert len(b.calls) == 1
 
 
+def test_debate_collaborative_post_step_runs_trailing_evaluator():
+    """Renamed-position anchor: keep collaborative test grouped after debate."""
+
+# --- Phase 12e: Speculative mode ---
+
+
+class FakeAgreeingEvaluator:
+    """Minimal surface for speculative: agree()."""
+    name = "evaluator"
+    role = "fake judge"
+    default_model = "test-eval"
+    composer = False
+
+    def __init__(self, *, agree_value: bool | None):
+        self._agree = agree_value
+        self.calls: list[dict] = []
+
+    def agree(self, message, text_a, text_b, override_model=None):
+        self.calls.append({"message": message, "text_a": text_a, "text_b": text_b})
+        return self._agree
+
+
+def _wf_speculative(agents: tuple[str, ...], *, timeout_s: int | None = None) -> Workflow:
+    return Workflow(
+        persona="architect", model="fake-model", skill_name=None,
+        execution_mode="speculative", agents=agents, timeout_s=timeout_s,
+    )
+
+
+def test_speculative_both_ok_agree_returns_cheap_only():
+    cheap = FakeAgent("casual", text="quick answer")
+    strong = FakeAgent("architect", text="thorough answer")
+    evaluator = FakeAgreeingEvaluator(agree_value=True)
+    runner = WorkflowRunner({"casual": cheap, "architect": strong, "evaluator": evaluator})
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(_wf_speculative(("casual", "architect", "evaluator")), _ctx(conv_id), "q")
+    assert result.ok is True
+    assert result.text == "quick answer"
+    assert "Correction" not in result.text
+    assert len(evaluator.calls) == 1
+
+
+def test_speculative_both_ok_disagree_appends_correction():
+    cheap = FakeAgent("casual", text="quick answer")
+    strong = FakeAgent("architect", text="actually different answer")
+    evaluator = FakeAgreeingEvaluator(agree_value=False)
+    runner = WorkflowRunner({"casual": cheap, "architect": strong, "evaluator": evaluator})
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(_wf_speculative(("casual", "architect", "evaluator")), _ctx(conv_id), "q")
+    assert result.ok is True
+    assert result.text.startswith("quick answer")
+    assert "[Correction (slower model):]" in result.text
+    assert "actually different answer" in result.text
+
+
+def test_speculative_cheap_ok_strong_fails_no_correction():
+    cheap = FakeAgent("casual", text="quick answer")
+    strong = FakeAgent("architect", ok=False, text="", error="boom")
+    evaluator = FakeAgreeingEvaluator(agree_value=False)  # would otherwise correct
+    runner = WorkflowRunner({"casual": cheap, "architect": strong, "evaluator": evaluator})
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(_wf_speculative(("casual", "architect", "evaluator")), _ctx(conv_id), "q")
+    assert result.ok is True
+    assert result.text == "quick answer"
+    assert "Correction" not in result.text
+    # agree() should NOT have been called when strong failed
+    assert evaluator.calls == []
+
+
+def test_speculative_cheap_fails_strong_ok_uses_strong_no_correction():
+    cheap = FakeAgent("casual", ok=False, text="", error="boom")
+    strong = FakeAgent("architect", text="thorough answer")
+    evaluator = FakeAgreeingEvaluator(agree_value=False)
+    runner = WorkflowRunner({"casual": cheap, "architect": strong, "evaluator": evaluator})
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(_wf_speculative(("casual", "architect", "evaluator")), _ctx(conv_id), "q")
+    assert result.ok is True
+    assert result.text == "thorough answer"
+    # No correction since base IS strong; the "cheap was wrong, here's the correction"
+    # framing only makes sense when cheap succeeded but disagreed.
+    assert "Correction" not in result.text
+    assert evaluator.calls == []
+
+
+def test_speculative_both_failing_returns_failure_message():
+    cheap = FakeAgent("casual", ok=False, text="", error="boom1")
+    strong = FakeAgent("architect", ok=False, text="", error="boom2")
+    evaluator = FakeAgreeingEvaluator(agree_value=True)
+    runner = WorkflowRunner({"casual": cheap, "architect": strong, "evaluator": evaluator})
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(_wf_speculative(("casual", "architect", "evaluator")), _ctx(conv_id), "q")
+    assert result.ok is False
+    assert "Sorry" in result.text
+
+
+def test_speculative_no_evaluator_skips_agreement_check():
+    """Workflow without trailing evaluator: no agreement check, just cheap-or-strong."""
+    cheap = FakeAgent("casual", text="quick")
+    strong = FakeAgent("architect", text="thorough")
+    runner = WorkflowRunner({"casual": cheap, "architect": strong})
+    conv_id = store.current_or_new_conversation("architect")
+    result = runner.execute(_wf_speculative(("casual", "architect")), _ctx(conv_id), "q")
+    assert result.ok is True
+    assert result.text == "quick"
+
+
+def test_speculative_requires_at_least_2_agents():
+    runner = WorkflowRunner({})
+    wf = Workflow(
+        persona="architect", model="m", skill_name=None,
+        execution_mode="speculative", agents=("casual",),
+    )
+    conv_id = store.current_or_new_conversation("architect")
+    with pytest.raises(ValueError, match="cheap, strong"):
+        runner.execute(wf, _ctx(conv_id), "q")
+
+
 def test_collaborative_runs_trailing_evaluator_sequentially_after_merge():
     """Phase 10 evaluate-flag interaction: evaluator runs AFTER the parallel
     section, sees the merged document, scores it."""

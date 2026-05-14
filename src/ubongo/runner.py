@@ -208,6 +208,7 @@ class WorkflowRunner:
             "competitive": self._run_competitive,
             "collaborative": self._run_collaborative,
             "debate": self._run_debate,
+            "speculative": self._run_speculative,
         }
         strategy = strategies.get(workflow.execution_mode)
         if strategy is None:
@@ -771,6 +772,136 @@ class WorkflowRunner:
             last_composer, synth_result,
             synth_result.confidence if synth_result.confidence is not None else None,
             any_failure,
+        )
+
+
+    # ---------- speculative mode (Phase 12e) ----------
+
+    async def _run_speculative(
+        self,
+        *,
+        workflow: "Workflow",
+        context: "Context",
+        message: str,
+        summary_text: str | None,
+        history: list,
+        workflow_run_id: int | None,
+    ) -> "WorkflowResult":
+        """Cheap-first response; strong validates; correction concat on disagreement.
+
+        Convention: workflow.agents = [cheap, strong, evaluator?]. Cheap and
+        strong run concurrently with a hard total timeout (workflow.timeout_s,
+        default 10s). The leader text is whichever cheap result is ok (cheap
+        is the speculative payoff); if cheap failed, strong's text is used.
+        If both ran ok AND an evaluator is present AND evaluator.agree returns
+        False, a correction block is appended to the cheap response.
+
+        v0.1 limitation: in-turn (within a single master.handle call). True
+        background (cheap returns instantly while strong runs after the user
+        sees the response) waits for cross-turn pending-tasks infra.
+        """
+        from ubongo.master import WorkflowResult as _WR
+
+        if len(workflow.agents) < 2:
+            raise ValueError(
+                "speculative workflows need at least [cheap, strong] in agents"
+            )
+        cheap_name = workflow.agents[0]
+        strong_name = workflow.agents[1]
+        evaluator_name: str | None = (
+            workflow.agents[-1] if (
+                len(workflow.agents) >= 3 and workflow.agents[-1] == "evaluator"
+            ) else None
+        )
+        timeout_s = workflow.timeout_s if workflow.timeout_s is not None else 10
+        for name in (cheap_name, strong_name):
+            if name not in self.registry:
+                raise ValueError(
+                    f"speculative workflow references unknown agent {name!r}"
+                )
+
+        cheap_agent = self.registry[cheap_name]
+        strong_agent = self.registry[strong_name]
+
+        cheap_task = asyncio.create_task(self._dispatch_agent_async(
+            agent=cheap_agent, agent_name=cheap_name,
+            message=message, history=history, summary_text=summary_text,
+            prior_findings=[], workflow=workflow, context=context,
+            workflow_run_id=workflow_run_id,
+            override_model=None, retried=False,
+        ))
+        strong_task = asyncio.create_task(self._dispatch_agent_async(
+            agent=strong_agent, agent_name=strong_name,
+            message=message, history=history, summary_text=summary_text,
+            prior_findings=[], workflow=workflow, context=context,
+            workflow_run_id=workflow_run_id,
+            override_model=None, retried=False,
+        ))
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(cheap_task, strong_task, return_exceptions=True),
+                timeout=timeout_s,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("speculative_timeout", extra={"timeout_s": timeout_s})
+
+        cheap_result = cheap_task.result() if cheap_task.done() and not cheap_task.cancelled() else None
+        strong_result = strong_task.result() if strong_task.done() and not strong_task.cancelled() else None
+
+        # Pick base: prefer cheap (speculative payoff). Fall back to strong.
+        if cheap_result and cheap_result.ok:
+            base = cheap_result
+        elif strong_result and strong_result.ok:
+            base = strong_result
+        else:
+            return self._build_workflow_result(None, None, None, True)
+
+        text = base.text
+        evaluator_confidence: float | None = None
+
+        # Validation: BOTH ok, base IS cheap, evaluator present.
+        if (
+            evaluator_name is not None
+            and cheap_result and cheap_result.ok
+            and strong_result and strong_result.ok
+            and base is cheap_result
+        ):
+            evaluator = self.registry.get(evaluator_name)
+            if evaluator is not None and hasattr(evaluator, "agree"):
+                agree_started = store.now_iso()
+                agree = await asyncio.to_thread(
+                    evaluator.agree, message, cheap_result.text, strong_result.text,
+                )
+                agree_ended = store.now_iso()
+                if workflow_run_id is not None:
+                    store.append_agent_run(
+                        workflow_run_id=workflow_run_id,
+                        agent="evaluator",
+                        model=getattr(evaluator, "default_model", None),
+                        input={"cheap_len": len(cheap_result.text),
+                               "strong_len": len(strong_result.text)},
+                        output={"agree": agree},
+                        confidence=None,
+                        tokens_in=0, tokens_out=0, latency_ms=0,
+                        outcome="success" if agree is not None else "failure",
+                        started_at=agree_started, ended_at=agree_ended,
+                        retried=False,
+                    )
+                if agree is False:
+                    text = (
+                        f"{cheap_result.text}\n\n---\n\n"
+                        f"[Correction (slower model):]\n\n{strong_result.text}"
+                    )
+
+        return _WR(
+            text=text,
+            ok=base.ok,
+            tokens_in=base.tokens_in,
+            tokens_out=base.tokens_out,
+            model=base.model or "",
+            latency_ms=base.latency_ms,
+            evaluator_confidence=evaluator_confidence,
         )
 
 
