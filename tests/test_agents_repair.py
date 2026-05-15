@@ -220,21 +220,24 @@ def test_plan_recovery_walks_to_smaller_model_on_second_attempt():
 
 
 def test_plan_recovery_skips_peer_when_none_configured():
-    # Default settings have peer_replacements = {} (empty); REPLACE_WITH_PEER
-    # is skipped and the ladder advances to ABORT.
+    # Evaluator's default peer is null; the strategy is skipped and the
+    # ladder advances to ABORT (PARSE_ERROR ladder ends in ABORT after PEER).
     agent = RepairAgent()
+    agent._peer_replacements = {**agent._peer_replacements, "evaluator": None}
     plan = agent.plan_recovery(
-        failed_agent="critic",
-        original=_failed_result("critic_no_candidate"),
-        attempts_so_far=(),
+        failed_agent="evaluator",
+        original=_failed_result("evaluator_parse_error"),
+        attempts_so_far=(
+            Strategy.RETRY_SAME_MODEL_VARIANT_PROMPT,
+            Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT,
+        ),
     )
     assert plan.strategy is Strategy.ABORT
 
 
 def test_plan_recovery_precondition_missing_when_peer_configured():
-    # Force a peer mapping in-process to exercise the REPLACE_WITH_PEER path.
+    # 13c default: critic → architect. PRECONDITION_MISSING leads with peer.
     agent = RepairAgent()
-    agent._peer_replacements = {"critic": "architect"}
     plan = agent.plan_recovery(
         failed_agent="critic",
         original=_failed_result("critic_no_candidate"),
@@ -242,6 +245,22 @@ def test_plan_recovery_precondition_missing_when_peer_configured():
     )
     assert plan.strategy is Strategy.REPLACE_WITH_PEER
     assert plan.peer_agent == "architect"
+
+
+def test_peer_replacements_defaults_from_settings():
+    """13c: settings.yaml ships sensible peer defaults for the worker agents.
+    Asserts the live load reflects the YAML."""
+    agent = RepairAgent()
+    # workers → architect; personas rotate; structurally-unique → None.
+    assert agent._peer_replacements.get("coding") == "architect"
+    assert agent._peer_replacements.get("research") == "architect"
+    assert agent._peer_replacements.get("critic") == "architect"
+    assert agent._peer_replacements.get("evaluator") is None
+    assert agent._peer_replacements.get("memory") is None
+    assert agent._peer_replacements.get("execution") is None
+    assert agent._peer_replacements.get("architect") == "operator"
+    assert agent._peer_replacements.get("operator") == "architect"
+    assert agent._peer_replacements.get("casual") == "operator"
 
 
 def test_plan_recovery_aborts_when_max_attempts_reached():
@@ -270,13 +289,15 @@ def test_plan_recovery_unrecoverable_kind_returns_abort():
 
 
 def test_plan_recovery_precondition_missing_no_peer_aborts():
+    # Force the peer config empty to verify the ABORT fallback path.
     agent = RepairAgent()
+    agent._peer_replacements = {}
     plan = agent.plan_recovery(
         failed_agent="critic",
         original=_failed_result("critic_no_candidate"),
         attempts_so_far=(),
     )
-    # No peer configured by default → ladder advances past REPLACE_WITH_PEER → ABORT.
+    # No peer configured → ladder advances past REPLACE_WITH_PEER → ABORT.
     assert plan.strategy is Strategy.ABORT
 
 

@@ -309,14 +309,47 @@ class WorkflowRunner:
                 )
                 return result
             if plan.strategy is Strategy.REPLACE_WITH_PEER:
-                # Phase 13c implements peer dispatch; 13b treats as ABORT
-                # so the ladder doesn't loop forever asking for a strategy
-                # the runner can't execute.
+                # 13c: dispatch the peer in the failing agent's slot. The
+                # peer's agent_runs row records under ITS real name (not
+                # the failed agent's name) so /decisions and joins stay
+                # honest. The substitution is observable via repair_runs
+                # (Phase 13e) and the row's retried=1 flag.
+                attempts.append(plan.strategy)
+                peer = self.registry.get(plan.peer_agent or "")
+                if peer is None:
+                    logger.warning(
+                        "repair_peer_not_registered",
+                        extra={"agent": agent_name, "peer": plan.peer_agent},
+                    )
+                    return result
                 logger.info(
-                    "repair_peer_deferred_to_13c",
-                    extra={"agent": agent_name, "peer": plan.peer_agent},
+                    "agent_replace_with_peer",
+                    extra={
+                        "agent": agent_name,
+                        "peer": plan.peer_agent,
+                        "attempt_index": len(attempts) - 1,
+                    },
                 )
-                return result
+                peer_result = await self._dispatch_agent_async(
+                    agent=peer,
+                    agent_name=plan.peer_agent,
+                    message=message,
+                    history=history,
+                    summary_text=summary_text,
+                    prior_findings=prior_findings,
+                    workflow=workflow,
+                    context=context,
+                    workflow_run_id=workflow_run_id,
+                    override_model=None,
+                    retried=True,
+                )
+                if peer_result.ok:
+                    return peer_result
+                # Peer also failed; the loop continues and asks Repair for
+                # the next strategy. Note: we keep `result` pointing at the
+                # ORIGINAL failure so the next plan_recovery() still classifies
+                # against the original agent's error kind, not the peer's.
+                continue
 
             attempts.append(plan.strategy)
             extra_metadata: dict = {}
@@ -350,6 +383,68 @@ class WorkflowRunner:
             )
             if result.ok:
                 return result
+
+    # ---------- Phase 13c: peer-replacement helper for fan-out modes ----------
+
+    async def _maybe_replace_failed(
+        self,
+        *,
+        agent_name: str,
+        original_result: AgentResult,
+        message: str,
+        history: list,
+        summary_text: str | None,
+        prior_findings: list[str],
+        workflow: "Workflow",
+        context: "Context",
+        workflow_run_id: int | None,
+    ) -> tuple[AgentResult, str | None] | None:
+        """Ask Repair for the FIRST recovery plan only; if it's
+        REPLACE_WITH_PEER, dispatch the peer and return (result, peer_name).
+        Otherwise return None (caller keeps the original failure).
+
+        Fan-out modes (parallel, collaborative, competitive, debate)
+        use this instead of the full sequential ladder: multi-strategy
+        cancel-and-retry inside asyncio.gather is ambiguous, but a single
+        peer substitution is a clean one-hop replacement.
+        """
+        from ubongo.agents.repair import Strategy
+
+        repair = self.registry.get("repair")
+        if repair is None or not hasattr(repair, "plan_recovery"):
+            return None
+        plan = repair.plan_recovery(
+            failed_agent=agent_name,
+            original=original_result,
+            attempts_so_far=(),
+        )
+        if plan.strategy is not Strategy.REPLACE_WITH_PEER or not plan.peer_agent:
+            return None
+        peer = self.registry.get(plan.peer_agent)
+        if peer is None:
+            logger.warning(
+                "repair_peer_not_registered",
+                extra={"agent": agent_name, "peer": plan.peer_agent},
+            )
+            return None
+        logger.info(
+            "agent_replace_with_peer_fanout",
+            extra={"agent": agent_name, "peer": plan.peer_agent},
+        )
+        peer_result = await self._dispatch_agent_async(
+            agent=peer,
+            agent_name=plan.peer_agent,
+            message=message,
+            history=history,
+            summary_text=summary_text,
+            prior_findings=prior_findings,
+            workflow=workflow,
+            context=context,
+            workflow_run_id=workflow_run_id,
+            override_model=None,
+            retried=True,
+        )
+        return (peer_result, plan.peer_agent)
 
     # ---------- sequential mode (Phase 9 baseline + Phase 13 Repair ladder) ----------
 
@@ -441,8 +536,9 @@ class WorkflowRunner:
         """Fan out every agent in workflow.agents via asyncio.gather.
 
         - Every agent sees prior_findings == () (no inter-agent threading).
-        - Repair retry does not fire in parallel mode (cancel-and-retry semantics
-          are ambiguous; Phase 13 may revisit).
+        - Phase 13c: per-producer peer replacement via _maybe_replace_failed
+          (the only Repair strategy fan-out modes use; cancel-and-retry
+          semantics in asyncio.gather are still ambiguous).
         - last-composer-wins still holds, picked by INDEX in workflow.agents
           (deterministic, even though tasks finish in any order).
         - WorkflowResult.ok requires every agent to succeed.
@@ -479,6 +575,29 @@ class WorkflowRunner:
             for name, agent in zip(agent_names, agents)
         ]
         results: list[AgentResult] = await asyncio.gather(*tasks)
+
+        # Phase 13c: per-failure peer replacement. Single hop only.
+        for i, (name, result) in enumerate(zip(agent_names, results)):
+            if result.ok:
+                continue
+            replaced = await self._maybe_replace_failed(
+                agent_name=name,
+                original_result=result,
+                message=message,
+                history=history,
+                summary_text=summary_text,
+                prior_findings=[],
+                workflow=workflow,
+                context=context,
+                workflow_run_id=workflow_run_id,
+            )
+            if replaced is not None:
+                peer_result, peer_name = replaced
+                if peer_result.ok:
+                    results[i] = peer_result
+                    peer_agent = self.registry.get(peer_name)
+                    if peer_agent is not None:
+                        agents[i] = peer_agent
 
         last_ok_result: AgentResult | None = None
         last_composer_result: AgentResult | None = None
@@ -690,6 +809,33 @@ class WorkflowRunner:
             for name, agent in zip(producer_names, producer_agents)
         ]
         results: list[AgentResult] = await asyncio.gather(*tasks)
+
+        # Phase 13c: for each failed producer, ask Repair if peer-replacement
+        # applies. If so, the peer's result takes that slot (with the peer's
+        # role heading); /trace shows the peer's agent_runs row under its
+        # real name. The smoke 12.4 fix routes critic_no_candidate to
+        # architect, restoring the merged-doc's critic section.
+        for i, (name, agent, result) in enumerate(zip(producer_names, producer_agents, results)):
+            if result.ok:
+                continue
+            replaced = await self._maybe_replace_failed(
+                agent_name=name,
+                original_result=result,
+                message=message,
+                history=history,
+                summary_text=summary_text,
+                prior_findings=[],
+                workflow=workflow,
+                context=context,
+                workflow_run_id=workflow_run_id,
+            )
+            if replaced is not None:
+                peer_result, peer_name = replaced
+                if peer_result.ok:
+                    results[i] = peer_result
+                    peer_agent = self.registry.get(peer_name)
+                    if peer_agent is not None:
+                        producer_agents[i] = peer_agent
 
         # Structural merge: one section per ok producer, ordered by
         # workflow.agents (deterministic).

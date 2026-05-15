@@ -33,8 +33,23 @@ agents:
     # Coupled with a ~200-token cap on max_tokens via the same plan.
     smaller_models: {}
     # Per-agent peer replacement for REPLACE_WITH_PEER. null / missing
-    # disables (the strategy is skipped). Defaults populated in Phase 13c.
-    peer_replacements: {}
+    # disables (the strategy is skipped, ladder advances to next).
+    # 13c defaults: each agent's natural fallback in voice / role.
+    peer_replacements:
+      # Workers → architect persona; the persona's text quality fills the slot.
+      coding: architect
+      research: architect
+      critic: architect       # smoke 12.4 critic_no_candidate fix
+      # Evaluator + Memory + Execution have no peer: their roles are
+      # structurally unique (LLM-as-judge, single-writer, sandbox) and a
+      # peer would change the contract, not recover it.
+      evaluator: null
+      memory: null
+      execution: null
+      # Personas: rotate between voices when the active one fails.
+      architect: operator
+      operator: architect
+      casual: operator
 
 api_keys:
   openrouter:

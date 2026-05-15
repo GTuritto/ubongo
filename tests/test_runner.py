@@ -457,9 +457,9 @@ def test_repair_passes_prompt_hint_to_agent_via_metadata():
     assert agent.captured[1].get("repair_prompt_hint") == "JSON ONLY please."
 
 
-def test_repair_peer_replacement_treated_as_abort_in_13b():
-    """13b treats REPLACE_WITH_PEER as ABORT (no actual peer dispatch).
-    13c lights up real peer dispatch."""
+def test_repair_peer_unregistered_returns_original_failure():
+    """When plan names a peer that isn't in the registry, the runner logs
+    and bails out — no infinite ladder loop."""
     from ubongo.agents.repair import RecoveryPlan, Strategy
 
     agent = FlakyAgent(fail_first=True)
@@ -468,10 +468,147 @@ def test_repair_peer_replacement_treated_as_abort_in_13b():
     ])
     runner = WorkflowRunner({"architect": agent, "repair": repair})
     result = runner.execute(_wf(("architect",)), _ctx(None), "hi")
-    # Agent dispatched once (failed); peer-replace is treated as ABORT in 13b.
     assert result.ok is False
     assert len(agent.calls) == 1
     assert len(repair.calls) == 1
+
+
+def test_repair_peer_replacement_dispatches_peer_in_sequential():
+    """13c: when plan_recovery yields REPLACE_WITH_PEER and the peer is in
+    the registry, the runner dispatches the peer in the failing slot. The
+    peer's agent_runs row records under ITS real name with retried=1."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    class FailingCritic:
+        name = "critic"
+        role = "fails"
+        default_model = "m"
+        composer = False
+
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, input, context):
+            self.calls += 1
+            return AgentResult(
+                text="", ok=False, model="m",
+                tokens_in=0, tokens_out=0, latency_ms=1,
+                error="critic_no_candidate",
+            )
+
+    class SuccessfulPeer:
+        name = "architect"
+        role = "stands in"
+        default_model = "peer-m"
+        composer = True
+
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, input, context):
+            self.calls += 1
+            return AgentResult(
+                text="peer composed this", ok=True, model="peer-m",
+                tokens_in=5, tokens_out=10, latency_ms=2,
+            )
+
+    critic = FailingCritic()
+    peer = SuccessfulPeer()
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="architect"),
+    ])
+    runner = WorkflowRunner({"critic": critic, "architect": peer, "repair": repair})
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(_wf(("critic",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
+    assert result.ok is True
+    assert result.text == "peer composed this"
+    assert critic.calls == 1
+    assert peer.calls == 1
+    # agent_runs rows: critic (failure, retried=0), architect (success, retried=1).
+    rows = store.connection().execute(
+        "SELECT agent, outcome, retried FROM agent_runs WHERE workflow_run_id = ? ORDER BY id",
+        (wf_run_id,),
+    ).fetchall()
+    assert [(r["agent"], r["outcome"], r["retried"]) for r in rows] == [
+        ("critic", "failure", 0),
+        ("architect", "success", 1),
+    ]
+
+
+def test_collaborative_peer_replaces_failed_critic():
+    """Smoke 12.4 regression: in collaborative mode, a failing critic gets
+    replaced by its peer (architect) so the merged document still has the
+    critic-slot section."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    class FailingCritic:
+        name = "critic"
+        role = "contrarian challenger"
+        default_model = "m"
+        composer = False
+        def __init__(self):
+            self.calls = 0
+        def run(self, input, context):
+            self.calls += 1
+            return AgentResult(
+                text="", ok=False, model="m",
+                tokens_in=0, tokens_out=0, latency_ms=1,
+                error="critic_no_candidate",
+            )
+
+    class FineResearch:
+        name = "research"
+        role = "retrieval and synthesis"
+        default_model = "m"
+        composer = False
+        def __init__(self):
+            self.calls = 0
+        def run(self, input, context):
+            self.calls += 1
+            return AgentResult(
+                text="research findings", ok=True, model="m",
+                tokens_in=5, tokens_out=10, latency_ms=2,
+            )
+
+    class FineArchitect:
+        name = "architect"
+        role = "persona composer"
+        default_model = "m"
+        composer = True
+        def __init__(self):
+            self.calls = 0
+        def run(self, input, context):
+            self.calls += 1
+            return AgentResult(
+                text=f"architect call #{self.calls}", ok=True, model="m",
+                tokens_in=5, tokens_out=10, latency_ms=2,
+            )
+
+    research = FineResearch()
+    critic = FailingCritic()
+    architect = FineArchitect()
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="architect"),
+    ])
+    runner = WorkflowRunner({
+        "research": research, "critic": critic,
+        "architect": architect, "repair": repair,
+    })
+    workflow = Workflow(
+        persona="architect", model="m", skill_name=None,
+        execution_mode="collaborative",
+        agents=("research", "critic", "architect"),
+    )
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(workflow, _ctx(1), "hi", workflow_run_id=wf_run_id)
+    assert result.ok is True
+    # Three sections in the merge (research role, architect-role-from-peer,
+    # architect role): critic's failure was replaced by architect.
+    assert "## retrieval and synthesis" in result.text
+    assert "## persona composer" in result.text
+    # architect ran twice: once as critic's peer, once as the normal architect.
+    assert architect.calls == 2
+    assert critic.calls == 1
 
 
 def test_repair_agent_in_workflow_agents_list_is_skipped():
@@ -573,16 +710,51 @@ def test_parallel_all_failing_returns_failure_result():
 
 
 def test_parallel_does_not_retry_on_failure():
-    """Sequential mode consults RepairAgent on agent_failed; parallel does not.
-    Cancel-and-retry semantics in fan-out are ambiguous; Phase 13 may revisit."""
+    """Phase 13c: parallel mode consults Repair ONLY for peer replacement
+    (single hop). Multi-strategy retry stays sequential-only. When the
+    plan is anything other than REPLACE_WITH_PEER, the original failure
+    stands.
+
+    This stub returns no plans, so plan_recovery yields ABORT — the
+    original failure stays."""
     agent = FlakyAgent(fail_first=True)
-    repair = StubRepair(plan={"model": "fallback"})
+    repair = StubRepair(plans=[])  # plan_recovery returns ABORT
     runner = WorkflowRunner({"architect": agent, "repair": repair})
     conv_id = store.current_or_new_conversation("architect")
     runner.execute(_wf_parallel(("architect",)), _ctx(conv_id), "hi")
-    # Only one call, never retried.
+    # Only one call to the agent (no retry).
     assert len(agent.calls) == 1
-    assert repair.calls == []  # Repair was not consulted in parallel mode
+    # Repair WAS consulted once (peer-replacement check) but the plan was
+    # ABORT so no peer was dispatched.
+    assert len(repair.calls) == 1
+
+
+def test_parallel_peer_replaces_failed_producer():
+    """Phase 13c: parallel mode substitutes a peer for a failed producer
+    when plan_recovery yields REPLACE_WITH_PEER."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    failing = FakeAgent("research", ok=False, text="", error="boom")
+    peer = _composer_agent("architect", text="peer wrote this")
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="architect"),
+    ])
+    runner = WorkflowRunner({"research": failing, "architect": peer, "repair": repair})
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(
+        _wf_parallel(("research", "architect")), _ctx(1), "hi", workflow_run_id=wf_run_id
+    )
+    assert result.ok is True
+    # The peer slot succeeded, and the architect already ran on its own slot.
+    rows = store.connection().execute(
+        "SELECT agent, outcome, retried FROM agent_runs WHERE workflow_run_id = ? ORDER BY id",
+        (wf_run_id,),
+    ).fetchall()
+    # research failed, architect ran twice (its own slot + as research's peer).
+    agents_seen = [(r["agent"], r["outcome"], r["retried"]) for r in rows]
+    assert ("research", "failure", 0) in agents_seen
+    assert ("architect", "success", 0) in agents_seen
+    assert ("architect", "success", 1) in agents_seen
 
 
 def test_parallel_agents_see_no_prior_findings():
