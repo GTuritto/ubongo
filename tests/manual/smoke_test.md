@@ -210,7 +210,37 @@ End of Tier 2 (Multi-Agent System). The WorkflowRunner now supports all six exec
 
 ## Phase 13 — Repair Agent Activated
 
-*(Populated when Phase 13 is implemented.)*
+Real failure detection plus multi-strategy recovery. `RepairAgent` classifies failures into `timeout | model_error | parse_error | content_rejection | precondition_missing | infinite_loop | unrecoverable` and returns an ordered `RecoveryPlan` via `plan_recovery`. The runner's sequential mode walks the full ladder (variant prompt → different model → smaller model + shorter prompt → peer replacement → abort), capped at `agents.repair.max_attempts=3`. Fan-out modes (parallel, collaborative) get peer replacement only — cancel-and-retry in `asyncio.gather` is still ambiguous. **`PRECONDITION_MISSING`** (Option A) is the new "input contract not met" bucket: `critic_no_candidate`, `memory_missing_input`, `execution_no_command` skip variant-prompt retries and lead with peer replacement, which is the smoke 12.4 fix.
+
+`config/settings.yaml::agents.repair.peer_replacements` ships sensible defaults: `coding/research/critic → architect`, `architect ↔ operator`, `casual → operator`; `evaluator/memory/execution → null` (structurally unique). Override per-agent in settings.
+
+`src/ubongo/memory/write_buffer.py` formalizes commit-on-success: the assistant-message commit is staged via `buf.stage(...)` and either committed (`buf.commit()`) on `result.ok` or dropped (`buf.drop()`) on failure. v0.1 has exactly one staged writer; Phase 19/20 agents can stage further mid-flight writes through the same seam. The vault `after_send` projection is already gated on `result.ok` via the Phase-7 queue contract.
+
+New `repair_runs` table (FK → `workflow_runs.id`) persists one row per strategy attempted: `failure_kind`, `original_error`, `strategy_attempted`, `peer_agent`, `override_model`, `attempt_index`, `outcome (recovered | failed | aborted)`, timings. `/trace` renders an indented `repair: kind=… strategy=… outcome=… peer=… model=…` line under the failing `agent_runs` row. `workflow_runs.outcome='repaired'` lights up when any repair recovered AND the final result is OK.
+
+When the ladder exhausts, `master.handle` returns a `Response` with `requires_user_decision=True` and a `repair_summary` dict (attempts/last_kind/last_strategy/failing_agent/last_error). The REPL prompts `Retry the same message? (y/n)`; `y` reissues the prior message once (no chaining; Phase 14 owns governance-gated retries), `n` / EOF returns to the prompt. One-shot prints the apology and exits `rc=1` (no prompt). The apology template interpolates the last failure's kind/strategy/agent/error so the user sees what went wrong.
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 13.1 | Parse-error recovery via variant prompt | `uv run pytest tests/test_runner.py::test_repair_passes_prompt_hint_to_agent_via_metadata` | Pass. The retry's `AgentInput.metadata['repair_prompt_hint']` is set; the agent's system prompt includes a `## Repair guidance` section. |
+| 13.2 | Multi-strategy full ladder | `uv run pytest tests/test_runner.py::test_repair_walks_full_ladder_then_recovers` | Pass. Three `agent_runs` rows for the failing agent (one initial, two retries). The third retry uses `override_model` + `prompt_hint` + `max_tokens_cap=200` (smaller-model strategy). |
+| 13.3 | Sequential peer replacement | `uv run pytest tests/test_runner.py::test_repair_peer_replacement_dispatches_peer_in_sequential` | Pass. Failing `critic` is replaced by `architect`; `agent_runs` shows critic (failure, retried=0), architect (success, retried=1). |
+| 13.4 | Collaborative critic_no_candidate fix | REPL: `rm -f data/ubongo.db`; `/mode brief_collaborative`; `give me a brief on adopting microservices` | Merged document has all three role headings. `sqlite3 data/ubongo.db "SELECT strategy_attempted, peer_agent, outcome FROM repair_runs"` → `replace_with_peer, architect, recovered` for the critic row. Smoke 12.4 regression locked in. |
+| 13.5 | Parallel peer replacement | `uv run pytest tests/test_runner.py::test_parallel_peer_replaces_failed_producer` | Pass. Failed producer's slot is filled by its peer; both run on the parallel turn. |
+| 13.6 | `repair_runs` audit + outcome='repaired' | `uv run pytest tests/test_runner.py::test_repair_runs_persisted_on_successful_recovery` `uv run pytest tests/test_master.py::test_handle_workflow_run_outcome_repaired_when_recovery_succeeded` | Pass. `repair_runs` has one row with `outcome='recovered'`; `workflow_runs.outcome='repaired'`. |
+| 13.7 | Ladder exhausted → ABORT row + apology | `uv run pytest tests/test_runner.py::test_repair_runs_persisted_with_abort_on_ladder_exhausted` `uv run pytest tests/test_master.py::test_handle_repair_summary_aggregates_attempts` | Pass. A final `repair_runs` row with `strategy_attempted='abort'` + `outcome='aborted'`. The Response carries `requires_user_decision=True` and a populated `repair_summary`. |
+| 13.8 | Rollback regression | `uv run pytest tests/test_master.py::test_handle_failure_does_not_persist_assistant_message_or_vault` | Pass. On `repair_exhausted`: no `messages` row for the assistant turn, no vault note, queue row `source='error'`. |
+| 13.9 | WriteBuffer contract | `uv run pytest tests/test_memory_write_buffer.py` | Pass. 13 cases (commit ordering, drop, double-commit raises, stage-after-commit raises, context-manager auto-drop, …). |
+| 13.10 | `/trace` repair line rendering | `uv run pytest tests/test_repl_trace.py::test_render_trace_renders_repair_line_under_failing_agent` | Pass. The failing `critic` row is followed by an indented `repair: kind=precondition_missing strategy=replace_with_peer outcome=recovered peer=architect` line. |
+| 13.11 | REPL y/n prompt | `uv run pytest tests/test_repl.py -k _prompt_repair_retry` | Pass. 5 cases covering `y`, `n`, anything-else-treated-as-n, EOF returns n, and case-insensitive whitespace tolerance. |
+| 13.12 | Unrecoverable apology via one-shot | `rm -f data/ubongo.db`; `mv .env .env.bak`; `OPENROUTER_API_KEY=sk-or-v1-bogus bash -c 'uv run python -m ubongo send "hi" --persona casual'`; `mv .env.bak .env` | rc=1; stdout includes `couldn't recover` (the apology) and names the failing agent. `notification_queue` row has `source='error'`; no vault note. |
+| 13.13 | `/agents` unchanged shape | REPL: `/agents` | Same 10 rows as Phase 11 (architect, casual, coding, critic, evaluator, execution, memory, operator, repair, research). Phase 13 didn't add or remove agents. |
+| 13.14 | Pytest passes | `uv run pytest tests/` | All green (~448 expected after Phase 13: Phase-12's 382 + 13 plan_recovery/taxonomy + 5 per-agent prompt-hint + 6 peer-replacement + 6 multi-strategy + 13 WriteBuffer + 3 repair_runs store + 2 /trace repair + 8 master Phase-13 + 5 REPL /y/n - some replacements). |
+
+**Stale Phase-2/Phase-11 playbook entries patched in 13g:**
+
+- Scenario 2.5: under Phase 13f the polite stdout text is no longer the generic `Sorry, I couldn't reach the model. Check the logs.` — when Repair's ladder runs (the common path with a bogus key), the apology template kicks in. The Phase-13 expectation is "stdout contains `couldn't recover`; rc=1; stderr has multiple `llm_attempt_failed` lines (count varies with how many strategies the ladder tries before ABORT)". The pytest suite is the gate for this path; the manual scenario is a sanity check.
+- Scenario 11.9: rewrite the query to `SELECT COUNT(*) FROM workflow_runs WHERE started_at > '<before>'` using a timestamp captured before the `/exec` block. The Phase-12 workflow JSON contains `"execution_mode"` so `LIKE '%exec%'` matches every row and is no longer a useful filter.
 
 ## Phase 14 — Risk + Confidence Scoring
 
