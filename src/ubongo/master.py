@@ -23,6 +23,7 @@ from ubongo.classifier import Classification
 from ubongo.delivery import queue
 from ubongo.governance.decision import Action, Decision, decide as governance_decide
 from ubongo.memory import store
+from ubongo.memory.write_buffer import workflow_buffer
 
 logger = logging.getLogger("ubongo.master")
 
@@ -249,7 +250,28 @@ class MasterAgent:
         pending_skill: str | None = None,
         pending_workflow: str | None = None,
     ) -> Response:
-        """End-to-end orchestration. Returns a Response; caller prints + flushes."""
+        """End-to-end orchestration. Returns a Response; caller prints + flushes.
+
+        Phase 13d: the body runs inside a `workflow_buffer()` context. The
+        assistant-message commit is staged via `buf.stage(...)` and either
+        committed (on result.ok) or dropped (on failure). Audit rows
+        (agent_runs, governance_decisions, workflow_runs, notification_queue)
+        still write inline — they record what happened, not the result.
+        """
+        with workflow_buffer() as buf:
+            return self._handle_with_buffer(
+                buf, message, persona_name, auto_mode, pending_skill, pending_workflow
+            )
+
+    def _handle_with_buffer(
+        self,
+        buf,
+        message: str,
+        persona_name: str,
+        auto_mode: bool = False,
+        pending_skill: str | None = None,
+        pending_workflow: str | None = None,
+    ) -> Response:
         ctx = Context(
             conversation_id=None,
             persona=persona_name,
@@ -344,14 +366,22 @@ class MasterAgent:
         if result.ok:
             mem_started = store.now_iso()
             mem_t0 = time.monotonic()
-            assistant_msg_id = default_memory_agent.commit_assistant_turn(
-                conversation_id=conv_id,
-                content=result.text,
-                persona=chosen,
-                model=result.model,
-                tokens_in=result.tokens_in,
-                tokens_out=result.tokens_out,
+            # Phase 13d: stage the assistant-message commit instead of
+            # executing it directly. The buf.commit() below either runs
+            # every staged callable (success) or drops them all (failure).
+            buf.stage(
+                lambda: default_memory_agent.commit_assistant_turn(
+                    conversation_id=conv_id,
+                    content=result.text,
+                    persona=chosen,
+                    model=result.model,
+                    tokens_in=result.tokens_in,
+                    tokens_out=result.tokens_out,
+                ),
+                description="commit_assistant_turn",
             )
+            committed = buf.commit()
+            assistant_msg_id = committed[0] if committed else None
             mem_elapsed_ms = int((time.monotonic() - mem_t0) * 1000)
             store.append_agent_run(
                 workflow_run_id=workflow_run_id,
@@ -367,6 +397,12 @@ class MasterAgent:
                 started_at=mem_started,
                 ended_at=store.now_iso(),
             )
+        else:
+            # Workflow failed (e.g., repair exhausted, all agents failed).
+            # Nothing was staged for the assistant message; drop the buffer
+            # explicitly so the contract is satisfied and the implicit-drop
+            # warning doesn't fire.
+            buf.drop()
         ts_now = store.now_iso()
         store.upsert_session(
             active_persona=chosen,

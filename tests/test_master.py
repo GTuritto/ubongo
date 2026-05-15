@@ -340,6 +340,55 @@ def test_handle_persists_workflow_run_with_failure_outcome_on_llm_error():
     assert gd["action"] == "auto"
 
 
+# --- Phase 13d: WriteBuffer rollback regression ---
+
+
+def test_handle_failure_does_not_persist_assistant_message_or_vault():
+    """Phase 13d formalizes: when result.ok=False after Repair gives up,
+    the WriteBuffer drops the staged assistant-message commit. No
+    `messages` row for the assistant turn, no vault append for today.
+
+    The Phase-7 queue still records the row with source='error' (that's
+    audit, not result). The user message is committed inline (it's input,
+    not output) so it stays."""
+    from datetime import datetime, timezone
+
+    with patch("ubongo.agents.personas.complete", side_effect=LLMError("boom", cause=RuntimeError("nope"))):
+        master.handle("hi", "casual", auto_mode=False)
+
+    # No assistant row.
+    messages = store.last_n_messages(1, 10)
+    roles = [m.role for m in messages]
+    assert roles == ["user"]
+
+    # Queue row marked source='error'.
+    queue_row = _query_one("SELECT source FROM notification_queue ORDER BY id DESC LIMIT 1")
+    assert queue_row is not None and queue_row["source"] == "error"
+
+    # No agent_runs row for "memory" — the buffer dropped the staged
+    # commit, so the memory bookkeeping never ran.
+    mem_rows = store.connection().execute(
+        "SELECT COUNT(*) AS n FROM agent_runs WHERE agent = 'memory'"
+    ).fetchone()
+    assert mem_rows["n"] == 0
+
+
+def test_handle_success_commits_via_write_buffer():
+    """Happy path: WriteBuffer.commit fires, assistant message + memory
+    agent_runs row both land."""
+    with patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
+        master.handle("hi", "casual", auto_mode=False)
+
+    messages = store.last_n_messages(1, 10)
+    roles = [m.role for m in messages]
+    assert roles == ["user", "assistant"]
+    mem_rows = store.connection().execute(
+        "SELECT outcome FROM agent_runs WHERE agent = 'memory'"
+    ).fetchall()
+    assert len(mem_rows) == 1
+    assert mem_rows[0]["outcome"] == "success"
+
+
 def test_handle_emits_master_decision_log(caplog):
     import logging
 
