@@ -276,3 +276,92 @@ def test_last_n_governance_decisions_returns_newest_first(db) -> None:
 
 def test_last_n_governance_decisions_empty(db) -> None:
     assert store.last_n_governance_decisions(10) == []
+
+
+# --- Phase 13e: repair_runs ---
+
+
+def _seed_workflow(db) -> int:
+    cid = store.start_conversation("architect")
+    msg_id = store.append_message(cid, "user", "trigger", persona="architect")
+    return store.append_workflow_run(
+        conversation_id=cid,
+        message_id=msg_id,
+        classification={"intent": "technical"},
+        workflow={"persona": "architect", "execution_mode": "sequential"},
+        execution_mode="sequential",
+        outcome="in_progress",
+        started_at=store.now_iso(),
+    )
+
+
+def test_append_repair_run_round_trips(db) -> None:
+    wf_id = _seed_workflow(db)
+    rr_id = store.append_repair_run(
+        workflow_run_id=wf_id,
+        agent="evaluator",
+        failure_kind="parse_error",
+        original_error="evaluator_parse_error",
+        strategy_attempted="retry_same_model_variant_prompt",
+        peer_agent=None,
+        override_model=None,
+        attempt_index=0,
+        outcome="recovered",
+        started_at=store.now_iso(),
+        ended_at=store.now_iso(),
+    )
+    assert isinstance(rr_id, int)
+
+    rows = store.repair_runs_for_workflow(wf_id)
+    assert len(rows) == 1
+    assert rows[0]["id"] == rr_id
+    assert rows[0]["failure_kind"] == "parse_error"
+    assert rows[0]["strategy_attempted"] == "retry_same_model_variant_prompt"
+    assert rows[0]["outcome"] == "recovered"
+
+
+def test_repair_runs_for_workflow_orders_by_id(db) -> None:
+    wf_id = _seed_workflow(db)
+    for i, strategy in enumerate([
+        "retry_same_model_variant_prompt",
+        "retry_different_model_same_prompt",
+        "replace_with_peer",
+    ]):
+        store.append_repair_run(
+            workflow_run_id=wf_id,
+            agent="evaluator",
+            failure_kind="parse_error",
+            original_error="evaluator_parse_error",
+            strategy_attempted=strategy,
+            peer_agent="research" if strategy == "replace_with_peer" else None,
+            override_model=None,
+            attempt_index=i,
+            outcome="failed",
+            started_at=store.now_iso(),
+            ended_at=store.now_iso(),
+        )
+    rows = store.repair_runs_for_workflow(wf_id)
+    assert [r["attempt_index"] for r in rows] == [0, 1, 2]
+    assert rows[2]["peer_agent"] == "research"
+
+
+def test_last_n_workflow_runs_includes_repair_runs(db) -> None:
+    wf_id = _seed_workflow(db)
+    store.append_repair_run(
+        workflow_run_id=wf_id,
+        agent="critic",
+        failure_kind="precondition_missing",
+        original_error="critic_no_candidate",
+        strategy_attempted="replace_with_peer",
+        peer_agent="architect",
+        override_model=None,
+        attempt_index=0,
+        outcome="recovered",
+        started_at=store.now_iso(),
+        ended_at=store.now_iso(),
+    )
+    rows = store.last_n_workflow_runs(1)
+    assert len(rows) == 1
+    assert "repair_runs" in rows[0]
+    assert len(rows[0]["repair_runs"]) == 1
+    assert rows[0]["repair_runs"][0]["peer_agent"] == "architect"

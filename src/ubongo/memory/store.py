@@ -680,6 +680,85 @@ def append_governance_decision(
     return int(cursor.lastrowid)
 
 
+def append_repair_run(
+    workflow_run_id: int,
+    *,
+    agent: str,
+    failure_kind: str,
+    original_error: str | None,
+    strategy_attempted: str,
+    peer_agent: str | None,
+    override_model: str | None,
+    attempt_index: int,
+    outcome: str,
+    started_at: str,
+    ended_at: str | None,
+) -> int:
+    """Persist one repair_runs row (Phase 13e). Called by the WorkflowRunner
+    after each Repair strategy attempt — recovered, failed, or aborted."""
+    conn = connection()
+    cursor = conn.execute(
+        """
+        INSERT INTO repair_runs
+            (workflow_run_id, agent, failure_kind, original_error,
+             strategy_attempted, peer_agent, override_model,
+             attempt_index, outcome, started_at, ended_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            workflow_run_id,
+            agent,
+            failure_kind,
+            original_error,
+            strategy_attempted,
+            peer_agent,
+            override_model,
+            attempt_index,
+            outcome,
+            started_at,
+            ended_at,
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
+def repair_runs_for_workflow(workflow_run_id: int) -> list[dict]:
+    """Return all repair_runs rows for a workflow_run, in attempt order.
+
+    Each dict carries: id, agent, failure_kind, original_error,
+    strategy_attempted, peer_agent, override_model, attempt_index, outcome,
+    started_at, ended_at.
+    """
+    conn = connection()
+    rows = conn.execute(
+        """
+        SELECT id, agent, failure_kind, original_error, strategy_attempted,
+               peer_agent, override_model, attempt_index, outcome,
+               started_at, ended_at
+        FROM repair_runs
+        WHERE workflow_run_id = ?
+        ORDER BY id
+        """,
+        (workflow_run_id,),
+    ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "agent": r["agent"],
+            "failure_kind": r["failure_kind"],
+            "original_error": r["original_error"],
+            "strategy_attempted": r["strategy_attempted"],
+            "peer_agent": r["peer_agent"],
+            "override_model": r["override_model"],
+            "attempt_index": r["attempt_index"],
+            "outcome": r["outcome"],
+            "started_at": r["started_at"],
+            "ended_at": r["ended_at"],
+        }
+        for r in rows
+    ]
+
+
 def last_n_governance_decisions(n: int = 10) -> list[dict]:
     """Return the last N decisions joined with their workflow_runs for display.
 
@@ -774,6 +853,17 @@ def last_n_workflow_runs(n: int = 1) -> list[dict]:
         """,
         wf_ids,
     ).fetchall()
+    rr_rows = conn.execute(
+        f"""
+        SELECT id, workflow_run_id, agent, failure_kind, original_error,
+               strategy_attempted, peer_agent, override_model, attempt_index,
+               outcome, started_at, ended_at
+        FROM repair_runs
+        WHERE workflow_run_id IN ({placeholders})
+        ORDER BY workflow_run_id, id
+        """,
+        wf_ids,
+    ).fetchall()
 
     ar_by_wf: dict[int, list[dict]] = {wf_id: [] for wf_id in wf_ids}
     for row in ar_rows:
@@ -807,6 +897,22 @@ def last_n_workflow_runs(n: int = 1) -> list[dict]:
             "risk": row["risk"],
         }
 
+    rr_by_wf: dict[int, list[dict]] = {wf_id: [] for wf_id in wf_ids}
+    for row in rr_rows:
+        rr_by_wf.setdefault(row["workflow_run_id"], []).append({
+            "id": row["id"],
+            "agent": row["agent"],
+            "failure_kind": row["failure_kind"],
+            "original_error": row["original_error"],
+            "strategy_attempted": row["strategy_attempted"],
+            "peer_agent": row["peer_agent"],
+            "override_model": row["override_model"],
+            "attempt_index": row["attempt_index"],
+            "outcome": row["outcome"],
+            "started_at": row["started_at"],
+            "ended_at": row["ended_at"],
+        })
+
     out: list[dict] = []
     for row in wf_rows:
         try:
@@ -829,5 +935,6 @@ def last_n_workflow_runs(n: int = 1) -> list[dict]:
             "ended_at": row["ended_at"],
             "agent_runs": ar_by_wf.get(row["id"], []),
             "governance": gd_by_wf.get(row["id"]),
+            "repair_runs": rr_by_wf.get(row["id"], []),
         })
     return out

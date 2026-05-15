@@ -411,9 +411,21 @@ class MasterAgent:
             auto_mode=auto_mode,
         )
 
+        # Phase 13e: distinguish "succeeded thanks to Repair" from a plain
+        # first-try success. Light up `repaired` when any repair_runs row
+        # reports outcome='recovered' AND the workflow's final result is ok.
+        repair_outcome = "success" if result.ok else "failure"
+        if result.ok:
+            try:
+                repairs = store.repair_runs_for_workflow(workflow_run_id)
+                if any(r["outcome"] == "recovered" for r in repairs):
+                    repair_outcome = "repaired"
+            except Exception:
+                # Defensive: don't let trace bookkeeping fail the turn.
+                pass
         store.update_workflow_run_outcome(
             workflow_run_id,
-            outcome="success" if result.ok else "failure",
+            outcome=repair_outcome,
             ended_at=ts_now,
         )
 

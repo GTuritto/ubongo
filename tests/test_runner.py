@@ -535,6 +535,69 @@ def test_repair_peer_replacement_dispatches_peer_in_sequential():
     ]
 
 
+def test_repair_runs_persisted_on_successful_recovery():
+    """Phase 13e: a successful peer replacement produces one repair_runs row
+    with outcome='recovered'."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    class FailingCritic:
+        name = "critic"
+        role = "fails"
+        default_model = "m"
+        composer = False
+        def __init__(self):
+            self.calls = 0
+        def run(self, input, context):
+            self.calls += 1
+            return AgentResult(
+                text="", ok=False, model="m",
+                tokens_in=0, tokens_out=0, latency_ms=1,
+                error="critic_no_candidate",
+            )
+
+    class FineArchitect:
+        name = "architect"
+        role = "stands in"
+        default_model = "m"
+        composer = True
+        def run(self, input, context):
+            return AgentResult(
+                text="peer composed", ok=True, model="m",
+                tokens_in=5, tokens_out=10, latency_ms=2,
+            )
+
+    critic = FailingCritic()
+    peer = FineArchitect()
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="architect"),
+    ])
+    runner = WorkflowRunner({"critic": critic, "architect": peer, "repair": repair})
+    wf_run_id = _seed_workflow_run()
+    runner.execute(_wf(("critic",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
+    rows = store.repair_runs_for_workflow(wf_run_id)
+    assert len(rows) == 1
+    assert rows[0]["agent"] == "critic"
+    assert rows[0]["failure_kind"] == "precondition_missing"
+    assert rows[0]["original_error"] == "critic_no_candidate"
+    assert rows[0]["strategy_attempted"] == "replace_with_peer"
+    assert rows[0]["peer_agent"] == "architect"
+    assert rows[0]["outcome"] == "recovered"
+
+
+def test_repair_runs_persisted_with_abort_on_ladder_exhausted():
+    """When the ladder is exhausted, a final ABORT repair_runs row records
+    the give-up so /trace and Phase 17's fitness math can see it."""
+    agent = FlakyAgent(fail_first=True)
+    repair = StubRepair(plans=[])  # plan_recovery returns ABORT immediately
+    runner = WorkflowRunner({"architect": agent, "repair": repair})
+    wf_run_id = _seed_workflow_run()
+    runner.execute(_wf(("architect",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
+    rows = store.repair_runs_for_workflow(wf_run_id)
+    assert len(rows) == 1
+    assert rows[0]["strategy_attempted"] == "abort"
+    assert rows[0]["outcome"] == "aborted"
+
+
 def test_collaborative_peer_replaces_failed_critic():
     """Smoke 12.4 regression: in collaborative mode, a failing critic gets
     replaced by its peer (architect) so the merged document still has the

@@ -261,6 +261,39 @@ class WorkflowRunner:
 
     # ---------- Phase 13b: multi-strategy recovery helper (sequential) ----------
 
+    def _persist_repair_run(
+        self,
+        *,
+        workflow_run_id: int | None,
+        agent_name: str,
+        failure_kind: str,
+        original_error: str | None,
+        strategy_attempted: str,
+        peer_agent: str | None,
+        override_model: str | None,
+        attempt_index: int,
+        outcome: str,
+        started_at: str,
+        ended_at: str | None,
+    ) -> None:
+        """Phase 13e: persist one repair_runs row. No-op when workflow_run_id
+        is None (test paths that bypass master.handle)."""
+        if workflow_run_id is None:
+            return
+        store.append_repair_run(
+            workflow_run_id=workflow_run_id,
+            agent=agent_name,
+            failure_kind=failure_kind,
+            original_error=original_error,
+            strategy_attempted=strategy_attempted,
+            peer_agent=peer_agent,
+            override_model=override_model,
+            attempt_index=attempt_index,
+            outcome=outcome,
+            started_at=started_at,
+            ended_at=ended_at,
+        )
+
     async def _recover_or_give_up(
         self,
         *,
@@ -284,11 +317,15 @@ class WorkflowRunner:
         and RETRY_SMALLER_MODEL strategies. REPLACE_WITH_PEER is treated as
         ABORT here; Phase 13c wires the actual peer dispatch.
         """
-        from ubongo.agents.repair import Strategy
+        from ubongo.agents.repair import Strategy, _classify_failure
 
         repair = self.registry.get("repair")
         if repair is None or not hasattr(repair, "plan_recovery"):
             return original_result
+
+        # Phase 13e: classify once for the audit row(s).
+        failure_kind = _classify_failure(agent_name, original_result.error).value
+        original_error = original_result.error
 
         attempts: list[Strategy] = []
         result = original_result
@@ -307,6 +344,23 @@ class WorkflowRunner:
                         "reason": plan.reason,
                     },
                 )
+                # Persist a single ABORT row so /trace shows the give-up
+                # decision and Phase 17's fitness math can see "this kind
+                # of failure exhausted N strategies".
+                abort_ts = store.now_iso()
+                self._persist_repair_run(
+                    workflow_run_id=workflow_run_id,
+                    agent_name=agent_name,
+                    failure_kind=failure_kind,
+                    original_error=original_error,
+                    strategy_attempted=plan.strategy.value,
+                    peer_agent=None,
+                    override_model=None,
+                    attempt_index=len(attempts),
+                    outcome="aborted",
+                    started_at=abort_ts,
+                    ended_at=abort_ts,
+                )
                 return result
             if plan.strategy is Strategy.REPLACE_WITH_PEER:
                 # 13c: dispatch the peer in the failing agent's slot. The
@@ -321,6 +375,21 @@ class WorkflowRunner:
                         "repair_peer_not_registered",
                         extra={"agent": agent_name, "peer": plan.peer_agent},
                     )
+                    # Audit the strategy-was-tried-but-couldn't-execute case.
+                    abort_ts = store.now_iso()
+                    self._persist_repair_run(
+                        workflow_run_id=workflow_run_id,
+                        agent_name=agent_name,
+                        failure_kind=failure_kind,
+                        original_error=original_error,
+                        strategy_attempted=plan.strategy.value,
+                        peer_agent=plan.peer_agent,
+                        override_model=None,
+                        attempt_index=len(attempts) - 1,
+                        outcome="failed",
+                        started_at=abort_ts,
+                        ended_at=abort_ts,
+                    )
                     return result
                 logger.info(
                     "agent_replace_with_peer",
@@ -330,6 +399,7 @@ class WorkflowRunner:
                         "attempt_index": len(attempts) - 1,
                     },
                 )
+                peer_started_at = store.now_iso()
                 peer_result = await self._dispatch_agent_async(
                     agent=peer,
                     agent_name=plan.peer_agent,
@@ -343,11 +413,24 @@ class WorkflowRunner:
                     override_model=None,
                     retried=True,
                 )
+                peer_ended_at = store.now_iso()
+                self._persist_repair_run(
+                    workflow_run_id=workflow_run_id,
+                    agent_name=agent_name,
+                    failure_kind=failure_kind,
+                    original_error=original_error,
+                    strategy_attempted=plan.strategy.value,
+                    peer_agent=plan.peer_agent,
+                    override_model=None,
+                    attempt_index=len(attempts) - 1,
+                    outcome="recovered" if peer_result.ok else "failed",
+                    started_at=peer_started_at,
+                    ended_at=peer_ended_at,
+                )
                 if peer_result.ok:
                     return peer_result
-                # Peer also failed; the loop continues and asks Repair for
-                # the next strategy. Note: we keep `result` pointing at the
-                # ORIGINAL failure so the next plan_recovery() still classifies
+                # Peer also failed; loop continues. Keep `result` pointing
+                # at the ORIGINAL failure so plan_recovery classifies
                 # against the original agent's error kind, not the peer's.
                 continue
 
@@ -367,6 +450,7 @@ class WorkflowRunner:
                     "attempt_index": len(attempts) - 1,
                 },
             )
+            retry_started_at = store.now_iso()
             result = await self._dispatch_agent_async(
                 agent=agent,
                 agent_name=agent_name,
@@ -380,6 +464,20 @@ class WorkflowRunner:
                 override_model=plan.override_model,
                 retried=True,
                 extra_metadata=extra_metadata or None,
+            )
+            retry_ended_at = store.now_iso()
+            self._persist_repair_run(
+                workflow_run_id=workflow_run_id,
+                agent_name=agent_name,
+                failure_kind=failure_kind,
+                original_error=original_error,
+                strategy_attempted=plan.strategy.value,
+                peer_agent=None,
+                override_model=plan.override_model,
+                attempt_index=len(attempts) - 1,
+                outcome="recovered" if result.ok else "failed",
+                started_at=retry_started_at,
+                ended_at=retry_ended_at,
             )
             if result.ok:
                 return result
@@ -408,7 +506,7 @@ class WorkflowRunner:
         cancel-and-retry inside asyncio.gather is ambiguous, but a single
         peer substitution is a clean one-hop replacement.
         """
-        from ubongo.agents.repair import Strategy
+        from ubongo.agents.repair import Strategy, _classify_failure
 
         repair = self.registry.get("repair")
         if repair is None or not hasattr(repair, "plan_recovery"):
@@ -421,16 +519,32 @@ class WorkflowRunner:
         if plan.strategy is not Strategy.REPLACE_WITH_PEER or not plan.peer_agent:
             return None
         peer = self.registry.get(plan.peer_agent)
+        failure_kind = _classify_failure(agent_name, original_result.error).value
         if peer is None:
             logger.warning(
                 "repair_peer_not_registered",
                 extra={"agent": agent_name, "peer": plan.peer_agent},
+            )
+            abort_ts = store.now_iso()
+            self._persist_repair_run(
+                workflow_run_id=workflow_run_id,
+                agent_name=agent_name,
+                failure_kind=failure_kind,
+                original_error=original_result.error,
+                strategy_attempted=plan.strategy.value,
+                peer_agent=plan.peer_agent,
+                override_model=None,
+                attempt_index=0,
+                outcome="failed",
+                started_at=abort_ts,
+                ended_at=abort_ts,
             )
             return None
         logger.info(
             "agent_replace_with_peer_fanout",
             extra={"agent": agent_name, "peer": plan.peer_agent},
         )
+        started_at = store.now_iso()
         peer_result = await self._dispatch_agent_async(
             agent=peer,
             agent_name=plan.peer_agent,
@@ -443,6 +557,20 @@ class WorkflowRunner:
             workflow_run_id=workflow_run_id,
             override_model=None,
             retried=True,
+        )
+        ended_at = store.now_iso()
+        self._persist_repair_run(
+            workflow_run_id=workflow_run_id,
+            agent_name=agent_name,
+            failure_kind=failure_kind,
+            original_error=original_result.error,
+            strategy_attempted=plan.strategy.value,
+            peer_agent=plan.peer_agent,
+            override_model=None,
+            attempt_index=0,
+            outcome="recovered" if peer_result.ok else "failed",
+            started_at=started_at,
+            ended_at=ended_at,
         )
         return (peer_result, plan.peer_agent)
 

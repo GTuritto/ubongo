@@ -215,9 +215,19 @@ def _render_trace(n: int = 1) -> str:
             f"mode={r['execution_mode']} "
             f"agents=[{','.join(agents)}]"
         )
+        # Phase 13e: group repair_runs by the agent they apply to so each
+        # affected agent_run row gets indented repair lines beneath it.
+        repair_runs_by_agent: dict[str, list[dict]] = {}
+        for rr in r.get("repair_runs", []) or []:
+            repair_runs_by_agent.setdefault(rr["agent"], []).append(rr)
+
         agent_lines = ["agents:"]
         if not r["agent_runs"]:
             agent_lines.append("  (no agent runs)")
+        # Track which agent names have had their repair lines printed so we
+        # only attach them under the FAILING agent_runs row (the original
+        # failure), not under the peer's success row.
+        printed_repairs: set[str] = set()
         for ar in r["agent_runs"]:
             name = (ar["agent"] or "—")[:14]
             model = (ar["model"] or "—")[:30]
@@ -232,6 +242,25 @@ def _render_trace(n: int = 1) -> str:
                 f"  {name:<14}  {model:<30}  {outcome:<8}  "
                 f"{latency:>5}ms  in={tin}/out={tout}  conf={conf}{err_suffix}{retry_suffix}"
             )
+            # Inline repair_runs under the FAILED row for this agent.
+            agent_real_name = ar["agent"]
+            if (
+                outcome == "failure"
+                and agent_real_name in repair_runs_by_agent
+                and agent_real_name not in printed_repairs
+            ):
+                for rr in repair_runs_by_agent[agent_real_name]:
+                    repair_line = (
+                        f"    repair: kind={rr['failure_kind']}  "
+                        f"strategy={rr['strategy_attempted']}  "
+                        f"outcome={rr['outcome']}"
+                    )
+                    if rr.get("peer_agent"):
+                        repair_line += f"  peer={rr['peer_agent']}"
+                    if rr.get("override_model"):
+                        repair_line += f"  model={rr['override_model'][:24]}"
+                    agent_lines.append(repair_line)
+                printed_repairs.add(agent_real_name)
         if gov:
             conf = "—" if gov["confidence"] is None else f"{gov['confidence']:.2f}"
             gov_line = (

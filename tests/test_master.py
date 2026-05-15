@@ -373,6 +373,40 @@ def test_handle_failure_does_not_persist_assistant_message_or_vault():
     assert mem_rows["n"] == 0
 
 
+def test_handle_workflow_run_outcome_repaired_when_recovery_succeeded():
+    """Phase 13e: when Repair fires and recovers, workflow_runs.outcome
+    is 'repaired' (not plain 'success')."""
+    # Seed: the runner produces a repair_runs row directly. We avoid mocking
+    # the full ladder by inserting one via the store post-execute. The
+    # master.handle path then re-queries repair_runs and flips the outcome.
+    # Easier path: monkeypatch the runner to record a repair attempt.
+    from ubongo import runner as runner_module
+
+    real_execute = runner_module.WorkflowRunner.execute
+
+    def execute_with_repair_row(self, workflow, ctx, message, workflow_run_id=None):
+        result = real_execute(self, workflow, ctx, message, workflow_run_id=workflow_run_id)
+        if workflow_run_id is not None:
+            store.append_repair_run(
+                workflow_run_id=workflow_run_id,
+                agent="architect", failure_kind="model_error",
+                original_error="persona_llm_error",
+                strategy_attempted="retry_different_model_same_prompt",
+                peer_agent=None, override_model="fallback-m",
+                attempt_index=0, outcome="recovered",
+                started_at=store.now_iso(), ended_at=store.now_iso(),
+            )
+        return result
+
+    with patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
+        with patch.object(runner_module.WorkflowRunner, "execute", execute_with_repair_row):
+            master.handle("hi", "casual", auto_mode=False)
+
+    wf = _query_one("SELECT outcome FROM workflow_runs ORDER BY id DESC LIMIT 1")
+    assert wf is not None
+    assert wf["outcome"] == "repaired"
+
+
 def test_handle_success_commits_via_write_buffer():
     """Happy path: WriteBuffer.commit fires, assistant message + memory
     agent_runs row both land."""
