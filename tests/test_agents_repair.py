@@ -11,7 +11,9 @@ from ubongo import context, events, skills  # noqa: E402
 from ubongo.agents.base import AgentInput, AgentResult  # noqa: E402
 from ubongo.agents.repair import (  # noqa: E402
     FailureKind,
+    RecoveryPlan,
     RepairAgent,
+    Strategy,
     _classify_failure,
     default_repair_agent,
 )
@@ -177,6 +179,135 @@ def test_plan_retry_returns_none_when_no_fallback_model_configured():
     agent = RepairAgent()
     # Unregistered agent has no fallback entry; MODEL_ERROR kind still returns None.
     assert agent.plan_retry("unknown_agent", _failed_result("persona_llm_error"), _input()) is None
+
+
+# ---------- plan_recovery (Phase 13b multi-strategy) ----------
+
+def test_plan_recovery_parse_error_leads_with_variant_prompt():
+    agent = RepairAgent()
+    plan = agent.plan_recovery(
+        failed_agent="evaluator",
+        original=_failed_result("evaluator_parse_error"),
+        attempts_so_far=(),
+    )
+    assert plan.strategy is Strategy.RETRY_SAME_MODEL_VARIANT_PROMPT
+    assert plan.prompt_hint
+    assert "JSON" in plan.prompt_hint
+
+
+def test_plan_recovery_model_error_leads_with_different_model():
+    agent = RepairAgent()
+    plan = agent.plan_recovery(
+        failed_agent="architect",
+        original=_failed_result("persona_llm_error"),
+        attempts_so_far=(),
+    )
+    assert plan.strategy is Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT
+    assert plan.override_model  # populated from fallback_models
+
+
+def test_plan_recovery_walks_to_smaller_model_on_second_attempt():
+    agent = RepairAgent()
+    plan = agent.plan_recovery(
+        failed_agent="architect",
+        original=_failed_result("persona_llm_error"),
+        attempts_so_far=(Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT,),
+    )
+    assert plan.strategy is Strategy.RETRY_SMALLER_MODEL_SHORTER_PROMPT
+    assert plan.override_model  # casual model by default
+    assert plan.max_tokens_cap == 200
+    assert plan.prompt_hint and "concise" in plan.prompt_hint.lower()
+
+
+def test_plan_recovery_skips_peer_when_none_configured():
+    # Default settings have peer_replacements = {} (empty); REPLACE_WITH_PEER
+    # is skipped and the ladder advances to ABORT.
+    agent = RepairAgent()
+    plan = agent.plan_recovery(
+        failed_agent="critic",
+        original=_failed_result("critic_no_candidate"),
+        attempts_so_far=(),
+    )
+    assert plan.strategy is Strategy.ABORT
+
+
+def test_plan_recovery_precondition_missing_when_peer_configured():
+    # Force a peer mapping in-process to exercise the REPLACE_WITH_PEER path.
+    agent = RepairAgent()
+    agent._peer_replacements = {"critic": "architect"}
+    plan = agent.plan_recovery(
+        failed_agent="critic",
+        original=_failed_result("critic_no_candidate"),
+        attempts_so_far=(),
+    )
+    assert plan.strategy is Strategy.REPLACE_WITH_PEER
+    assert plan.peer_agent == "architect"
+
+
+def test_plan_recovery_aborts_when_max_attempts_reached():
+    agent = RepairAgent()
+    agent.max_attempts = 2
+    plan = agent.plan_recovery(
+        failed_agent="architect",
+        original=_failed_result("persona_llm_error"),
+        attempts_so_far=(
+            Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT,
+            Strategy.RETRY_SMALLER_MODEL_SHORTER_PROMPT,
+        ),
+    )
+    assert plan.strategy is Strategy.ABORT
+    assert plan.reason and "max_attempts" in plan.reason
+
+
+def test_plan_recovery_unrecoverable_kind_returns_abort():
+    agent = RepairAgent()
+    plan = agent.plan_recovery(
+        failed_agent="execution",
+        original=_failed_result("execution_refused"),
+        attempts_so_far=(),
+    )
+    assert plan.strategy is Strategy.ABORT
+
+
+def test_plan_recovery_precondition_missing_no_peer_aborts():
+    agent = RepairAgent()
+    plan = agent.plan_recovery(
+        failed_agent="critic",
+        original=_failed_result("critic_no_candidate"),
+        attempts_so_far=(),
+    )
+    # No peer configured by default → ladder advances past REPLACE_WITH_PEER → ABORT.
+    assert plan.strategy is Strategy.ABORT
+
+
+def test_plan_recovery_parse_error_with_peer_configured_walks_full_ladder():
+    agent = RepairAgent()
+    agent._peer_replacements = {"evaluator": "research"}
+    # 0: variant prompt
+    p0 = agent.plan_recovery(
+        failed_agent="evaluator",
+        original=_failed_result("evaluator_parse_error"),
+        attempts_so_far=(),
+    )
+    assert p0.strategy is Strategy.RETRY_SAME_MODEL_VARIANT_PROMPT
+    # 1: different model
+    p1 = agent.plan_recovery(
+        failed_agent="evaluator",
+        original=_failed_result("evaluator_parse_error"),
+        attempts_so_far=(Strategy.RETRY_SAME_MODEL_VARIANT_PROMPT,),
+    )
+    assert p1.strategy is Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT
+    # 2: peer
+    p2 = agent.plan_recovery(
+        failed_agent="evaluator",
+        original=_failed_result("evaluator_parse_error"),
+        attempts_so_far=(
+            Strategy.RETRY_SAME_MODEL_VARIANT_PROMPT,
+            Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT,
+        ),
+    )
+    assert p2.strategy is Strategy.REPLACE_WITH_PEER
+    assert p2.peer_agent == "research"
 
 
 # ---------- RepairAgent shape ----------

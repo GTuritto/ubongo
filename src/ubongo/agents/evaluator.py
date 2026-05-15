@@ -186,14 +186,19 @@ class EvaluatorAgent:
             + "\n\n## User question\n\n" + input.message
             + "\n\n## Candidate response\n\n" + candidate
         )
+        # Phase 13b: Repair may pass a prompt-hint addendum on a same-model retry.
+        prompt_hint = input.metadata.get("repair_prompt_hint")
+        if prompt_hint:
+            system_prompt = system_prompt + "\n\n## Repair guidance\n\n" + prompt_hint
 
         model = input.metadata.get("override_model") or self.default_model
+        max_tokens = input.metadata.get("max_tokens_override") or self.max_tokens
         try:
             completion = complete(
                 system_prompt=system_prompt,
                 messages=[{"role": "user", "content": "Judge the candidate response."}],
                 model=model,
-                max_tokens=self.max_tokens,
+                max_tokens=max_tokens,
             )
         except LLMError as exc:
             elapsed = int((time.monotonic() - t0) * 1000)

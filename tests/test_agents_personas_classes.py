@@ -88,3 +88,37 @@ def test_persona_run_inherited_from_base_calls_llm():
 
 def test_valid_personas_tuple_matches_subclasses():
     assert set(VALID_PERSONAS) == {"architect", "operator", "casual"}
+
+
+def test_persona_appends_repair_prompt_hint_from_metadata():
+    """Phase 13b: a same-model repair retry passes a prompt_hint addendum
+    via input.metadata['repair_prompt_hint']; the persona appends it under
+    a `## Repair guidance` section in the system prompt."""
+    agent = ArchitectPersona()
+    inp = AgentInput(
+        message="hi",
+        history=({"role": "user", "content": "hi"},),
+        summary_text=None,
+        prior_findings=(),
+        metadata={"repair_prompt_hint": "Be brief and JSON-only."},
+    )
+    with patch("ubongo.agents.personas.complete", return_value=_completion("ok")) as m:
+        agent.run(inp, context=None)
+    sp = m.call_args.kwargs["system_prompt"]
+    assert "## Repair guidance" in sp
+    assert "Be brief and JSON-only." in sp
+
+
+def test_persona_max_tokens_override_applies():
+    """Phase 13b: smaller-model retry caps max_tokens via metadata."""
+    agent = ArchitectPersona()
+    inp = AgentInput(
+        message="hi",
+        history=({"role": "user", "content": "hi"},),
+        summary_text=None,
+        prior_findings=(),
+        metadata={"max_tokens_override": 200},
+    )
+    with patch("ubongo.agents.personas.complete", return_value=_completion("ok")) as m:
+        agent.run(inp, context=None)
+    assert m.call_args.kwargs["max_tokens"] == 200

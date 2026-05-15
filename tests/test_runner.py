@@ -210,21 +210,48 @@ def test_history_no_conv_id_still_includes_message():
 
 
 class StubRepair:
+    """Mimics RepairAgent.plan_recovery for runner tests.
+
+    Configure with an ordered list of RecoveryPlans. Each plan_recovery()
+    call pops the next plan; when the list is empty, returns ABORT.
+    Phase 11's plan_retry is kept as a shim for compat with the few
+    tests that still call it directly.
+    """
+
     name = "repair"
     role = "stub"
     default_model = ""
     composer = False
+    max_attempts = 3
 
-    def __init__(self, plan: dict | None):
-        self._plan = plan
-        self.calls: list[tuple[str, AgentResult]] = []
+    def __init__(self, plans: list | None = None, plan: dict | None = None):
+        # Two construction styles supported:
+        #  - plans=[RecoveryPlan(...), ...] for the Phase-13 path
+        #  - plan={"model": "..."} for the Phase-11 plan_retry shim (used
+        #    by test_repair_agent_in_workflow_agents_list_is_skipped and
+        #    test_parallel_does_not_retry_on_failure, which never exercise
+        #    plan_recovery — they only verify the call is/isn't made).
+        from ubongo.agents.repair import RecoveryPlan, Strategy
+
+        self._plans: list = list(plans or [])
+        self._legacy_plan = plan
+        self.calls: list[tuple[str, int]] = []  # (agent_name, attempts_so_far_len)
 
     def run(self, input, context):
         return AgentResult(text="", ok=True, model=None, tokens_in=0, tokens_out=0, latency_ms=0)
 
+    def plan_recovery(self, *, failed_agent, original, attempts_so_far):
+        from ubongo.agents.repair import RecoveryPlan, Strategy
+
+        self.calls.append((failed_agent, len(attempts_so_far)))
+        if self._plans:
+            return self._plans.pop(0)
+        return RecoveryPlan(strategy=Strategy.ABORT, reason="stub_ladder_exhausted")
+
     def plan_retry(self, agent_name, original_result, input):
-        self.calls.append((agent_name, original_result))
-        return self._plan
+        # Phase 11 shim retained so the few legacy tests that mock this
+        # directly keep working.
+        return self._legacy_plan
 
 
 class FlakyAgent:
@@ -253,8 +280,15 @@ class FlakyAgent:
 
 
 def test_repair_retries_failing_agent_once():
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
     agent = FlakyAgent(fail_first=True)
-    repair = StubRepair(plan={"model": "fallback-model"})
+    repair = StubRepair(plans=[
+        RecoveryPlan(
+            strategy=Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT,
+            override_model="fallback-model",
+        ),
+    ])
     runner = WorkflowRunner({"architect": agent, "repair": repair})
     wf_run_id = _seed_workflow_run()
     result = runner.execute(_wf(("architect",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
@@ -271,6 +305,8 @@ def test_repair_retries_failing_agent_once():
 
 
 def test_repair_gives_up_after_second_failure():
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
     class AlwaysFail(FlakyAgent):
         def run(self, input, context):
             self.calls.append({"override_model": input.metadata.get("override_model")})
@@ -281,7 +317,13 @@ def test_repair_gives_up_after_second_failure():
             )
 
     agent = AlwaysFail()
-    repair = StubRepair(plan={"model": "fallback-model"})
+    # Stub returns one retry plan, then ABORT on the next call (default).
+    repair = StubRepair(plans=[
+        RecoveryPlan(
+            strategy=Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT,
+            override_model="fallback-model",
+        ),
+    ])
     runner = WorkflowRunner({"architect": agent, "repair": repair})
     wf_run_id = _seed_workflow_run()
     result = runner.execute(_wf(("architect",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
@@ -295,9 +337,10 @@ def test_repair_gives_up_after_second_failure():
     assert [(r["outcome"], r["retried"]) for r in rows] == [("failure", 0), ("failure", 1)]
 
 
-def test_repair_skipped_when_plan_returns_none():
+def test_repair_aborts_immediately_when_ladder_is_empty():
+    """When plan_recovery returns ABORT on the first call, no retry fires."""
     agent = FlakyAgent(fail_first=True)
-    repair = StubRepair(plan=None)
+    repair = StubRepair(plans=[])  # default: ABORT
     runner = WorkflowRunner({"architect": agent, "repair": repair})
     wf_run_id = _seed_workflow_run()
     result = runner.execute(_wf(("architect",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
@@ -306,11 +349,136 @@ def test_repair_skipped_when_plan_returns_none():
     assert len(repair.calls) == 1
 
 
+def test_repair_walks_full_ladder_then_recovers():
+    """Agent fails twice, succeeds on third attempt. Verifies the runner
+    iterates plan_recovery → dispatch → check OK → repeat correctly."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    class FailsTwice:
+        name = "architect"
+        role = "fails twice"
+        default_model = "m"
+        composer = True
+
+        def __init__(self):
+            self.calls: list[dict] = []
+
+        def run(self, input, context):
+            self.calls.append({
+                "override_model": input.metadata.get("override_model"),
+                "prompt_hint": input.metadata.get("repair_prompt_hint"),
+                "max_tokens": input.metadata.get("max_tokens_override"),
+            })
+            if len(self.calls) < 3:
+                return AgentResult(
+                    text="", ok=False, model="m",
+                    tokens_in=0, tokens_out=0, latency_ms=1,
+                    error="persona_llm_error",
+                )
+            return AgentResult(
+                text="recovered on third try", ok=True, model="smaller",
+                tokens_in=10, tokens_out=10, latency_ms=2,
+            )
+
+    agent = FailsTwice()
+    repair = StubRepair(plans=[
+        RecoveryPlan(
+            strategy=Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT,
+            override_model="fallback",
+        ),
+        RecoveryPlan(
+            strategy=Strategy.RETRY_SMALLER_MODEL_SHORTER_PROMPT,
+            override_model="smaller",
+            prompt_hint="Be concise.",
+            max_tokens_cap=200,
+        ),
+    ])
+    runner = WorkflowRunner({"architect": agent, "repair": repair})
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(_wf(("architect",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
+    assert result.ok is True
+    assert result.text == "recovered on third try"
+    assert len(agent.calls) == 3
+    # First call has no overrides; second has fallback model; third has smaller + hint.
+    assert agent.calls[0]["override_model"] is None
+    assert agent.calls[1]["override_model"] == "fallback"
+    assert agent.calls[1]["prompt_hint"] is None
+    assert agent.calls[2]["override_model"] == "smaller"
+    assert agent.calls[2]["prompt_hint"] == "Be concise."
+    assert agent.calls[2]["max_tokens"] == 200
+    # Three agent_runs rows: first failed, second retried+failed, third retried+ok.
+    rows = store.connection().execute(
+        "SELECT outcome, retried FROM agent_runs WHERE workflow_run_id = ? ORDER BY id",
+        (wf_run_id,),
+    ).fetchall()
+    assert [(r["outcome"], r["retried"]) for r in rows] == [
+        ("failure", 0), ("failure", 1), ("success", 1),
+    ]
+
+
+def test_repair_passes_prompt_hint_to_agent_via_metadata():
+    """RETRY_SAME_MODEL_VARIANT_PROMPT plumbs the prompt_hint through
+    AgentInput.metadata['repair_prompt_hint']."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    class RecordsMetadata:
+        name = "evaluator"
+        role = "records"
+        default_model = "m"
+        composer = False
+
+        def __init__(self):
+            self.captured: list[dict] = []
+
+        def run(self, input, context):
+            self.captured.append(dict(input.metadata))
+            if len(self.captured) == 1:
+                return AgentResult(
+                    text="", ok=False, model="m",
+                    tokens_in=0, tokens_out=0, latency_ms=1,
+                    error="evaluator_parse_error",
+                )
+            return AgentResult(
+                text='{"confidence": 0.7}', ok=True, model="m",
+                tokens_in=5, tokens_out=5, latency_ms=2, confidence=0.7,
+            )
+
+    agent = RecordsMetadata()
+    repair = StubRepair(plans=[
+        RecoveryPlan(
+            strategy=Strategy.RETRY_SAME_MODEL_VARIANT_PROMPT,
+            prompt_hint="JSON ONLY please.",
+        ),
+    ])
+    runner = WorkflowRunner({"evaluator": agent, "repair": repair})
+    runner.execute(_wf(("evaluator",)), _ctx(1), "hi", workflow_run_id=_seed_workflow_run())
+    assert len(agent.captured) == 2
+    assert agent.captured[0].get("repair_prompt_hint") is None
+    assert agent.captured[1].get("repair_prompt_hint") == "JSON ONLY please."
+
+
+def test_repair_peer_replacement_treated_as_abort_in_13b():
+    """13b treats REPLACE_WITH_PEER as ABORT (no actual peer dispatch).
+    13c lights up real peer dispatch."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    agent = FlakyAgent(fail_first=True)
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="architect_peer"),
+    ])
+    runner = WorkflowRunner({"architect": agent, "repair": repair})
+    result = runner.execute(_wf(("architect",)), _ctx(None), "hi")
+    # Agent dispatched once (failed); peer-replace is treated as ABORT in 13b.
+    assert result.ok is False
+    assert len(agent.calls) == 1
+    assert len(repair.calls) == 1
+
+
 def test_repair_agent_in_workflow_agents_list_is_skipped():
     """Listing 'repair' inside workflow.agents is a defensive no-op: Repair
-    is consulted via plan_retry, not run as a workflow step."""
+    is consulted via plan_recovery, not run as a workflow step."""
     agent = FlakyAgent(fail_first=False)
-    repair = StubRepair(plan={"model": "x"})
+    repair = StubRepair(plans=[])  # never called since agent succeeds
     runner = WorkflowRunner({"architect": agent, "repair": repair})
     result = runner.execute(_wf(("repair", "architect")), _ctx(None), "hi")
     assert result.ok is True

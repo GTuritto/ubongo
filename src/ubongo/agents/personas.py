@@ -139,15 +139,22 @@ class BasePersonaAgent:
                 "where they did not, and the recommendation that survives the disagreement. "
                 "Pick a side when the evidence supports one; name the residual risk."
             )
+        # Phase 13b: Repair may pass a prompt-hint addendum (stricter schema,
+        # rephrase instruction) on a same-model retry. Appended last so it
+        # takes priority over default phrasing.
+        prompt_hint = input.metadata.get("repair_prompt_hint")
+        if prompt_hint:
+            sections.append("## Repair guidance\n\n" + prompt_hint)
         system_prompt = "\n\n".join(sections)
         model = input.metadata.get("override_model") or persona.model
+        max_tokens = input.metadata.get("max_tokens_override") or persona.max_tokens
 
         try:
             completion = complete(
                 system_prompt=system_prompt,
                 messages=list(input.history),
                 model=model,
-                max_tokens=persona.max_tokens,
+                max_tokens=max_tokens,
             )
         except LLMError as exc:
             elapsed = int((time.monotonic() - t0) * 1000)

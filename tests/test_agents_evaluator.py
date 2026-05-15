@@ -120,6 +120,28 @@ def test_evaluator_default_model_and_max_tokens_from_settings():
     assert agent.composer is False
 
 
+def test_evaluator_appends_repair_prompt_hint_and_max_tokens_override():
+    """Phase 13b: PARSE_ERROR retry passes a stricter-schema hint and
+    (when paired with smaller-model) a max_tokens cap."""
+    agent = EvaluatorAgent()
+    inp = AgentInput(
+        message="explain caching",
+        history=({"role": "user", "content": "explain caching"},),
+        summary_text=None,
+        prior_findings=("the candidate response",),
+        metadata={"repair_prompt_hint": "JSON ONLY.", "max_tokens_override": 200},
+    )
+    with patch(
+        "ubongo.agents.evaluator.complete",
+        return_value=_completion('{"confidence": 0.7, "issues": []}'),
+    ) as m:
+        agent.run(inp, context=None)
+    sp = m.call_args.kwargs["system_prompt"]
+    assert "## Repair guidance" in sp
+    assert "JSON ONLY." in sp
+    assert m.call_args.kwargs["max_tokens"] == 200
+
+
 # --- Phase 12b: rank() ---
 
 

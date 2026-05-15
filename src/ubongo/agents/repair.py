@@ -1,23 +1,24 @@
-"""Repair Agent: classifies failures + plans recovery for failed agent runs.
+"""Repair Agent: classifies failures + plans multi-strategy recovery.
 
-Phase 11 shipped a flat single-retry-with-model-fallback. Phase 13a introduces
-the failure taxonomy that drives strategy selection: every agent error code
-maps to a `FailureKind`; the strategy chooser in Phase 13b reads the kind,
-not the raw error string.
+Phase 11 shipped a flat single-retry-with-model-fallback (the `plan_retry`
+hook). Phase 13a added the failure taxonomy that drives strategy selection.
+Phase 13b adds `plan_recovery`: walk an ordered strategy ladder per failure
+kind, returning a `RecoveryPlan` the runner can execute one step at a time.
 
-Phase 13a is a pure refactor of the classifier — `plan_retry` keeps its
-Phase-11 signature and behavior for the runner's current call site, but the
-internal logic now goes through `_classify_failure`. Phases 13b–13g build
-`plan_recovery`, peer replacement, repair_runs persistence, and the
-runner's multi-strategy loop on top of this seam.
+`plan_retry` is kept as a thin Phase-11-compatible shim; the runner's
+sequential strategy uses `plan_recovery` directly (Phase 13b switches the
+sequential mode over). Fan-out modes will gain a slimmer
+`_maybe_replace_failed` helper in Phase 13c that calls plan_recovery with
+attempts_so_far=() and acts only on REPLACE_WITH_PEER.
 
-The Repair Agent itself does not run as part of any workflow; it is consulted
-synchronously by the WorkflowRunner when an agent reports ok=False.
+The Repair Agent itself does not run as part of any workflow; it is
+consulted synchronously by the WorkflowRunner.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -33,20 +34,8 @@ logger = logging.getLogger("ubongo.agents.repair")
 class FailureKind(str, Enum):
     """How an agent failure is categorized for strategy selection.
 
-    - TIMEOUT — the underlying LLM call or subprocess ran past its deadline.
-    - MODEL_ERROR — generic LLM transport failure (HTTP 5xx, auth, rate-limit
-      after litellm's own retries). Today's `*_llm_error` codes land here.
-    - PARSE_ERROR — the model returned text that failed our schema check
-      (e.g., `evaluator_parse_error`). A stricter-prompt retry pays here.
-    - CONTENT_REJECTION — the model refused or returned empty content. Rare
-      v0.1; reserved for future use as agents emit explicit refusal codes.
-    - PRECONDITION_MISSING — the agent's input contract wasn't met
-      (`critic_no_candidate`, `memory_missing_input`, `execution_no_command`).
-      Re-prompting the same agent is futile; only peer replacement / abort.
-    - INFINITE_LOOP — placeholder for Phase 18+ when GP introduces dynamic
-      routing that could cycle. v0.1 has no detector.
-    - UNRECOVERABLE — by-design refusals (sandbox `execution_refused`),
-      unknown error codes, or memory-write failures. ABORT only.
+    See _ERROR_KIND for the agent-error-code → kind mapping and the
+    Plans/phase-13-repair.md "Failure taxonomy" section for the design rationale.
     """
 
     TIMEOUT = "timeout"
@@ -56,6 +45,38 @@ class FailureKind(str, Enum):
     PRECONDITION_MISSING = "precondition_missing"
     INFINITE_LOOP = "infinite_loop"
     UNRECOVERABLE = "unrecoverable"
+
+
+class Strategy(str, Enum):
+    """One step of the recovery ladder."""
+
+    RETRY_SAME_MODEL_VARIANT_PROMPT = "retry_same_model_variant_prompt"
+    RETRY_DIFFERENT_MODEL_SAME_PROMPT = "retry_different_model_same_prompt"
+    RETRY_SMALLER_MODEL_SHORTER_PROMPT = "retry_smaller_model_shorter_prompt"
+    REPLACE_WITH_PEER = "replace_with_peer"
+    ABORT = "abort"
+
+
+@dataclass(frozen=True)
+class RecoveryPlan:
+    """Concrete instructions for the runner to attempt one recovery step.
+
+    The runner inspects `strategy` to decide how to execute:
+      - RETRY_*_VARIANT_PROMPT  : re-dispatch with `prompt_hint` metadata
+      - RETRY_DIFFERENT_MODEL_* : re-dispatch with `override_model`
+      - RETRY_SMALLER_MODEL_*   : re-dispatch with `override_model` + `prompt_hint`
+                                  + `max_tokens_cap`
+      - REPLACE_WITH_PEER       : dispatch `peer_agent` from the registry
+                                  in the failing agent's slot (Phase 13c)
+      - ABORT                   : stop; runner returns the original failure
+    """
+
+    strategy: Strategy
+    override_model: str | None = None
+    prompt_hint: str | None = None
+    max_tokens_cap: int | None = None
+    peer_agent: str | None = None
+    reason: str | None = None
 
 
 # Map agent error codes (the strings each agent sets on AgentResult.error)
@@ -85,6 +106,66 @@ _ERROR_KIND: dict[str, FailureKind] = {
 }
 
 
+# Per-kind strategy ladder. The runner walks each in order, skipping any
+# strategy already attempted (tracked in attempts_so_far) and any strategy
+# that can't be materialized (e.g., no peer configured). ABORT terminates
+# the ladder.
+_STRATEGY_LADDER: dict[FailureKind, tuple[Strategy, ...]] = {
+    FailureKind.PARSE_ERROR: (
+        Strategy.RETRY_SAME_MODEL_VARIANT_PROMPT,
+        Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT,
+        Strategy.REPLACE_WITH_PEER,
+        Strategy.ABORT,
+    ),
+    FailureKind.CONTENT_REJECTION: (
+        Strategy.RETRY_SAME_MODEL_VARIANT_PROMPT,
+        Strategy.REPLACE_WITH_PEER,
+        Strategy.ABORT,
+    ),
+    FailureKind.MODEL_ERROR: (
+        Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT,
+        Strategy.RETRY_SMALLER_MODEL_SHORTER_PROMPT,
+        Strategy.REPLACE_WITH_PEER,
+        Strategy.ABORT,
+    ),
+    FailureKind.TIMEOUT: (
+        Strategy.RETRY_SMALLER_MODEL_SHORTER_PROMPT,
+        Strategy.REPLACE_WITH_PEER,
+        Strategy.ABORT,
+    ),
+    # Option A: input-contract failures skip variant-prompt retries because
+    # re-prompting an agent with no candidate to critique is futile.
+    FailureKind.PRECONDITION_MISSING: (
+        Strategy.REPLACE_WITH_PEER,
+        Strategy.ABORT,
+    ),
+    FailureKind.INFINITE_LOOP: (Strategy.ABORT,),
+    FailureKind.UNRECOVERABLE: (Strategy.ABORT,),
+}
+
+
+# Per-kind prompt hint added to the agent's system prompt on a same-model retry.
+_PROMPT_HINTS: dict[FailureKind, str] = {
+    FailureKind.PARSE_ERROR: (
+        "The previous attempt returned text that could not be parsed. "
+        "Return ONLY a JSON object matching the schema described above. "
+        "No prose, no markdown fences, no commentary."
+    ),
+    FailureKind.CONTENT_REJECTION: (
+        "The previous attempt did not produce a usable response. Answer "
+        "the user's question directly. If the question is genuinely "
+        "unanswerable, say so in one sentence."
+    ),
+    # MODEL_ERROR, TIMEOUT, PRECONDITION_MISSING have no hint — same-model
+    # variant-prompt isn't in their ladder.
+}
+
+# Prompt hint added when retrying with a smaller model — pushes the model
+# to be brief so cost stays bounded.
+_SMALLER_MODEL_HINT = "Be concise. Answer in under 200 tokens."
+_SMALLER_MODEL_TOKEN_CAP = 200
+
+
 def _classify_failure(agent_name: str, error_code: str | None) -> FailureKind:
     """Map an agent failure to a FailureKind for strategy selection.
 
@@ -109,9 +190,9 @@ def _classify_failure(agent_name: str, error_code: str | None) -> FailureKind:
 
 # Phase 11's `_RETRYABLE_ERRORS` / `_NEVER_RETRY_AGENTS` flat sets retired:
 # the taxonomy expresses both. The list below records what Phase 11 used to
-# treat as retryable so plan_retry's behavior stays equivalent in 13a.
-# Phase 13b replaces plan_retry with plan_recovery; this constant goes away
-# at that point.
+# treat as retryable so plan_retry's behavior stays equivalent in 13a/13b.
+# Phase 13g switches the runner over to plan_recovery proper and the
+# plan_retry shim retires.
 _PHASE_11_RETRYABLE_KINDS: frozenset[FailureKind] = frozenset({
     FailureKind.MODEL_ERROR,
 })
@@ -126,9 +207,12 @@ class RepairAgent:
     def __init__(self) -> None:
         cfg = load_config()
         models = cfg.get("models", {})
-        # Sensible defaults: every agent falls back to models.default,
-        # except casual which stays on its cheap model.
-        defaults = {
+        repair_cfg = cfg.get("agents", {}).get("repair", {}) or {}
+        # Cap total strategy attempts per agent failure. Configurable so
+        # tests can dial it down (and Phase 17 can dial it up for evolution).
+        self.max_attempts: int = int(repair_cfg.get("max_attempts", 3))
+        # Fallback (different) model for MODEL_ERROR retries.
+        fb_defaults = {
             "coding": models.get("default", ""),
             "architect": models.get("default", ""),
             "operator": models.get("default", ""),
@@ -137,19 +221,127 @@ class RepairAgent:
             "evaluator": models.get("default", ""),
             "critic": models.get("default", ""),
         }
-        overrides = cfg.get("agents", {}).get("repair", {}).get("fallback_models", {}) or {}
-        self._fallback_models = {**defaults, **overrides}
+        fb_overrides = repair_cfg.get("fallback_models", {}) or {}
+        self._fallback_models = {**fb_defaults, **fb_overrides}
+        # Smaller model for SMALLER_MODEL retries. Defaults to models.casual
+        # for every agent; specific overrides honored via settings.
+        smaller_default = models.get("casual", models.get("default", ""))
+        sm_defaults = {agent: smaller_default for agent in fb_defaults}
+        sm_overrides = repair_cfg.get("smaller_models", {}) or {}
+        self._smaller_models = {**sm_defaults, **sm_overrides}
+        # Peer replacements. Defaults populated in Phase 13c; here we read
+        # whatever settings.yaml provides. Empty / missing entries disable
+        # the strategy for that agent (plan_recovery skips to next).
+        self._peer_replacements: dict[str, str | None] = dict(
+            repair_cfg.get("peer_replacements", {}) or {}
+        )
 
     # The Agent.run hook is required by the protocol but is a no-op for
     # Repair v0.1: the runner calls plan_retry / plan_recovery directly.
-    # This keeps Repair registry-discoverable without putting it into any
-    # workflow.agents list.
     def run(self, input: AgentInput, context: "Context") -> AgentResult:
         return AgentResult(
             text="", ok=True, model=None,
             tokens_in=0, tokens_out=0, latency_ms=0,
             metadata={"note": "RepairAgent.run is a no-op; runner calls plan_recovery"},
         )
+
+    # ---------- Phase 13b: multi-strategy recovery ----------
+
+    def plan_recovery(
+        self,
+        *,
+        failed_agent: str,
+        original: AgentResult,
+        attempts_so_far: tuple[Strategy, ...],
+    ) -> RecoveryPlan:
+        """Walk the strategy ladder for this failure kind, skipping
+        strategies already in `attempts_so_far` and strategies that can't
+        be materialized (e.g., no peer configured, no smaller model).
+
+        Returns a RecoveryPlan. When the ladder is exhausted or
+        max_attempts is reached, returns ABORT. The runner always receives
+        a RecoveryPlan, never None — ABORT is the explicit "give up" signal.
+        """
+        kind = _classify_failure(failed_agent, original.error)
+        ladder = _STRATEGY_LADDER.get(kind, (Strategy.ABORT,))
+
+        if len(attempts_so_far) >= self.max_attempts:
+            logger.info(
+                "repair_max_attempts_reached",
+                extra={
+                    "agent": failed_agent,
+                    "attempts": len(attempts_so_far),
+                    "max": self.max_attempts,
+                    "kind": kind.value,
+                },
+            )
+            return RecoveryPlan(
+                strategy=Strategy.ABORT,
+                reason=f"max_attempts_reached:{self.max_attempts}",
+            )
+
+        for strategy in ladder:
+            if strategy in attempts_so_far:
+                continue
+            plan = self._materialize_plan(strategy, failed_agent, kind)
+            if plan is not None:
+                logger.info(
+                    "repair_plan",
+                    extra={
+                        "agent": failed_agent,
+                        "kind": kind.value,
+                        "strategy": plan.strategy.value,
+                        "attempt_index": len(attempts_so_far),
+                        "original_error": original.error,
+                    },
+                )
+                return plan
+            # Strategy not materializable (e.g., no peer); skip to next.
+        return RecoveryPlan(strategy=Strategy.ABORT, reason="ladder_exhausted")
+
+    def _materialize_plan(
+        self,
+        strategy: Strategy,
+        failed_agent: str,
+        kind: FailureKind,
+    ) -> RecoveryPlan | None:
+        """Build a concrete RecoveryPlan for a strategy, or None if the
+        strategy can't be applied for this agent / kind (caller skips)."""
+        if strategy is Strategy.ABORT:
+            return RecoveryPlan(strategy=Strategy.ABORT)
+
+        if strategy is Strategy.RETRY_SAME_MODEL_VARIANT_PROMPT:
+            hint = _PROMPT_HINTS.get(kind)
+            if hint is None:
+                return None
+            return RecoveryPlan(strategy=strategy, prompt_hint=hint)
+
+        if strategy is Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT:
+            model = self._fallback_models.get(failed_agent)
+            if not model:
+                return None
+            return RecoveryPlan(strategy=strategy, override_model=model)
+
+        if strategy is Strategy.RETRY_SMALLER_MODEL_SHORTER_PROMPT:
+            smaller = self._smaller_models.get(failed_agent)
+            if not smaller:
+                return None
+            return RecoveryPlan(
+                strategy=strategy,
+                override_model=smaller,
+                prompt_hint=_SMALLER_MODEL_HINT,
+                max_tokens_cap=_SMALLER_MODEL_TOKEN_CAP,
+            )
+
+        if strategy is Strategy.REPLACE_WITH_PEER:
+            peer = self._peer_replacements.get(failed_agent)
+            if not peer:
+                return None
+            return RecoveryPlan(strategy=strategy, peer_agent=peer)
+
+        return None
+
+    # ---------- Phase 11 back-compat shim ----------
 
     def plan_retry(
         self,
@@ -160,16 +352,14 @@ class RepairAgent:
         """Phase 11 sequential-runner hook. Returns {"model": fallback} for
         one retry, or None to give up.
 
-        Phase 13a rewrites the internals to go through `_classify_failure`,
-        but the externally-observable behavior matches Phase 11:
+        Phase 13a–13b keep the externally-observable contract:
           - MODEL_ERROR (the old `*_llm_error` set)        -> retry with fallback
-          - everything else (incl. PARSE_ERROR for now)    -> None
+          - PARSE_ERROR (Phase 13b same-model addendum)    -> None here; the
+            runner's plan_recovery loop handles it.
+          - PRECONDITION_MISSING / UNRECOVERABLE           -> None.
 
-        PARSE_ERROR returns None here even though its plan_recovery ladder
-        will lead with `same_model_repair_prompt`: Phase 11's `plan_retry`
-        contract is only "one model swap, or give up", which the new
-        prompt-addendum strategy doesn't fit. Phase 13b's `plan_recovery`
-        exposes the full ladder; 13g switches the runner over.
+        Phase 13g switches the sequential runner over to plan_recovery and
+        this shim retires.
         """
         kind = _classify_failure(failed_agent_name, original_result.error)
         if kind not in _PHASE_11_RETRYABLE_KINDS:

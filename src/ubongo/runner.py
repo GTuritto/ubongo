@@ -259,7 +259,99 @@ class WorkflowRunner:
             evaluator_confidence=evaluator_confidence,
         )
 
-    # ---------- sequential mode (Phase 9 baseline + Phase 11 Repair) ----------
+    # ---------- Phase 13b: multi-strategy recovery helper (sequential) ----------
+
+    async def _recover_or_give_up(
+        self,
+        *,
+        agent,
+        agent_name: str,
+        original_result: AgentResult,
+        message: str,
+        history: list,
+        summary_text: str | None,
+        prior_findings: list[str],
+        workflow: "Workflow",
+        context: "Context",
+        workflow_run_id: int | None,
+    ) -> AgentResult:
+        """Walk RepairAgent.plan_recovery() until a strategy recovers or
+        returns ABORT. Each retry dispatches the agent again with the
+        plan's overrides (model, prompt_hint, max_tokens cap). Returns the
+        final AgentResult (still ok=False on ladder exhaustion).
+
+        Phase 13b implements RETRY_*_VARIANT_PROMPT, RETRY_DIFFERENT_MODEL,
+        and RETRY_SMALLER_MODEL strategies. REPLACE_WITH_PEER is treated as
+        ABORT here; Phase 13c wires the actual peer dispatch.
+        """
+        from ubongo.agents.repair import Strategy
+
+        repair = self.registry.get("repair")
+        if repair is None or not hasattr(repair, "plan_recovery"):
+            return original_result
+
+        attempts: list[Strategy] = []
+        result = original_result
+        while True:
+            plan = repair.plan_recovery(
+                failed_agent=agent_name,
+                original=result,
+                attempts_so_far=tuple(attempts),
+            )
+            if plan.strategy is Strategy.ABORT:
+                logger.info(
+                    "repair_abort",
+                    extra={
+                        "agent": agent_name,
+                        "attempts": len(attempts),
+                        "reason": plan.reason,
+                    },
+                )
+                return result
+            if plan.strategy is Strategy.REPLACE_WITH_PEER:
+                # Phase 13c implements peer dispatch; 13b treats as ABORT
+                # so the ladder doesn't loop forever asking for a strategy
+                # the runner can't execute.
+                logger.info(
+                    "repair_peer_deferred_to_13c",
+                    extra={"agent": agent_name, "peer": plan.peer_agent},
+                )
+                return result
+
+            attempts.append(plan.strategy)
+            extra_metadata: dict = {}
+            if plan.prompt_hint:
+                extra_metadata["repair_prompt_hint"] = plan.prompt_hint
+            if plan.max_tokens_cap:
+                extra_metadata["max_tokens_override"] = plan.max_tokens_cap
+
+            logger.info(
+                "agent_retry",
+                extra={
+                    "agent": agent_name,
+                    "strategy": plan.strategy.value,
+                    "model": plan.override_model,
+                    "attempt_index": len(attempts) - 1,
+                },
+            )
+            result = await self._dispatch_agent_async(
+                agent=agent,
+                agent_name=agent_name,
+                message=message,
+                history=history,
+                summary_text=summary_text,
+                prior_findings=prior_findings,
+                workflow=workflow,
+                context=context,
+                workflow_run_id=workflow_run_id,
+                override_model=plan.override_model,
+                retried=True,
+                extra_metadata=extra_metadata or None,
+            )
+            if result.ok:
+                return result
+
+    # ---------- sequential mode (Phase 9 baseline + Phase 13 Repair ladder) ----------
 
     async def _run_sequential(
         self,
@@ -276,7 +368,6 @@ class WorkflowRunner:
         last_composer_result: AgentResult | None = None
         evaluator_confidence: float | None = None
         any_failure = False
-        retried_agents: set[str] = set()
 
         repair = self.registry.get("repair")
 
@@ -304,40 +395,21 @@ class WorkflowRunner:
                 retried=False,
             )
 
-            # Phase 11d: on failure, ask Repair for a single retry (sequential only).
-            if (
-                not result.ok
-                and repair is not None
-                and agent_name not in retried_agents
-                and hasattr(repair, "plan_retry")
-            ):
-                input_for_plan = AgentInput(
+            # Phase 13b: on failure, walk the Repair strategy ladder. Each
+            # strategy is one fresh dispatch; loop until ok or ABORT.
+            if not result.ok and repair is not None and hasattr(repair, "plan_recovery"):
+                result = await self._recover_or_give_up(
+                    agent=agent,
+                    agent_name=agent_name,
+                    original_result=result,
                     message=message,
-                    history=tuple(history),
+                    history=history,
                     summary_text=summary_text,
-                    prior_findings=tuple(prior_findings),
-                    metadata={"persona": workflow.persona, "skill": workflow.skill_name},
+                    prior_findings=prior_findings,
+                    workflow=workflow,
+                    context=context,
+                    workflow_run_id=workflow_run_id,
                 )
-                plan = repair.plan_retry(agent_name, result, input_for_plan)
-                if plan is not None:
-                    retried_agents.add(agent_name)
-                    logger.info(
-                        "agent_retry",
-                        extra={"agent": agent_name, "model": plan.get("model")},
-                    )
-                    result = await self._dispatch_agent_async(
-                        agent=agent,
-                        agent_name=agent_name,
-                        message=message,
-                        history=history,
-                        summary_text=summary_text,
-                        prior_findings=prior_findings,
-                        workflow=workflow,
-                        context=context,
-                        workflow_run_id=workflow_run_id,
-                        override_model=plan.get("model"),
-                        retried=True,
-                    )
 
             if result.ok:
                 if result.text:

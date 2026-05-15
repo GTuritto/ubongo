@@ -19,10 +19,22 @@ agents:
   coding:
     max_tokens: 2048
   repair:
-    # Per-agent model fallback used by RepairAgent.plan_retry on a single
-    # retry. Defaults are computed from models.default / models.casual when
-    # an entry is omitted. Phase 13 may broaden the recovery plan.
+    # Max strategies tried per agent failure within one workflow run. Caps
+    # cost / latency when a failure is genuinely unrecoverable. The strategy
+    # ladder (RepairAgent._STRATEGY_LADDER) is at most 4 entries before
+    # ABORT, so 3 covers all kinds except parse_error's full path.
+    max_attempts: 3
+    # Per-agent fallback model for RETRY_DIFFERENT_MODEL_SAME_PROMPT and
+    # the Phase-11 plan_retry shim. Empty entries fall back to models.default
+    # (or models.casual for casual).
     fallback_models: {}
+    # Per-agent smaller-model override for RETRY_SMALLER_MODEL_SHORTER_PROMPT
+    # (cost-bounded last resort). Empty entries fall back to models.casual.
+    # Coupled with a ~200-token cap on max_tokens via the same plan.
+    smaller_models: {}
+    # Per-agent peer replacement for REPLACE_WITH_PEER. null / missing
+    # disables (the strategy is skipped). Defaults populated in Phase 13c.
+    peer_replacements: {}
 
 api_keys:
   openrouter:
