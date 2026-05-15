@@ -267,10 +267,20 @@ def test_handle_happy_path_returns_response_with_token():
 
 
 def test_handle_error_path_returns_polite_message_and_ok_false():
+    """Phase 13f: when the persona LLM fails and Repair exhausts the ladder,
+    Master returns the unrecoverable-apology template (not the generic
+    "Sorry, I couldn't reach the model" string from pre-Phase-13).
+
+    Also: Response.requires_user_decision=True so the REPL can prompt for
+    a y/n retry; repair_summary captures what was attempted."""
     with patch("ubongo.agents.personas.complete", side_effect=LLMError("boom", cause=RuntimeError("nope"))):
         response = master.handle("hi", "casual", auto_mode=False)
     assert response.ok is False
-    assert "Sorry, I couldn't reach the model" in response.text
+    assert "couldn't recover" in response.text
+    assert "casual" in response.text  # failing agent named
+    assert response.requires_user_decision is True
+    assert response.repair_summary is not None
+    assert response.repair_summary["failing_agent"] == "casual"
 
 
 def test_handle_appends_user_and_assistant_messages_on_success():
@@ -371,6 +381,28 @@ def test_handle_failure_does_not_persist_assistant_message_or_vault():
         "SELECT COUNT(*) AS n FROM agent_runs WHERE agent = 'memory'"
     ).fetchone()
     assert mem_rows["n"] == 0
+
+
+def test_handle_response_no_repair_summary_when_no_failure():
+    """Happy path: no repair fired, no summary, no y/n prompt."""
+    with patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
+        response = master.handle("hi", "casual", auto_mode=False)
+    assert response.ok is True
+    assert response.requires_user_decision is False
+    assert response.repair_summary is None
+
+
+def test_handle_repair_summary_aggregates_attempts():
+    """Phase 13f: repair_summary captures attempts count + last attempt's
+    kind/strategy/agent/error."""
+    with patch("ubongo.agents.personas.complete", side_effect=LLMError("boom", cause=RuntimeError("x"))):
+        response = master.handle("hi", "casual", auto_mode=False)
+    assert response.repair_summary is not None
+    assert response.repair_summary["attempts"] >= 1
+    assert response.repair_summary["failing_agent"] == "casual"
+    assert response.repair_summary["last_kind"] in (
+        "model_error", "abort",  # the final row may be the ABORT terminator
+    )
 
 
 def test_handle_workflow_run_outcome_repaired_when_recovery_succeeded():

@@ -70,6 +70,12 @@ class Response:
     persona: str
     skill_name: str | None
     delivery_token: queue.DeliveryToken
+    # Phase 13f: when Repair gave up on a failure, the caller (REPL / one-shot)
+    # may want to surface a y/n retry prompt. `repair_summary` is None when no
+    # repair fired; otherwise carries {attempts, last_kind, last_strategy,
+    # last_error, failing_agent} extracted from repair_runs.
+    requires_user_decision: bool = False
+    repair_summary: dict | None = None
 
 
 _PERSONA_DEFAULT_WORKFLOW: dict[str, str] = {
@@ -87,6 +93,16 @@ CRITIC_HIGH: float = 0.6
 _REJECT_MESSAGE = (
     "I'm not confident enough in my answer to give it. "
     "Try rephrasing or breaking the question down."
+)
+
+# Phase 13f: shown when Repair exhausted its strategy ladder.
+# {attempts}/{last_kind}/{last_strategy}/{failing_agent}/{last_error} fill in
+# from the repair_summary dict; missing fields render as "—".
+_REPAIR_EXHAUSTED_TEMPLATE = (
+    "I couldn't recover from a {last_kind} in the {failing_agent} step "
+    "after {attempts} repair attempt(s). Last strategy tried: "
+    "{last_strategy}. Last error: {last_error}. "
+    "Try rephrasing, switching mode (/mode), or simplifying the request."
 )
 
 
@@ -121,6 +137,26 @@ class MasterAgent:
 
             self._runner = WorkflowRunner(default_registry())
         return self._runner
+
+    def _build_repair_summary(self, workflow_run_id: int | None) -> dict | None:
+        """Phase 13f: aggregate repair_runs into a Response-friendly summary.
+        Returns None when no repair_runs row exists for this workflow_run."""
+        if workflow_run_id is None:
+            return None
+        try:
+            repairs = store.repair_runs_for_workflow(workflow_run_id)
+        except Exception:
+            return None
+        if not repairs:
+            return None
+        last = repairs[-1]
+        return {
+            "attempts": len(repairs),
+            "last_kind": last.get("failure_kind"),
+            "last_strategy": last.get("strategy_attempted"),
+            "failing_agent": last.get("agent"),
+            "last_error": last.get("original_error"),
+        }
 
     def classify(self, message: str, ctx: Context) -> Classification:
         return classifier.classify(message)
@@ -346,6 +382,28 @@ class MasterAgent:
                 )
                 critic_used = True
 
+        # Phase 13f: build repair_summary (if any repair_runs landed) so the
+        # Response can surface a y/n retry prompt to the REPL and so the
+        # failure apology can interpolate the last failure kind/strategy.
+        repair_summary = self._build_repair_summary(workflow_run_id)
+        if not result.ok and repair_summary is not None:
+            apology = _REPAIR_EXHAUSTED_TEMPLATE.format(
+                attempts=repair_summary["attempts"],
+                last_kind=repair_summary["last_kind"] or "—",
+                last_strategy=repair_summary["last_strategy"] or "—",
+                failing_agent=repair_summary["failing_agent"] or "—",
+                last_error=repair_summary["last_error"] or "—",
+            )
+            result = WorkflowResult(
+                text=apology,
+                ok=False,
+                tokens_in=0,
+                tokens_out=0,
+                model="",
+                latency_ms=0,
+                evaluator_confidence=result.evaluator_confidence,
+            )
+
         # Phase 10: governance runs before the assistant-message commit so a
         # `reject` decision can override the response text. The rejection is
         # the assistant turn; persist it so /recall and the vault are coherent.
@@ -506,6 +564,9 @@ class MasterAgent:
             persona=chosen,
             skill_name=workflow.skill_name,
             delivery_token=token,
+            # Phase 13f: surface y/n retry intent only when Repair gave up.
+            requires_user_decision=(not result.ok and repair_summary is not None),
+            repair_summary=repair_summary,
         )
 
 

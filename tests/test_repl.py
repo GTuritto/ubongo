@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
-from ubongo.repl import DEFAULT_PERSONA, handle_slash
+from ubongo.repl import DEFAULT_PERSONA, _prompt_repair_retry, handle_slash
 
 
 @pytest.mark.parametrize("name", ["architect", "operator", "casual"])
@@ -51,3 +53,32 @@ def test_slash_bare_slash_is_an_empty_command() -> None:
     assert keep_going is True
     assert "Empty command" in msg
     assert auto_change is None
+
+
+# --- Phase 13f: repair-retry y/n prompt ---
+
+
+def test_prompt_repair_retry_y_returns_y() -> None:
+    with patch("builtins.input", return_value="y"):
+        assert _prompt_repair_retry() == "y"
+
+
+def test_prompt_repair_retry_n_returns_n() -> None:
+    with patch("builtins.input", return_value="n"):
+        assert _prompt_repair_retry() == "n"
+
+
+def test_prompt_repair_retry_anything_else_treated_as_n() -> None:
+    with patch("builtins.input", return_value="maybe"):
+        assert _prompt_repair_retry() == "n"
+
+
+def test_prompt_repair_retry_eof_returns_n() -> None:
+    """Piped input ending mid-prompt shouldn't crash; treat as no-retry."""
+    with patch("builtins.input", side_effect=EOFError()):
+        assert _prompt_repair_retry() == "n"
+
+
+def test_prompt_repair_retry_is_case_insensitive_and_strips() -> None:
+    with patch("builtins.input", return_value="  Y  "):
+        assert _prompt_repair_retry() == "y"
