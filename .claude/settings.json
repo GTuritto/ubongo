@@ -18,7 +18,19 @@
       "Bash(sqlite3 data/ubongo.db 'SELECT COUNT\\(*\\) FROM governance_decisions')",
       "Bash(echo \"governance_decisions count: $\\(sqlite3 data/ubongo.db 'SELECT COUNT\\(*\\) FROM governance_decisions'\\)\")",
       "Bash(echo \"last workflow.agents: $\\(sqlite3 data/ubongo.db \"SELECT json_extract\\(workflow,'\\\\$.agents'\\) FROM workflow_runs ORDER BY id DESC LIMIT 1\"\\)\")",
-      "Bash(echo \"workflow.agents: $\\(sqlite3 data/ubongo.db \"SELECT json_extract\\(workflow,'\\\\$.agents'\\) FROM workflow_runs ORDER BY id DESC LIMIT 1\"\\)\")"
+      "Bash(echo \"workflow.agents: $\\(sqlite3 data/ubongo.db \"SELECT json_extract\\(workflow,'\\\\$.agents'\\) FROM workflow_runs ORDER BY id DESC LIMIT 1\"\\)\")",
+      "Bash(sqlite3 data/ubongo.db \"SELECT json_extract\\(workflow,'\\\\$.execution_mode'\\) FROM workflow_runs ORDER BY id DESC LIMIT 1;\")",
+      "Bash(sqlite3 -column data/ubongo.db \"SELECT agent, started_at FROM agent_runs WHERE workflow_run_id=\\(SELECT MAX\\(id\\) FROM workflow_runs\\) ORDER BY id;\")",
+      "Bash(sqlite3 -column data/ubongo.db \"SELECT agent, confidence FROM agent_runs WHERE workflow_run_id=\\(SELECT MAX\\(id\\) FROM workflow_runs\\) ORDER BY id;\")",
+      "Bash(sqlite3 data/ubongo.db \"SELECT json_extract\\(output,'\\\\$.winner'\\) FROM agent_runs WHERE agent='evaluator' ORDER BY id DESC LIMIT 1;\")",
+      "Bash(echo \"winner: $\\(sqlite3 data/ubongo.db \"SELECT json_extract\\(output,'\\\\$.winner'\\) FROM agent_runs WHERE agent='evaluator' ORDER BY id DESC LIMIT 1;\"\\)\")",
+      "Bash(sqlite3 data/ubongo.db \"SELECT content FROM messages WHERE role='assistant' ORDER BY id DESC LIMIT 1;\")",
+      "Bash(sqlite3 data/ubongo.db \"SELECT agent, outcome FROM agent_runs WHERE workflow_run_id=\\(SELECT MAX\\(id\\) FROM workflow_runs\\) ORDER BY id;\")",
+      "Bash(sqlite3 -column data/ubongo.db \"SELECT id, json_extract\\(workflow,'\\\\$.execution_mode'\\) FROM workflow_runs ORDER BY id;\")",
+      "Bash(sqlite3 data/ubongo.db \"SELECT source FROM notification_queue;\")",
+      "Bash(sqlite3 -column data/ubongo.db \"SELECT action, reversibility FROM governance_decisions ORDER BY id DESC LIMIT 1;\")",
+      "Bash(sqlite3 -column data/ubongo.db \"SELECT action, risk FROM governance_decisions ORDER BY id DESC LIMIT 1;\")",
+      "Bash(grep -E 'decision matrix|destructive_keywords|rev=|require_approval$|/policy,')"
     ]
   }
 }
