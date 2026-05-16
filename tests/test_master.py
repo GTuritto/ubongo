@@ -200,11 +200,18 @@ def test_execute_dispatches_before_and_after_events():
 # --- decide ---
 
 
+def _decide_wf() -> Workflow:
+    return Workflow(
+        persona="casual", model="m", skill_name=None,
+        execution_mode="sequential", agents=("casual",),
+    )
+
+
 def test_decide_returns_auto_stub():
     agent = MasterAgent()
     ctx = Context(conversation_id=1, persona="casual", auto_mode=False, pending_skill=None)
     result = WorkflowResult(text="ok", ok=True, tokens_in=1, tokens_out=1, model="m", latency_ms=1)
-    decision = agent.decide(_classification(), result, ctx)
+    decision = agent.decide(_classification(), _decide_wf(), result, "hi", ctx)
     assert decision.action == "auto"
 
 
@@ -215,7 +222,7 @@ def test_decide_dispatches_govern_events():
     events.register("after_govern", lambda _p: seen.append("after"))
     ctx = Context(conversation_id=1, persona="casual", auto_mode=False, pending_skill=None)
     result = WorkflowResult(text="ok", ok=True, tokens_in=1, tokens_out=1, model="m", latency_ms=1)
-    agent.decide(_classification(), result, ctx)
+    agent.decide(_classification(), _decide_wf(), result, "hi", ctx)
     assert seen == ["before", "after"]
 
 
@@ -224,7 +231,7 @@ def test_decide_falls_back_on_internal_error():
     ctx = Context(conversation_id=1, persona="casual", auto_mode=False, pending_skill=None)
     result = WorkflowResult(text="ok", ok=True, tokens_in=1, tokens_out=1, model="m", latency_ms=1)
     with patch("ubongo.master.governance_decide", side_effect=RuntimeError("matrix down")):
-        decision = agent.decide(_classification(), result, ctx)
+        decision = agent.decide(_classification(), _decide_wf(), result, "hi", ctx)
     assert decision.action == "auto"
     assert decision.reason == "fallback_on_error"
 
@@ -345,9 +352,49 @@ def test_handle_persists_workflow_run_with_failure_outcome_on_llm_error():
     wf = _query_one("SELECT outcome FROM workflow_runs")
     assert wf is not None
     assert wf["outcome"] == "failure"
-    # decision still recorded with action=auto (Phase 14 will downgrade)
+    # A plain LLM failure is not a governance gate: action stays auto.
     gd = _query_one("SELECT action FROM governance_decisions")
     assert gd["action"] == "auto"
+
+
+# --- Phase 14: governance decision matrix ---
+
+
+def test_handle_require_approval_on_destructive_keyword():
+    """The keyword backstop escalates risk to destructive even when the
+    classifier rates it low — the turn is gated as require_approval."""
+    benign = _classification(risk="low", task_type="question")
+    with patch("ubongo.master.classifier.classify", return_value=benign), \
+         patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
+        resp = master.handle("please delete the entire vault", "casual", auto_mode=False)
+    assert resp.text == master._APPROVAL_REQUIRED_MESSAGE
+    gd = _query_one("SELECT action, risk, reversibility FROM governance_decisions")
+    assert gd["action"] == "require_approval"
+    assert gd["risk"] == "destructive"
+    assert gd["reversibility"] == "reversible"
+
+
+def test_handle_ask_clarification_on_low_confidence_command():
+    """An under-specified command (task_type=command, low classifier
+    confidence) is gated as ask_clarification."""
+    crafted = _classification(task_type="command", confidence=0.3, risk="low", intent="other")
+    with patch("ubongo.master.classifier.classify", return_value=crafted), \
+         patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
+        resp = master.handle("do the thing", "casual", auto_mode=False)
+    assert resp.text == master._CLARIFICATION_MESSAGE
+    gd = _query_one("SELECT action FROM governance_decisions")
+    assert gd["action"] == "ask_clarification"
+
+
+def test_handle_persists_reversibility_not_null():
+    """governance_decisions.reversibility is populated (Phase 14g), no longer NULL."""
+    benign = _classification(risk="low", task_type="question")
+    with patch("ubongo.master.classifier.classify", return_value=benign), \
+         patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
+        master.handle("hi", "casual", auto_mode=False)
+    gd = _query_one("SELECT action, reversibility FROM governance_decisions")
+    assert gd["action"] == "auto"
+    assert gd["reversibility"] == "reversible"
 
 
 # --- Phase 13d: WriteBuffer rollback regression ---

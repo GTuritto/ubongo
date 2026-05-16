@@ -1,0 +1,47 @@
+# Governance decision matrix (Phase 14).
+#
+# decide() in src/ubongo/governance/decision.py reads these rules and applies
+# them in priority order:
+#   1. risk == destructive                          -> require_approval
+#   2. risk == high AND reversibility == irreversible -> require_approval
+#   3. evaluator confidence < reject_below_confidence -> reject
+#   4. command turn AND classifier confidence
+#        < clarification_below_confidence            -> ask_clarification
+#   5. otherwise                                     -> auto
+#
+# Thresholds are data, not code: the GP loop (Phase 16-19) can evolve them
+# without touching Python.
+
+thresholds:
+  # Evaluator (LLM-as-judge) confidence floor. Below this the answer is rejected.
+  reject_below_confidence: 0.2
+  # Classifier confidence floor on command turns. Below this an under-specified
+  # command triggers a clarification ask instead of running blind.
+  clarification_below_confidence: 0.5
+  # Borderline evaluator-confidence band that triggers a Critic re-dispatch.
+  # Moved here from master.py's CRITIC_LOW / CRITIC_HIGH constants.
+  critic_band: [0.2, 0.6]
+  # Minimum classifier confidence to switch persona in /auto mode. Below this
+  # the current persona is kept (hysteresis). Read by router.apply_hysteresis.
+  auto_route_min_confidence: 0.7
+
+require_approval:
+  # A turn at any of these risk levels always requires approval.
+  risks:
+    - destructive
+  # When true, a high-risk AND irreversible turn also requires approval.
+  irreversible_high_risk: true
+
+# A message containing any of these substrings (case-insensitive) escalates
+# the turn's risk to `destructive`, regardless of the classifier's own rating.
+# A small-model classifier under-rates or flakes; this keyword backstop keeps
+# obviously destructive requests deterministically gated.
+destructive_keywords:
+  - "rm -rf"
+  - "delete the entire"
+  - "delete all"
+  - "wipe"
+  - "drop table"
+  - "drop database"
+  - "format "
+  - "truncate"

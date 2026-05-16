@@ -16,6 +16,7 @@ class ConfigError(Exception):
 _ENV_REF = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_SETTINGS_PATH = _REPO_ROOT / "config" / "settings.yaml"
+_DEFAULT_GOVERNANCE_PATH = _REPO_ROOT / "config" / "governance.yaml"
 
 _cache: dict[Path, dict[str, Any]] = {}
 _dotenv_loaded = False
@@ -77,6 +78,29 @@ def load_config(path: Path | None = None, *, force_reload: bool = False) -> dict
     cfg = _resolve_env_refs(raw)
     _validate_required(cfg)
     _cache[settings_path] = cfg
+    return cfg
+
+
+def load_governance(path: Path | None = None, *, force_reload: bool = False) -> dict[str, Any]:
+    """Load governance.yaml — the decision-matrix rules (Phase 14).
+
+    Mirrors `load_config()`: per-path cache, env-ref resolution. Unlike
+    settings.yaml there is no required-field validation — a missing file is a
+    hard error (governance must be explicit), but the body is plain data.
+    """
+    _ensure_dotenv()
+    gov_path = (path or _DEFAULT_GOVERNANCE_PATH).resolve()
+    if not force_reload and gov_path in _cache:
+        return _cache[gov_path]
+
+    if not gov_path.exists():
+        raise ConfigError(f"governance.yaml not found at {gov_path}")
+
+    with gov_path.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+
+    cfg = _resolve_env_refs(raw)
+    _cache[gov_path] = cfg
     return cfg
 
 

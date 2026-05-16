@@ -20,6 +20,7 @@ from ubongo import classifier, events, router, skills
 from ubongo.agents import personas
 from ubongo.agents.memory import default_memory_agent
 from ubongo.classifier import Classification
+from ubongo.config import load_governance
 from ubongo.delivery import queue
 from ubongo.governance.decision import Action, Decision, decide as governance_decide
 from ubongo.memory import store
@@ -84,16 +85,40 @@ _PERSONA_DEFAULT_WORKFLOW: dict[str, str] = {
     "casual": "casual_reply",
 }
 
-# Phase 10: borderline-confidence band that triggers a Critic + persona retry.
-# Below CRITIC_LOW the turn is rejected by governance; at or above CRITIC_HIGH
-# the answer stands. Constants here; Phase 14 moves them to governance.yaml.
-CRITIC_LOW: float = 0.2
-CRITIC_HIGH: float = 0.6
-
 _REJECT_MESSAGE = (
     "I'm not confident enough in my answer to give it. "
     "Try rephrasing or breaking the question down."
 )
+_CLARIFICATION_MESSAGE = (
+    "I need a bit more detail before I can do that. Tell me specifically "
+    "what you want and I'll take it from there."
+)
+_APPROVAL_REQUIRED_MESSAGE = (
+    "This looks destructive or high-risk, so I'm not proceeding without "
+    "explicit approval. (The interactive approval flow lands in Phase 15.)"
+)
+
+# decision.action -> the message that replaces the response when a turn is
+# gated. A gated turn is still delivered as the assistant message (ok=True) so
+# the trace, vault and recall stay coherent.
+_GATED_MESSAGES: dict[str, str] = {
+    Action.REJECT.value: _REJECT_MESSAGE,
+    Action.ASK_CLARIFICATION.value: _CLARIFICATION_MESSAGE,
+    Action.REQUIRE_APPROVAL.value: _APPROVAL_REQUIRED_MESSAGE,
+}
+
+
+def _critic_band() -> tuple[float, float]:
+    """Borderline evaluator-confidence band that triggers a Critic re-dispatch.
+
+    Phase 10 had these as the module constants CRITIC_LOW / CRITIC_HIGH;
+    Phase 14 moved them into governance.yaml::thresholds.critic_band.
+    """
+    band = (load_governance().get("thresholds", {}) or {}).get("critic_band", [0.2, 0.6])
+    try:
+        return float(band[0]), float(band[1])
+    except (TypeError, ValueError, IndexError):
+        return 0.2, 0.6
 
 # Phase 13f: shown when Repair exhausted its strategy ladder.
 # {attempts}/{last_kind}/{last_strategy}/{failing_agent}/{last_error} fill in
@@ -241,7 +266,9 @@ class MasterAgent:
     def decide(
         self,
         classification: Classification,
+        workflow: Workflow,
         workflow_result: WorkflowResult,
+        message: str,
         ctx: Context,
     ) -> Decision:
         events.dispatch(
@@ -254,8 +281,9 @@ class MasterAgent:
         try:
             decision = governance_decide(
                 classification,
+                workflow,
                 workflow_result,
-                evaluator_confidence=workflow_result.evaluator_confidence,
+                message=message,
             )
         except Exception as exc:
             logger.warning(
@@ -348,10 +376,11 @@ class MasterAgent:
         # Same workflow_run_id so the trace shows the whole story in one row.
         critic_used = False
         ec = result.evaluator_confidence
+        critic_low, critic_high = _critic_band()
         if (
             result.ok
             and ec is not None
-            and CRITIC_LOW <= ec < CRITIC_HIGH
+            and critic_low <= ec < critic_high
             and chosen in personas.VALID_PERSONAS
         ):
             events.dispatch(
@@ -407,11 +436,14 @@ class MasterAgent:
         # Phase 10: governance runs before the assistant-message commit so a
         # `reject` decision can override the response text. The rejection is
         # the assistant turn; persist it so /recall and the vault are coherent.
-        decision = self.decide(classification, result, ctx)
+        decision = self.decide(classification, workflow, result, message, ctx)
         rejected = decision.action == Action.REJECT.value
-        if rejected:
+        # Phase 14: any gated action (reject / ask_clarification /
+        # require_approval) replaces the response with its canned message.
+        gate_message = _GATED_MESSAGES.get(decision.action)
+        if gate_message is not None:
             result = WorkflowResult(
-                text=_REJECT_MESSAGE,
+                text=gate_message,
                 ok=True,
                 tokens_in=0,
                 tokens_out=0,
@@ -487,9 +519,11 @@ class MasterAgent:
             ended_at=ts_now,
         )
 
-        # Phase 10: governance_decisions.confidence holds the evaluator's
-        # score when present; classifier confidence is the fallback so the
-        # column doesn't NULL out for non-evaluated workflows.
+        # Phase 14: persist the scored signals the decision matrix produced.
+        # `decision.risk` is the governing risk (classifier rating escalated by
+        # the keyword backstop); `decision.confidence` is the evaluator score
+        # with classifier fallback; `decision.reversibility` is no longer NULL.
+        # The fallback-on-error Decision carries None — keep classifier values.
         stored_confidence = (
             result.evaluator_confidence
             if result.evaluator_confidence is not None
@@ -498,9 +532,9 @@ class MasterAgent:
         decision_id = store.append_governance_decision(
             workflow_run_id=workflow_run_id,
             intent=classification.intent,
-            risk=classification.risk,
-            confidence=stored_confidence,
-            reversibility=None,
+            risk=decision.risk or classification.risk,
+            confidence=decision.confidence if decision.confidence is not None else stored_confidence,
+            reversibility=decision.reversibility,
             action=decision.action,
         )
 
@@ -510,7 +544,8 @@ class MasterAgent:
                 "intent": classification.intent,
                 "tone": classification.tone,
                 "task_type": classification.task_type,
-                "risk": classification.risk,
+                "risk": decision.risk or classification.risk,
+                "reversibility": decision.reversibility,
                 "confidence": classification.confidence,
                 "evaluator_confidence": result.evaluator_confidence,
                 "critic_used": critic_used,

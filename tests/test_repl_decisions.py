@@ -16,7 +16,8 @@ def _isolated_db(tmp_path: Path):
     store.set_db_path(None)
 
 
-def _seed_decision(intent="technical", persona="architect", action="auto", risk="low", conf=0.9):
+def _seed_decision(intent="technical", persona="architect", action="auto", risk="low", conf=0.9,
+                   reversibility="reversible"):
     cid = store.start_conversation(persona)
     msg_id = store.append_message(cid, "user", "x", persona=persona)
     wf_id = store.append_workflow_run(
@@ -33,9 +34,16 @@ def _seed_decision(intent="technical", persona="architect", action="auto", risk=
         intent=intent,
         risk=risk,
         confidence=conf,
-        reversibility=None,
+        reversibility=reversibility,
         action=action,
     )
+
+
+def test_render_decisions_shows_reversibility_column():
+    _seed_decision(action="require_approval", risk="destructive", reversibility="irreversible")
+    out = repl._render_decisions_table(10)
+    assert "irreversible" in out
+    assert "require_approval" in out
 
 
 def test_parse_decisions_no_arg_defaults_to_10():

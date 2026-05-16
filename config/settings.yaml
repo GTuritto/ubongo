@@ -70,11 +70,7 @@ vault:
   path: ./vault
   daily_notes_subdir: daily
 
-governance:
-  approval_required_on:
-    - destructive
-    - irreversible_high_risk
-  confidence_threshold_for_auto: 0.7
+# Governance decision-matrix rules live in config/governance.yaml (Phase 14).
 
 evolution:
   enabled: true

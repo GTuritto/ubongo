@@ -247,7 +247,28 @@ When the ladder exhausts, `master.handle` returns a `Response` with `requires_us
 
 ## Phase 14 — Risk + Confidence Scoring
 
-*(Populated when Phase 14 is implemented.)*
+Start of Tier 4 (Governance). The decision matrix actually decides. Three score modules feed `governance/decision.py::decide()`, which loads `config/governance.yaml` and returns one of `auto | ask_clarification | require_approval | reject`. **risk** (`governance/risk.py`) takes the higher of the classifier's rating and a destructive-keyword scan of the message — so "delete the entire vault" reaches `destructive` even when the small classifier model under-rates it. **confidence** (`governance/confidence.py`) is the Evaluator's score, classifier confidence as fallback. **reversibility** (`governance/reversibility.py`) is `irreversible` when the workflow runs the `execution` agent or an irreversible skill, else `reversible`.
+
+The matrix runs in priority order — safety before quality before clarity: (1) destructive risk → `require_approval`; (2) high risk + irreversible → `require_approval`; (3) evaluator confidence below the reject floor → `reject`; (4) `command` turn with low classifier confidence → `ask_clarification`; (5) otherwise → `auto`. Every threshold lives in `config/governance.yaml`; nothing is hardcoded.
+
+`master.handle` acts on all four actions: a `_GATED_MESSAGES` map replaces the response with a canned message for `reject` / `ask_clarification` / `require_approval` (the interactive y/n approval flow is Phase 15). `governance_decisions` now persists `reversibility` (no longer NULL) plus the scored `risk`/`confidence`. `/decisions` and `/trace` show the `rev` column. The new `/policy` command prints the live matrix. The Phase-10 `CRITIC_LOW/HIGH` constants moved into `governance.yaml::thresholds.critic_band`; the `governance:` block left `settings.yaml` entirely (single config home).
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 14.1 | governance.yaml loads | `uv run pytest tests/test_config.py -k governance` | Pass. `load_governance()` reads the matrix; cached; missing file raises. |
+| 14.2 | Risk scoring + keyword backstop | `uv run pytest tests/test_governance_risk.py` | Pass. `score_risk` returns the higher of classifier risk and a destructive-keyword hit; case-insensitive. |
+| 14.3 | Confidence scoring | `uv run pytest tests/test_governance_confidence.py` | Pass. Evaluator score preferred; classifier confidence is the fallback; `0.0` is a real verdict. |
+| 14.4 | Reversibility scoring | `uv run pytest tests/test_governance_reversibility.py` | Pass. `execution` agent or an irreversible skill → `irreversible`; every other turn `reversible`. |
+| 14.5 | Decision matrix — all five rules | `uv run pytest tests/test_governance_decision.py` | Pass. One test per matrix cell: destructive → require_approval, high+irreversible → require_approval, low evaluator confidence → reject, low-confidence command → ask_clarification, else auto. |
+| 14.6 | Auto-approve (live) | `rm -f data/ubongo.db`; `uv run python -m ubongo send "what is a write-ahead log" --persona architect`; `sqlite3 data/ubongo.db "SELECT action, reversibility FROM governance_decisions"` | Substantive answer delivered. `action='auto'`, `reversibility='reversible'`. |
+| 14.7 | Require approval (live) | `uv run python -m ubongo send "delete the entire vault" --persona casual` | stdout is the approval-required message ("not proceeding without explicit approval"); the real answer is NOT delivered. `sqlite3 data/ubongo.db "SELECT action, risk FROM governance_decisions ORDER BY id DESC LIMIT 1"` → `require_approval, destructive` (the keyword backstop escalated risk). |
+| 14.8 | Reject low confidence | `uv run pytest tests/test_master.py::test_low_confidence_rejects` | Pass. Mock evaluator returns 0.1; `governance_decisions.action='reject'`; response is `_REJECT_MESSAGE`. |
+| 14.9 | Ask clarification | `uv run pytest tests/test_master.py::test_handle_ask_clarification_on_low_confidence_command` | Pass. A `command` turn with low classifier confidence → `action='ask_clarification'`; response is `_CLARIFICATION_MESSAGE`. |
+| 14.10 | Require approval persists scored signals | `uv run pytest tests/test_master.py::test_handle_require_approval_on_destructive_keyword tests/test_master.py::test_handle_persists_reversibility_not_null` | Pass. `governance_decisions` rows carry `action`, `risk`, and a non-NULL `reversibility`. |
+| 14.11 | `/policy` prints the matrix | REPL: `/policy` | Prints the 5 priority-ordered rules, thresholds (reject/clarification floors, critic band, auto-route min confidence), `require_approval` rules, and the destructive-keyword list. |
+| 14.12 | `/decisions` + `/trace` show reversibility | After 14.6: REPL `/decisions 1` and `/trace 1` | `/decisions` row includes a `rev` column; `/trace` governance line ends with `rev=reversible`. |
+| 14.13 | `/policy` in the help banner | REPL: `/foo` | Help banner lists `/policy` between `/decisions` and `/agents`. |
+| 14.14 | Pytest passes | `uv run pytest tests/` | All green (490 expected after Phase 14: Phase-13's 454 + ~36 governance/matrix/policy/master tests). |
 
 ## Phase 15 — Approval Gates + Sandboxing
 
