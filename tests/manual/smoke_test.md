@@ -272,7 +272,39 @@ The matrix runs in priority order — safety before quality before clarity: (1) 
 
 ## Phase 15 — Approval Gates + Sandboxing
 
-*(Populated when Phase 15 is implemented.)*
+End of Tier 4 (Governance). Phase 14's `require_approval` decision becomes a real
+decision point. `governance/approval.py` turns a `require_approval` `Decision`
+into an `ApprovalRequest` (a one-line summary + a "why" paragraph), which
+`master.handle` attaches to the `Response`. The REPL prompts `Approve? (y/n/why)`:
+`why` prints the explanation and re-prompts; `n` records the decline and aborts;
+`y` records approval and re-issues the turn with `approved=True` so the real
+answer is delivered (the re-run's `governance_decisions` row reads `action=auto`,
+reason `approved_by_user`). The choice persists in
+`governance_decisions.approval_response` via `store.update_governance_decision`.
+One-shot is non-interactive — a `require_approval` turn prints the gated message
+and exits `rc=1`.
+
+The Execution Agent's sandbox is hardened: the parent resolves each allowlisted
+command to an absolute path at import (`_PROGRAM_PATHS`) and the child subprocess
+runs with `PATH=""` — it cannot spawn further programs by bare name. `_check_paths`
+gains a filesystem allowlist: any absolute-path argument must resolve inside the
+repo tree. `docs/SECURITY.md` documents the full contract and its known v0.1
+limits (no OS-level isolation; network governed by the allowlist, not blocked).
+
+| # | Scenario | Steps | Expected |
+| --- | --- | --- | --- |
+| 15.1 | Approval module | `uv run pytest tests/test_governance_approval.py` | Pass. `build_request` / `explain` produce the summary + why paragraph; unknown reasons fall back gracefully. |
+| 15.2 | Approval REPL prompt + persistence | `uv run pytest tests/test_repl_approval.py` | Pass. `_prompt_approval` handles y/n/why/EOF; `store.update_governance_decision` patches `approval_response`. |
+| 15.3 | Approval yes (live) | `rm -f data/ubongo.db`; REPL: `delete the entire vault`, then `y` | After the gated message + `Approve? (y/n/why)`, `y` re-issues the turn and the real answer is delivered. `sqlite3 data/ubongo.db "SELECT action, approval_response FROM governance_decisions ORDER BY id"` → first row `require_approval, y`; second row `auto, NULL` (the approved re-run). |
+| 15.4 | Approval no (live) | REPL: `delete the entire vault`, then `n` | `Aborted; nothing was done.`; back at the prompt. `governance_decisions.approval_response='n'` for the gated row. |
+| 15.5 | Approval why (live) | REPL: `delete the entire vault`, then `why` | A one-paragraph risk explanation prints (names risk/reversibility, echoes the request); `Approve? (y/n/why)` re-prompts. |
+| 15.6 | One-shot require_approval exits rc=1 | `uv run python -m ubongo send "delete the entire vault" --persona casual` | stdout is the gated message; `rc=1`; no interactive prompt. |
+| 15.7 | Sandbox empty PATH + filesystem allowlist | `uv run pytest tests/test_sandbox.py` | Pass. Child PATH is `""`; an out-of-repo absolute path is refused; an in-repo absolute path runs; `_PROGRAM_PATHS` resolves to absolute. |
+| 15.8 | Sandbox path violation | REPL: `/exec cat /etc/passwd` | `Refused: path fragment '/etc' rejected …` — no read. (`/exec cat /tmp/x` → `Refused: absolute path … outside the repo sandbox`.) |
+| 15.9 | Sandbox timeout | `uv run pytest tests/test_sandbox.py::test_timeout_returns_result_with_exit_neg_one` | Pass. A child that sleeps past the timeout is killed; `exit_code=-1`, stderr `(timed out)`. |
+| 15.10 | Network blocked | REPL: `/exec curl https://example.com` | `Refused: program 'curl' not in allowlist`. |
+| 15.11 | Master approval integration | `uv run pytest tests/test_master.py -k approval` | Pass. A `require_approval` turn attaches the `approval` payload; `approved=True` bypasses the gate (`action=auto`); a normal turn has no payload. |
+| 15.12 | Pytest passes | `uv run pytest tests/` | All green (515 expected after Phase 15: Phase-14's 491 + ~24 approval/sandbox tests). |
 
 ## Phase 16 — Variant Generation
 
