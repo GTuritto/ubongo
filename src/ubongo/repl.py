@@ -22,7 +22,7 @@ _BANNER = "Ubongo REPL ready. /exit to quit."
 _AUTO_ENABLED = "Auto routing enabled."
 _LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 _HELP_COMMANDS = (
-    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /agents, /trace, /exec <cmd>, /mode <workflow>, /reload, /exit."
+    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /policy, /agents, /trace, /exec <cmd>, /mode <workflow>, /reload, /exit."
 )
 
 
@@ -126,6 +126,35 @@ def _render_queue_table(n: int = 10) -> str:
             f"{_format_time(r.delivered_at):>8}  "
             f"{r.urgency:>6}  {(r.source or '—'):>8}  {preview}"
         )
+    return "\n".join(lines)
+
+
+def _render_policy() -> str:
+    """Render the governance decision matrix loaded from governance.yaml."""
+    from ubongo.config import load_governance
+
+    gov = load_governance()
+    thresholds = gov.get("thresholds", {}) or {}
+    approval = gov.get("require_approval", {}) or {}
+    keywords = gov.get("destructive_keywords", []) or []
+    lines = [
+        "Governance policy (config/governance.yaml):",
+        "  decision matrix (priority order):",
+        "    1. risk=destructive                      -> require_approval",
+        "    2. risk=high AND reversibility=irreversible -> require_approval",
+        "    3. evaluator confidence < reject floor    -> reject",
+        "    4. command turn, classifier confidence low -> ask_clarification",
+        "    5. otherwise                              -> auto",
+        "  thresholds:",
+        f"    reject_below_confidence:        {thresholds.get('reject_below_confidence')}",
+        f"    clarification_below_confidence: {thresholds.get('clarification_below_confidence')}",
+        f"    critic_band:                    {thresholds.get('critic_band')}",
+        f"    auto_route_min_confidence:      {thresholds.get('auto_route_min_confidence')}",
+        "  require_approval:",
+        f"    risks:                  {approval.get('risks')}",
+        f"    irreversible_high_risk: {approval.get('irreversible_high_risk')}",
+        f"  destructive_keywords ({len(keywords)}): {', '.join(keywords)}",
+    ]
     return "\n".join(lines)
 
 
@@ -440,6 +469,9 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
                     print(f"Usage: /decisions [N]. {_HELP_COMMANDS}")
                 else:
                     print(_render_decisions_table(n))
+                continue
+            if head == "policy":
+                print(_render_policy())
                 continue
             if head == "agents":
                 print(_render_agents_table())
