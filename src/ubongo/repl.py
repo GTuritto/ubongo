@@ -427,6 +427,24 @@ def _prompt_repair_retry() -> str:
     return "y" if choice == "y" else "n"
 
 
+def _prompt_approval(request: dict) -> str:
+    """Phase 15a: ask the user to approve a require_approval turn.
+
+    Prints the one-line summary, then reads y/n/why. `why` prints the
+    explanation paragraph and re-prompts. Returns "y" or "n" — anything other
+    than "y" (and EOF) is treated as "n"."""
+    print(request["summary"])
+    while True:
+        try:
+            choice = input("Approve? (y/n/why) ").strip().lower()
+        except EOFError:
+            return "n"
+        if choice == "why":
+            print(request["why"])
+            continue
+        return "y" if choice == "y" else "n"
+
+
 def run(default_persona: str = DEFAULT_PERSONA) -> int:
     session = store.get_session()
     if session and session.active_persona in VALID_PERSONAS:
@@ -555,6 +573,22 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
                     persona = retry_response.persona
             # On "n" (or anything else), just continue the loop. The user
             # types the next prompt as usual.
+
+        # Phase 15: when governance held the turn for approval, prompt y/n/why.
+        if response.approval is not None:
+            choice = _prompt_approval(response.approval)
+            store.update_governance_decision(response.approval["decision_id"], choice)
+            if choice == "y":
+                approved_response = master.handle(
+                    stripped, persona, auto_mode,
+                    pending_skill=None, pending_workflow=None, approved=True,
+                )
+                print(approved_response.text)
+                queue.flush_delivered(approved_response.delivery_token)
+                if auto_mode:
+                    persona = approved_response.persona
+            else:
+                print("Aborted; nothing was done.")
 
 
 if __name__ == "__main__":

@@ -100,7 +100,7 @@ _CLARIFICATION_MESSAGE = (
 )
 _APPROVAL_REQUIRED_MESSAGE = (
     "This looks destructive or high-risk, so I'm not proceeding without "
-    "explicit approval. (The interactive approval flow lands in Phase 15.)"
+    "explicit approval."
 )
 
 # decision.action -> the message that replaces the response when a turn is
