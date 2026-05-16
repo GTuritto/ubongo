@@ -397,6 +397,45 @@ def test_handle_persists_reversibility_not_null():
     assert gd["reversibility"] == "reversible"
 
 
+# --- Phase 15: approval gate ---
+
+
+def test_handle_require_approval_attaches_approval_payload():
+    """A require_approval turn carries an ApprovalRequest dict on the Response."""
+    benign = _classification(risk="low", task_type="question")
+    with patch("ubongo.master.classifier.classify", return_value=benign), \
+         patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
+        resp = master.handle("please delete the entire vault", "casual", auto_mode=False)
+    assert resp.approval is not None
+    assert set(resp.approval) == {"decision_id", "summary", "why"}
+    assert resp.approval["decision_id"] > 0
+    assert "risk=destructive" in resp.approval["summary"]
+    gd = _query_one("SELECT id, action FROM governance_decisions")
+    assert resp.approval["decision_id"] == gd["id"]
+    assert gd["action"] == "require_approval"
+
+
+def test_handle_approved_bypasses_require_approval_gate():
+    """approved=True re-issue delivers the real answer; the governance row
+    records action=auto (the gate was bypassed by user approval)."""
+    benign = _classification(risk="low", task_type="question")
+    with patch("ubongo.master.classifier.classify", return_value=benign), \
+         patch("ubongo.agents.personas.complete", return_value=_completion("the real answer")):
+        resp = master.handle("delete the entire vault", "casual", auto_mode=False, approved=True)
+    assert resp.text == "the real answer"
+    assert resp.approval is None
+    gd = _query_one("SELECT action FROM governance_decisions")
+    assert gd["action"] == "auto"
+
+
+def test_handle_normal_turn_has_no_approval_payload():
+    benign = _classification(risk="low", task_type="question")
+    with patch("ubongo.master.classifier.classify", return_value=benign), \
+         patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
+        resp = master.handle("hi", "casual", auto_mode=False)
+    assert resp.approval is None
+
+
 # --- Phase 13d: WriteBuffer rollback regression ---
 
 

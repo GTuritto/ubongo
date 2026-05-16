@@ -14,13 +14,14 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 from ubongo import classifier, events, router, skills
 from ubongo.agents import personas
 from ubongo.agents.memory import default_memory_agent
 from ubongo.classifier import Classification
 from ubongo.config import load_governance
+from ubongo.governance import approval as governance_approval
 from ubongo.delivery import queue
 from ubongo.governance.decision import Action, Decision, decide as governance_decide
 from ubongo.memory import store
@@ -77,6 +78,10 @@ class Response:
     # last_error, failing_agent} extracted from repair_runs.
     requires_user_decision: bool = False
     repair_summary: dict | None = None
+    # Phase 15: set when governance returned `require_approval`. Carries the
+    # ApprovalRequest as a dict ({decision_id, summary, why}); the REPL prompts
+    # y/n/why off it. None on every non-gated turn.
+    approval: dict | None = None
 
 
 _PERSONA_DEFAULT_WORKFLOW: dict[str, str] = {
@@ -313,6 +318,7 @@ class MasterAgent:
         auto_mode: bool = False,
         pending_skill: str | None = None,
         pending_workflow: str | None = None,
+        approved: bool = False,
     ) -> Response:
         """End-to-end orchestration. Returns a Response; caller prints + flushes.
 
@@ -321,10 +327,14 @@ class MasterAgent:
         committed (on result.ok) or dropped (on failure). Audit rows
         (agent_runs, governance_decisions, workflow_runs, notification_queue)
         still write inline — they record what happened, not the result.
+
+        Phase 15: `approved=True` is the re-issue of a turn the user approved
+        at the y/n/why prompt — it bypasses the `require_approval` gate.
         """
         with workflow_buffer() as buf:
             return self._handle_with_buffer(
-                buf, message, persona_name, auto_mode, pending_skill, pending_workflow
+                buf, message, persona_name, auto_mode, pending_skill,
+                pending_workflow, approved,
             )
 
     def _handle_with_buffer(
@@ -335,6 +345,7 @@ class MasterAgent:
         auto_mode: bool = False,
         pending_skill: str | None = None,
         pending_workflow: str | None = None,
+        approved: bool = False,
     ) -> Response:
         ctx = Context(
             conversation_id=None,
@@ -437,6 +448,14 @@ class MasterAgent:
         # `reject` decision can override the response text. The rejection is
         # the assistant turn; persist it so /recall and the vault are coherent.
         decision = self.decide(classification, workflow, result, message, ctx)
+        # Phase 15: a turn the user already approved at the y/n prompt is
+        # re-issued with approved=True — bypass the require_approval gate so
+        # the real answer is delivered. The trace records action=auto with
+        # reason=approved_by_user.
+        if approved and decision.action == Action.REQUIRE_APPROVAL.value:
+            decision = replace(
+                decision, action=Action.AUTO.value, reason="approved_by_user"
+            )
         rejected = decision.action == Action.REJECT.value
         # Phase 14: any gated action (reject / ask_clarification /
         # require_approval) replaces the response with its canned message.
@@ -593,6 +612,14 @@ class MasterAgent:
                 "decision_action": decision.action,
             },
         )
+        # Phase 15: when governance held the turn for approval, attach the
+        # ApprovalRequest so the REPL can prompt y/n/why off it.
+        approval_payload: dict | None = None
+        if decision.action == Action.REQUIRE_APPROVAL.value:
+            approval_payload = asdict(
+                governance_approval.build_request(decision_id, decision, message)
+            )
+
         return Response(
             text=text,
             ok=result.ok,
@@ -602,6 +629,7 @@ class MasterAgent:
             # Phase 13f: surface y/n retry intent only when Repair gave up.
             requires_user_decision=(not result.ok and repair_summary is not None),
             repair_summary=repair_summary,
+            approval=approval_payload,
         )
 
 
@@ -614,5 +642,8 @@ def handle(
     auto_mode: bool = False,
     pending_skill: str | None = None,
     pending_workflow: str | None = None,
+    approved: bool = False,
 ) -> Response:
-    return default_master.handle(message, persona_name, auto_mode, pending_skill, pending_workflow)
+    return default_master.handle(
+        message, persona_name, auto_mode, pending_skill, pending_workflow, approved
+    )
