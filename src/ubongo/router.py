@@ -8,7 +8,7 @@ from typing import Any
 import yaml
 
 from ubongo.classifier import Classification
-from ubongo.config import load_config
+from ubongo.config import load_config, load_governance
 
 logger = logging.getLogger("ubongo.router")
 
@@ -167,9 +167,13 @@ def route(classification: Classification) -> str:
 
 
 def _confidence_threshold() -> float:
-    config = load_config()
-    governance = config.get("governance", {}) or {}
-    raw = governance.get("confidence_threshold_for_auto", 0.7)
+    """Minimum classifier confidence to switch persona in /auto mode.
+
+    Phase 14 moved this from `settings.yaml::governance` into
+    `governance.yaml::thresholds.auto_route_min_confidence`.
+    """
+    thresholds = load_governance().get("thresholds", {}) or {}
+    raw = thresholds.get("auto_route_min_confidence", 0.7)
     try:
         return float(raw)
     except (TypeError, ValueError):

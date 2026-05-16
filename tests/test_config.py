@@ -85,3 +85,36 @@ def test_reload_clears_all_cached_paths(tmp_path: Path):
     cfg_b = config.load_config(path=b)
     assert cfg_a["models"]["classifier"] == "model-a"
     assert cfg_b["models"]["classifier"] == "model-b"
+
+
+# --- Phase 14a: governance.yaml loader ---
+
+
+def test_load_governance_reads_the_real_file():
+    """The shipped config/governance.yaml loads and has the matrix keys."""
+    gov = config.load_governance()
+    assert "thresholds" in gov
+    assert gov["thresholds"]["reject_below_confidence"] == 0.2
+    assert gov["thresholds"]["clarification_below_confidence"] == 0.5
+    assert gov["thresholds"]["critic_band"] == [0.2, 0.6]
+    assert "destructive" in gov["require_approval"]["risks"]
+    assert gov["require_approval"]["irreversible_high_risk"] is True
+    assert isinstance(gov["destructive_keywords"], list)
+    assert "rm -rf" in gov["destructive_keywords"]
+
+
+def test_load_governance_caches_and_force_reload(tmp_path: Path):
+    p = tmp_path / "governance.yaml"
+    p.write_text("thresholds:\n  reject_below_confidence: 0.1\n", encoding="utf-8")
+    g1 = config.load_governance(path=p)
+    assert g1["thresholds"]["reject_below_confidence"] == 0.1
+    assert config.load_governance(path=p) is g1  # cache hit
+    p.write_text("thresholds:\n  reject_below_confidence: 0.3\n", encoding="utf-8")
+    assert config.load_governance(path=p)["thresholds"]["reject_below_confidence"] == 0.1
+    fresh = config.load_governance(path=p, force_reload=True)
+    assert fresh["thresholds"]["reject_below_confidence"] == 0.3
+
+
+def test_load_governance_missing_file_raises(tmp_path: Path):
+    with pytest.raises(config.ConfigError, match="governance.yaml not found"):
+        config.load_governance(path=tmp_path / "nope.yaml")

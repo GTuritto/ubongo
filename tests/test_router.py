@@ -88,8 +88,8 @@ def test_hysteresis_switches_when_confidence_at_or_above_threshold() -> None:
     assert router.apply_hysteresis("casual", "architect", 0.95) == "architect"
 
 
-def test_hysteresis_threshold_read_from_settings() -> None:
-    # settings.yaml has governance.confidence_threshold_for_auto: 0.7
+def test_hysteresis_threshold_read_from_governance() -> None:
+    # governance.yaml has thresholds.auto_route_min_confidence: 0.7
     # 0.69 should not flip; 0.70 should.
     assert router.apply_hysteresis("architect", "casual", 0.69) == "architect"
     assert router.apply_hysteresis("architect", "casual", 0.70) == "casual"
