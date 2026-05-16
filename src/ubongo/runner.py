@@ -501,10 +501,11 @@ class WorkflowRunner:
         REPLACE_WITH_PEER, dispatch the peer and return (result, peer_name).
         Otherwise return None (caller keeps the original failure).
 
-        Fan-out modes (parallel, collaborative, competitive, debate)
-        use this instead of the full sequential ladder: multi-strategy
-        cancel-and-retry inside asyncio.gather is ambiguous, but a single
-        peer substitution is a clean one-hop replacement.
+        All five fan-out modes (parallel, collaborative, competitive,
+        debate, speculative) use this instead of the full sequential
+        ladder: multi-strategy cancel-and-retry inside asyncio.gather is
+        ambiguous, but a single peer substitution is a clean one-hop
+        replacement.
         """
         from ubongo.agents.repair import Strategy, _classify_failure
 
@@ -814,6 +815,25 @@ class WorkflowRunner:
         ]
         results: list[AgentResult] = await asyncio.gather(*tasks)
 
+        # Phase 13c: per-failure peer replacement before ranking, so a
+        # recovered candidate still competes. Single hop only (fan-out rule).
+        for i, (name, result) in enumerate(zip(competitor_names, results)):
+            if result.ok:
+                continue
+            replaced = await self._maybe_replace_failed(
+                agent_name=name,
+                original_result=result,
+                message=message,
+                history=history,
+                summary_text=summary_text,
+                prior_findings=[],
+                workflow=workflow,
+                context=context,
+                workflow_run_id=workflow_run_id,
+            )
+            if replaced is not None and replaced[0].ok:
+                results[i] = replaced[0]
+
         ok_pairs = [(n, r) for n, r in zip(competitor_names, results) if r.ok]
         if not ok_pairs:
             return self._build_workflow_result(None, None, None, True)
@@ -1060,16 +1080,20 @@ class WorkflowRunner:
 
         transcript: list[tuple[str, str]] = []  # [(speaker, text), ...]
         any_failure = False
+        # Phase 13c: a debater recovered by peer replacement keeps that peer
+        # for the rest of the turn (original speaker name -> peer name).
+        substitutions: dict[str, str] = {}
 
         for round_no in range(rounds):
             for speaker in (debater_a_name, debater_b_name):
-                agent = self.registry[speaker]
+                actual = substitutions.get(speaker, speaker)
+                agent = self.registry[actual]
                 prior = [f"## Round {i // 2 + 1} — {sp}\n\n{txt}"
                          for i, (sp, txt) in enumerate(transcript)]
                 debate_role = "challenge" if transcript else None
                 result = await self._dispatch_agent_async(
                     agent=agent,
-                    agent_name=speaker,
+                    agent_name=actual,
                     message=message,
                     history=history,
                     summary_text=summary_text,
@@ -1082,13 +1106,31 @@ class WorkflowRunner:
                     extra_metadata=({"debate_role": debate_role} if debate_role else None),
                 )
                 if not result.ok:
+                    # Phase 13c: one peer substitution before short-circuiting,
+                    # so a failed debater does not drop a voice from synthesis.
+                    replaced = await self._maybe_replace_failed(
+                        agent_name=actual,
+                        original_result=result,
+                        message=message,
+                        history=history,
+                        summary_text=summary_text,
+                        prior_findings=prior,
+                        workflow=workflow,
+                        context=context,
+                        workflow_run_id=workflow_run_id,
+                    )
+                    if replaced is not None and replaced[0].ok:
+                        peer_result, peer_name = replaced
+                        substitutions[speaker] = peer_name
+                        transcript.append((peer_name, peer_result.text))
+                        continue
                     any_failure = True
                     logger.warning(
                         "debate_short_circuit",
-                        extra={"speaker": speaker, "round": round_no + 1},
+                        extra={"speaker": actual, "round": round_no + 1},
                     )
                     break
-                transcript.append((speaker, result.text))
+                transcript.append((actual, result.text))
             else:
                 continue
             break  # debate short-circuited; jump to synthesis with whatever exists
@@ -1194,6 +1236,26 @@ class WorkflowRunner:
 
         cheap_result = cheap_task.result() if cheap_task.done() and not cheap_task.cancelled() else None
         strong_result = strong_task.result() if strong_task.done() and not strong_task.cancelled() else None
+
+        # Phase 13c: cheap is the speculative leader. If it ran but failed,
+        # attempt one peer substitution before falling back to strong. A
+        # timed-out cheap (no AgentResult) skips replacement — strong is the
+        # natural fallback there. A failed strong while cheap is ok is left
+        # alone: the successful leader already satisfies the turn.
+        if cheap_result is not None and not cheap_result.ok:
+            replaced = await self._maybe_replace_failed(
+                agent_name=cheap_name,
+                original_result=cheap_result,
+                message=message,
+                history=history,
+                summary_text=summary_text,
+                prior_findings=[],
+                workflow=workflow,
+                context=context,
+                workflow_run_id=workflow_run_id,
+            )
+            if replaced is not None and replaced[0].ok:
+                cheap_result = replaced[0]
 
         # Pick base: prefer cheap (speculative payoff). Fall back to strong.
         if cheap_result and cheap_result.ok:

@@ -987,6 +987,78 @@ def test_competitive_all_competitors_failing_returns_failure():
     assert evaluator.calls == []  # rank never called when no ok candidates
 
 
+def test_competitive_peer_replaces_failed_candidate():
+    """Phase 13c: a failed candidate is replaced by its peer before ranking,
+    so the recovered candidate still competes (and can win)."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    failing = FakeAgent("coding", ok=False, text="", error="boom")
+    peer = _composer_agent("architect", text="peer wrote this")
+    evaluator = FakeEvaluator(ranking={
+        "winner": "coding", "winner_index": 0,
+        "reason": "recovered candidate was best",
+        "scores": [{"index": 0, "score": 0.9, "note": "ok"},
+                   {"index": 1, "score": 0.5, "note": "weaker"}],
+    })
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="architect"),
+    ])
+    runner = WorkflowRunner({
+        "coding": failing, "architect": peer,
+        "evaluator": evaluator, "repair": repair,
+    })
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(
+        _wf_competitive(("coding", "architect", "evaluator")), _ctx(1), "write a fn",
+        workflow_run_id=wf_run_id,
+    )
+    assert result.ok is True
+    # The recovered candidate (architect peer in coding's slot) won.
+    assert result.text == "peer wrote this"
+    assert result.evaluator_confidence == 0.9
+    # The peer's text entered the ranking set.
+    assert ("peer wrote this" in [t for _, t in evaluator.calls[0]["candidates"]])
+    rows = store.connection().execute(
+        "SELECT agent, outcome, retried FROM agent_runs WHERE workflow_run_id = ? ORDER BY id",
+        (wf_run_id,),
+    ).fetchall()
+    seen = [(r["agent"], r["outcome"], r["retried"]) for r in rows]
+    assert ("coding", "failure", 0) in seen
+    assert ("architect", "success", 1) in seen  # ran as coding's peer
+    repair_rows = store.repair_runs_for_workflow(wf_run_id)
+    assert len(repair_rows) == 1
+    assert repair_rows[0]["strategy_attempted"] == "replace_with_peer"
+    assert repair_rows[0]["peer_agent"] == "architect"
+    assert repair_rows[0]["outcome"] == "recovered"
+
+
+def test_competitive_unrecoverable_candidate_not_replaced():
+    """Phase 13c: when Repair returns ABORT (no peer), a failed candidate is
+    not replaced; competition proceeds with the remaining ok candidates."""
+    failing = FakeAgent("coding", ok=False, text="", error="boom")
+    survivor = _composer_agent("architect", text="architect text")
+    evaluator = FakeEvaluator(ranking={
+        "winner": "architect", "winner_index": 0,
+        "reason": "only ok candidate",
+        "scores": [{"index": 0, "score": 0.6, "note": "ok"}],
+    })
+    repair = StubRepair(plans=[])  # plan_recovery -> ABORT
+    runner = WorkflowRunner({
+        "coding": failing, "architect": survivor,
+        "evaluator": evaluator, "repair": repair,
+    })
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(
+        _wf_competitive(("coding", "architect", "evaluator")), _ctx(1), "x",
+        workflow_run_id=wf_run_id,
+    )
+    assert result.ok is True
+    assert result.text == "architect text"
+    # Only the survivor competed; no peer was dispatched.
+    assert [n for n, _ in evaluator.calls[0]["candidates"]] == ["architect"]
+    assert store.repair_runs_for_workflow(wf_run_id) == []
+
+
 # --- Phase 12c: Collaborative mode ---
 
 
@@ -1149,6 +1221,43 @@ def test_debate_short_circuits_on_debater_failure_synth_still_runs():
 def test_debate_collaborative_post_step_runs_trailing_evaluator():
     """Renamed-position anchor: keep collaborative test grouped after debate."""
 
+
+def test_debate_peer_replaces_failed_debater():
+    """Phase 13c: a failed debater is replaced by its peer before synthesis,
+    so the synthesizer still sees a full-width transcript."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    architect = _composer_agent("architect", text="architect argues X")
+    operator = FakeAgent("operator", ok=False, text="", error="boom")
+    casual = _composer_agent("casual", text="casual rescued the debate")
+    synth = _composer_agent("synth", text="synthesized")
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="casual"),
+    ])
+    runner = WorkflowRunner({
+        "architect": architect, "operator": operator,
+        "casual": casual, "synth": synth, "repair": repair,
+    })
+    wf = Workflow(
+        persona="architect", model="m", skill_name=None,
+        execution_mode="debate", agents=("architect", "operator", "synth"),
+        rounds=1,
+    )
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(wf, _ctx(1), "q", workflow_run_id=wf_run_id)
+    assert result.ok is True
+    # The peer's contribution reached the synthesizer's transcript.
+    synth_prior = synth.calls[0].prior_findings
+    assert any("casual rescued the debate" in pf for pf in synth_prior)
+    assert len(operator.calls) == 1   # failed once
+    assert len(casual.calls) == 1     # ran once as operator's peer
+    repair_rows = store.repair_runs_for_workflow(wf_run_id)
+    assert len(repair_rows) == 1
+    assert repair_rows[0]["strategy_attempted"] == "replace_with_peer"
+    assert repair_rows[0]["peer_agent"] == "casual"
+    assert repair_rows[0]["outcome"] == "recovered"
+
+
 # --- Phase 12e: Speculative mode ---
 
 
@@ -1261,6 +1370,80 @@ def test_speculative_requires_at_least_2_agents():
     conv_id = store.current_or_new_conversation("architect")
     with pytest.raises(ValueError, match="cheap, strong"):
         runner.execute(wf, _ctx(conv_id), "q")
+
+
+def test_speculative_peer_replaces_failed_leader():
+    """Phase 13c: cheap is the speculative leader; when it fails it is
+    replaced by its peer, and the peer's text becomes the leader text."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    cheap = FakeAgent("casual", ok=False, text="", error="boom")
+    strong = FakeAgent("operator", text="thorough answer")
+    peer = _composer_agent("architect", text="architect rescued the leader")
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="architect"),
+    ])
+    runner = WorkflowRunner({
+        "casual": cheap, "operator": strong,
+        "architect": peer, "repair": repair,
+    })
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(
+        _wf_speculative(("casual", "operator")), _ctx(1), "q",
+        workflow_run_id=wf_run_id,
+    )
+    assert result.ok is True
+    assert result.text == "architect rescued the leader"
+    repair_rows = store.repair_runs_for_workflow(wf_run_id)
+    assert len(repair_rows) == 1
+    assert repair_rows[0]["strategy_attempted"] == "replace_with_peer"
+    assert repair_rows[0]["peer_agent"] == "architect"
+    assert repair_rows[0]["outcome"] == "recovered"
+
+
+def test_speculative_non_leader_failure_not_replaced():
+    """Phase 13c: when the leader (cheap) succeeds, a failed strong is left
+    alone — peer replacement is scoped to the leader slot."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    cheap = FakeAgent("casual", text="quick answer")
+    strong = FakeAgent("operator", ok=False, text="", error="boom")
+    peer = _composer_agent("architect", text="should not run")
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="architect"),
+    ])
+    runner = WorkflowRunner({
+        "casual": cheap, "operator": strong,
+        "architect": peer, "repair": repair,
+    })
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(
+        _wf_speculative(("casual", "operator")), _ctx(1), "q",
+        workflow_run_id=wf_run_id,
+    )
+    assert result.ok is True
+    assert result.text == "quick answer"
+    assert repair.calls == []  # Repair never consulted; leader succeeded
+    assert store.repair_runs_for_workflow(wf_run_id) == []
+
+
+def test_speculative_unrecoverable_leader_falls_back_to_strong():
+    """Phase 13c: when Repair returns ABORT for a failed leader, no peer is
+    dispatched and the turn falls back to strong (the natural fallback)."""
+    cheap = FakeAgent("casual", ok=False, text="", error="boom")
+    strong = FakeAgent("operator", text="thorough answer")
+    repair = StubRepair(plans=[])  # plan_recovery -> ABORT
+    runner = WorkflowRunner({
+        "casual": cheap, "operator": strong, "repair": repair,
+    })
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(
+        _wf_speculative(("casual", "operator")), _ctx(1), "q",
+        workflow_run_id=wf_run_id,
+    )
+    assert result.ok is True
+    assert result.text == "thorough answer"
+    assert store.repair_runs_for_workflow(wf_run_id) == []
 
 
 def test_collaborative_runs_trailing_evaluator_sequentially_after_merge():

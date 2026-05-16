@@ -36,6 +36,14 @@ htmlcov/
 .history/
 .claude/worktrees/
 .claude/handoffs/
+.claude/settings.local.json
+*.code-workspace
+
+# Other AI coding tools' scratch dirs (not used by this project)
+.agent/
+.codex/
+.gemini/
+.windsurf/
 
 # OS
 .DS_Store
