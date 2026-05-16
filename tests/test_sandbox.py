@@ -91,13 +91,12 @@ def test_timeout_returns_result_with_exit_neg_one():
     assert "timed out" in result.stderr
 
 
-def test_restricted_path_is_enforced():
-    # spawn a child that prints $PATH; should match _SAFE_PATH.
+def test_child_path_is_empty():
+    # Phase 15c: the child runs with PATH="" — it cannot find programs by name.
     # No ';' in the python source: import inline via __import__.
-    from ubongo.sandbox import _SAFE_PATH
-    result = run_constrained('python3 -c "print(__import__(\'os\').environ[\'PATH\'])"')
+    result = run_constrained('python3 -c "print(repr(__import__(\'os\').environ.get(\'PATH\')))"')
     assert result.exit_code == 0
-    assert result.stdout.strip() == _SAFE_PATH
+    assert result.stdout.strip() == "''"
 
 
 def test_allowed_commands_set_is_read_mostly():

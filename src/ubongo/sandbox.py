@@ -1,24 +1,28 @@
-"""Constrained shell execution. Phase 11 v0.1 safety contract.
+"""Constrained shell execution. v0.1 safety contract (Phase 11 + Phase 15c).
 
 Anything that runs a process on the user's machine MUST go through
 `run_constrained`. The contract is intentionally narrow:
   - explicit command allowlist (read-mostly: ls, cat, grep, git, pytest, ...)
   - no shell metacharacters (no pipes, redirects, command substitution)
-  - no path traversal arguments
+  - no path traversal; absolute-path arguments must resolve inside the repo
   - `shell=False` always
-  - PATH restricted to a small set of standard bin dirs
+  - the program is resolved to an absolute path by the parent; the child gets
+    an EMPTY PATH, so it cannot spawn further programs by bare name
+  - a tight env (PATH="", repo-root HOME, C locale) — nothing inherited
   - cwd is the repo root
   - 10s default timeout
 
-Phase 15 will harden this with filesystem allowlists, env scrubbing beyond
-PATH, and (where feasible on macOS+Linux) seccomp / chroot. Phase 11's job
-is to establish the seam: one module owns the entire contract.
+Known v0.1 limitation: this is not OS-level isolation. Network is governed by
+the allowlist (no curl/wget/ssh), not by seccomp / sandbox-exec; an allowlisted
+`python` could still open a socket. See docs/SECURITY.md. The seam stays in
+this one module so a future hardening pass has a single place to land.
 """
 
 from __future__ import annotations
 
 import logging
 import shlex
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
@@ -34,17 +38,30 @@ ALLOWED_COMMANDS: frozenset[str] = frozenset({
     "true", "false",
 })
 
-_SAFE_PATH = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
+# The directories the parent searches to resolve an allowlisted command to an
+# absolute path. The CHILD never sees this — it runs with PATH="".
+_RESOLUTION_PATH = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
 _DEFAULT_TIMEOUT_SECONDS = 10
 _STDOUT_CAP = 2048
 _STDERR_CAP = 1024
+
+# Phase 15c: resolve each allowlisted command to an absolute path once, at
+# import. run_constrained dispatches the absolute path as argv[0] and gives the
+# child an empty PATH — so a child process cannot itself shell out by name.
+# An allowlisted command that does not resolve here is reported "(not installed)".
+_PROGRAM_PATHS: dict[str, str] = {
+    name: resolved
+    for name in ALLOWED_COMMANDS
+    if (resolved := shutil.which(name, path=_RESOLUTION_PATH)) is not None
+}
 
 # Tokens that must never appear inside a single argument. shlex.split already
 # handles quoting; this catches things that survived quoting.
 _BAD_METACHARS: tuple[str, ...] = (";", "|", "&", "`", "$(", ">", "<")
 
-# Forbidden path fragments (defense in depth on argument-side traversal /
-# accessing sensitive files). Phase 15 will replace with a positive allowlist.
+# Forbidden path fragments — relative traversal and obvious sensitive trees.
+# Phase 15c adds a positive rule on top: any absolute-path argument must
+# resolve inside the repo (see _check_paths).
 _BAD_PATH_FRAGMENTS: tuple[str, ...] = ("..", "/etc", "/var", "/usr/local/var")
 
 
@@ -75,6 +92,15 @@ def _check_paths(argv: list[str]) -> None:
         for frag in _BAD_PATH_FRAGMENTS:
             if frag in token:
                 raise SandboxRefused(f"path fragment {frag!r} rejected in argument {token!r}")
+        # Phase 15c filesystem allowlist: an absolute-path argument must
+        # resolve inside the repo tree. This catches absolute paths the
+        # fragment blacklist does not know about (anything outside /etc, /var).
+        if token.startswith("/"):
+            resolved = Path(token).resolve()
+            if resolved != _REPO_ROOT and _REPO_ROOT not in resolved.parents:
+                raise SandboxRefused(
+                    f"absolute path {token!r} resolves outside the repo sandbox"
+                )
 
 
 def _truncate(text: str, cap: int) -> str:
@@ -113,11 +139,22 @@ def run_constrained(cmd: str, *, timeout: int | None = None) -> SandboxResult:
     _check_metachars(argv)
     _check_paths(argv)
 
-    env = {"PATH": _SAFE_PATH, "HOME": str(_REPO_ROOT), "LC_ALL": "C", "LANG": "C"}
+    # Phase 15c: dispatch the resolved absolute path; the child gets PATH=""
+    # so it cannot spawn further programs by bare name.
+    resolved = _PROGRAM_PATHS.get(program)
+    if resolved is None:
+        logger.warning("sandbox_not_installed", extra={"argv": argv})
+        return SandboxResult(
+            stdout="", stderr=f"(not installed: {program})",
+            exit_code=-1, latency_ms=0, argv=tuple(argv),
+        )
+    exec_argv = [resolved, *argv[1:]]
+
+    env = {"PATH": "", "HOME": str(_REPO_ROOT), "LC_ALL": "C", "LANG": "C"}
     t0 = time.monotonic()
     try:
         proc = subprocess.run(
-            argv,
+            exec_argv,
             shell=False,
             env=env,
             cwd=str(_REPO_ROOT),
