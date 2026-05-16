@@ -62,7 +62,7 @@ def _seed_trace_row() -> int:
     )
     store.append_governance_decision(
         workflow_run_id=wf, intent="technical", risk="low",
-        confidence=0.83, reversibility=None, action="auto",
+        confidence=0.83, reversibility="reversible", action="auto",
     )
     return wf
 
@@ -107,8 +107,9 @@ def test_render_trace_includes_classification_workflow_agents_governance():
     assert 0 <= arch_idx < eval_idx
     # evaluator confidence shows
     assert "conf=0.83" in out
-    # governance line
+    # governance line, with the Phase-14 reversibility field
     assert "action=auto" in out
+    assert "rev=reversible" in out
 
 
 def test_render_trace_renders_repair_line_under_failing_agent():

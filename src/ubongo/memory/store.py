@@ -773,7 +773,7 @@ def last_n_governance_decisions(n: int = 10) -> list[dict]:
     rows = conn.execute(
         """
         SELECT g.id, g.decided_at, g.intent, g.risk, g.confidence, g.action,
-               g.workflow_run_id, w.execution_mode, w.workflow
+               g.reversibility, g.workflow_run_id, w.execution_mode, w.workflow
         FROM governance_decisions g
         JOIN workflow_runs w ON w.id = g.workflow_run_id
         ORDER BY g.decided_at DESC, g.id DESC
@@ -795,6 +795,7 @@ def last_n_governance_decisions(n: int = 10) -> list[dict]:
             "intent": row["intent"],
             "risk": row["risk"],
             "confidence": row["confidence"],
+            "reversibility": row["reversibility"],
             "action": row["action"],
             "workflow_run_id": row["workflow_run_id"],
             "execution_mode": row["execution_mode"],
@@ -846,7 +847,7 @@ def last_n_workflow_runs(n: int = 1) -> list[dict]:
     ).fetchall()
     gd_rows = conn.execute(
         f"""
-        SELECT id, workflow_run_id, intent, risk, confidence, action
+        SELECT id, workflow_run_id, intent, risk, confidence, reversibility, action
         FROM governance_decisions
         WHERE workflow_run_id IN ({placeholders})
         ORDER BY workflow_run_id, id
@@ -895,6 +896,7 @@ def last_n_workflow_runs(n: int = 1) -> list[dict]:
             "confidence": row["confidence"],
             "intent": row["intent"],
             "risk": row["risk"],
+            "reversibility": row["reversibility"],
         }
 
     rr_by_wf: dict[int, list[dict]] = {wf_id: [] for wf_id in wf_ids}

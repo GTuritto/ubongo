@@ -168,12 +168,13 @@ def _render_decisions_table(n: int = 10) -> str:
         persona = (r["persona"] or "—")[:10]
         mode = (r["execution_mode"] or "—")[:10]
         risk = (r["risk"] or "—")[:8]
+        rev = (r.get("reversibility") or "—")[:12]
         conf = "—" if r["confidence"] is None else f"{r['confidence']:.2f}"
         action = r["action"]
         lines.append(
             f"  {r['id']:>4}  {_format_time(r['decided_at'])}  "
             f"{intent:>10}  {persona:>10}  {mode:>10}  "
-            f"{risk:>8}  {conf:>5}  {action}"
+            f"{risk:>8}  {rev:>12}  {conf:>5}  {action}"
         )
     return "\n".join(lines)
 
@@ -294,7 +295,8 @@ def _render_trace(n: int = 1) -> str:
             conf = "—" if gov["confidence"] is None else f"{gov['confidence']:.2f}"
             gov_line = (
                 f"governance: action={gov['action']}  conf={conf}  "
-                f"intent={gov.get('intent') or '—'}  risk={gov.get('risk') or '—'}"
+                f"intent={gov.get('intent') or '—'}  risk={gov.get('risk') or '—'}  "
+                f"rev={gov.get('reversibility') or '—'}"
             )
         else:
             gov_line = "governance: (no decision)"
