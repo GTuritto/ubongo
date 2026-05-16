@@ -200,11 +200,18 @@ def test_execute_dispatches_before_and_after_events():
 # --- decide ---
 
 
+def _decide_wf() -> Workflow:
+    return Workflow(
+        persona="casual", model="m", skill_name=None,
+        execution_mode="sequential", agents=("casual",),
+    )
+
+
 def test_decide_returns_auto_stub():
     agent = MasterAgent()
     ctx = Context(conversation_id=1, persona="casual", auto_mode=False, pending_skill=None)
     result = WorkflowResult(text="ok", ok=True, tokens_in=1, tokens_out=1, model="m", latency_ms=1)
-    decision = agent.decide(_classification(), result, ctx)
+    decision = agent.decide(_classification(), _decide_wf(), result, "hi", ctx)
     assert decision.action == "auto"
 
 
@@ -215,7 +222,7 @@ def test_decide_dispatches_govern_events():
     events.register("after_govern", lambda _p: seen.append("after"))
     ctx = Context(conversation_id=1, persona="casual", auto_mode=False, pending_skill=None)
     result = WorkflowResult(text="ok", ok=True, tokens_in=1, tokens_out=1, model="m", latency_ms=1)
-    agent.decide(_classification(), result, ctx)
+    agent.decide(_classification(), _decide_wf(), result, "hi", ctx)
     assert seen == ["before", "after"]
 
 
@@ -224,7 +231,7 @@ def test_decide_falls_back_on_internal_error():
     ctx = Context(conversation_id=1, persona="casual", auto_mode=False, pending_skill=None)
     result = WorkflowResult(text="ok", ok=True, tokens_in=1, tokens_out=1, model="m", latency_ms=1)
     with patch("ubongo.master.governance_decide", side_effect=RuntimeError("matrix down")):
-        decision = agent.decide(_classification(), result, ctx)
+        decision = agent.decide(_classification(), _decide_wf(), result, "hi", ctx)
     assert decision.action == "auto"
     assert decision.reason == "fallback_on_error"
 

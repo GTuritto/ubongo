@@ -241,7 +241,9 @@ class MasterAgent:
     def decide(
         self,
         classification: Classification,
+        workflow: Workflow,
         workflow_result: WorkflowResult,
+        message: str,
         ctx: Context,
     ) -> Decision:
         events.dispatch(
@@ -254,8 +256,9 @@ class MasterAgent:
         try:
             decision = governance_decide(
                 classification,
+                workflow,
                 workflow_result,
-                evaluator_confidence=workflow_result.evaluator_confidence,
+                message=message,
             )
         except Exception as exc:
             logger.warning(
@@ -407,7 +410,7 @@ class MasterAgent:
         # Phase 10: governance runs before the assistant-message commit so a
         # `reject` decision can override the response text. The rejection is
         # the assistant turn; persist it so /recall and the vault are coherent.
-        decision = self.decide(classification, result, ctx)
+        decision = self.decide(classification, workflow, result, message, ctx)
         rejected = decision.action == Action.REJECT.value
         if rejected:
             result = WorkflowResult(
