@@ -104,3 +104,18 @@ def test_coding_honors_override_model_from_metadata():
     with patch("ubongo.agents.coding.complete", return_value=_completion()) as m:
         agent.run(inp, context=None)
     assert m.call_args.kwargs["model"] == "fallback-m"
+
+
+def test_coding_appends_repair_prompt_hint_and_max_tokens_override():
+    agent = CodingAgent()
+    inp = AgentInput(
+        message="x", history=({"role": "user", "content": "x"},),
+        summary_text=None, prior_findings=(),
+        metadata={"repair_prompt_hint": "Be concise.", "max_tokens_override": 200},
+    )
+    with patch("ubongo.agents.coding.complete", return_value=_completion()) as m:
+        agent.run(inp, context=None)
+    sp = m.call_args.kwargs["system_prompt"]
+    assert "## Repair guidance" in sp
+    assert "Be concise." in sp
+    assert m.call_args.kwargs["max_tokens"] == 200

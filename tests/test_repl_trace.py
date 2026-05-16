@@ -111,6 +111,56 @@ def test_render_trace_includes_classification_workflow_agents_governance():
     assert "action=auto" in out
 
 
+def test_render_trace_renders_repair_line_under_failing_agent():
+    """Phase 13e: when a workflow has repair_runs, the renderer attaches a
+    `repair: kind=… strategy=… outcome=… peer=…` line indented under the
+    affected agent_runs row."""
+    conv = store.current_or_new_conversation("architect")
+    msg = store.append_message(conv, "user", "x", persona="architect")
+    wf = store.append_workflow_run(
+        conversation_id=conv, message_id=msg,
+        classification={"intent": "technical", "confidence": 0.7},
+        workflow={"persona": "architect", "execution_mode": "sequential",
+                  "agents": ["critic", "architect"]},
+        execution_mode="sequential",
+        outcome="repaired",
+        started_at=store.now_iso(),
+    )
+    started = store.now_iso()
+    store.append_agent_run(
+        workflow_run_id=wf, agent="critic", model="m",
+        input={}, output={"error": "critic_no_candidate"},
+        confidence=None, tokens_in=0, tokens_out=0, latency_ms=10,
+        outcome="failure", started_at=started, ended_at=store.now_iso(),
+    )
+    store.append_agent_run(
+        workflow_run_id=wf, agent="architect", model="m",
+        input={}, output={}, confidence=None,
+        tokens_in=10, tokens_out=20, latency_ms=100,
+        outcome="success", started_at=started, ended_at=store.now_iso(),
+        retried=True,
+    )
+    store.append_repair_run(
+        workflow_run_id=wf, agent="critic",
+        failure_kind="precondition_missing",
+        original_error="critic_no_candidate",
+        strategy_attempted="replace_with_peer",
+        peer_agent="architect", override_model=None,
+        attempt_index=0, outcome="recovered",
+        started_at=started, ended_at=store.now_iso(),
+    )
+    out = _render_trace(1)
+    # Repair line present and includes the key fields.
+    assert "repair: kind=precondition_missing" in out
+    assert "strategy=replace_with_peer" in out
+    assert "outcome=recovered" in out
+    assert "peer=architect" in out
+    # Indented under the critic failure row (the failing agent_run).
+    critic_idx = out.find("critic ")
+    repair_idx = out.find("repair: kind=")
+    assert 0 <= critic_idx < repair_idx
+
+
 def test_render_trace_multi():
     # seed two rows
     _seed_trace_row()

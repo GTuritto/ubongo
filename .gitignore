@@ -36,6 +36,23 @@ htmlcov/
 .history/
 .claude/worktrees/
 .claude/handoffs/
+.claude/settings.local.json
+*.code-workspace
+
+# Other AI coding tools' scratch dirs (not used by this project)
+.agent/
+.codex/
+.gemini/
+.windsurf/
+
+# Generic tool-synced skills/commands (OpenSpec workflow tooling, skill-browser).
+# Not authored for this project. Project-specific skills/commands created
+# under .claude/ are NOT covered by these patterns and stay tracked.
+.claude/commands/opsx/
+.claude/skills/openspec-*/
+.claude/skills/skill-browser/
+.github/prompts/
+.github/skills/
 
 # OS
 .DS_Store

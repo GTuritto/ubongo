@@ -100,7 +100,11 @@ def test_error_path_enqueues_with_source_error_and_skips_after_send(capsys) -> N
 
     assert rc == 1
     out = capsys.readouterr().out.strip()
-    assert out == "Sorry, I couldn't reach the model. Check the logs."
+    # Phase 13f: the apology template replaces the generic "Sorry..."
+    # whenever Repair exhausted its ladder (which is the common case for
+    # a forced LLM failure). The same Phase-7 queue contract still holds:
+    # source='error', after_send NOT fired.
+    assert "couldn't recover" in out
 
     rows = _queue_rows()
     assert len(rows) == 1

@@ -259,7 +259,323 @@ class WorkflowRunner:
             evaluator_confidence=evaluator_confidence,
         )
 
-    # ---------- sequential mode (Phase 9 baseline + Phase 11 Repair) ----------
+    # ---------- Phase 13b: multi-strategy recovery helper (sequential) ----------
+
+    def _persist_repair_run(
+        self,
+        *,
+        workflow_run_id: int | None,
+        agent_name: str,
+        failure_kind: str,
+        original_error: str | None,
+        strategy_attempted: str,
+        peer_agent: str | None,
+        override_model: str | None,
+        attempt_index: int,
+        outcome: str,
+        started_at: str,
+        ended_at: str | None,
+    ) -> None:
+        """Phase 13e: persist one repair_runs row. No-op when workflow_run_id
+        is None (test paths that bypass master.handle)."""
+        if workflow_run_id is None:
+            return
+        store.append_repair_run(
+            workflow_run_id=workflow_run_id,
+            agent=agent_name,
+            failure_kind=failure_kind,
+            original_error=original_error,
+            strategy_attempted=strategy_attempted,
+            peer_agent=peer_agent,
+            override_model=override_model,
+            attempt_index=attempt_index,
+            outcome=outcome,
+            started_at=started_at,
+            ended_at=ended_at,
+        )
+
+    async def _recover_or_give_up(
+        self,
+        *,
+        agent,
+        agent_name: str,
+        original_result: AgentResult,
+        message: str,
+        history: list,
+        summary_text: str | None,
+        prior_findings: list[str],
+        workflow: "Workflow",
+        context: "Context",
+        workflow_run_id: int | None,
+    ) -> AgentResult:
+        """Walk RepairAgent.plan_recovery() until a strategy recovers or
+        returns ABORT. Each retry dispatches the agent again with the
+        plan's overrides (model, prompt_hint, max_tokens cap). Returns the
+        final AgentResult (still ok=False on ladder exhaustion).
+
+        Phase 13b implements RETRY_*_VARIANT_PROMPT, RETRY_DIFFERENT_MODEL,
+        and RETRY_SMALLER_MODEL strategies. REPLACE_WITH_PEER is treated as
+        ABORT here; Phase 13c wires the actual peer dispatch.
+        """
+        from ubongo.agents.repair import Strategy, _classify_failure
+
+        repair = self.registry.get("repair")
+        if repair is None or not hasattr(repair, "plan_recovery"):
+            return original_result
+
+        # Phase 13e: classify once for the audit row(s).
+        failure_kind = _classify_failure(agent_name, original_result.error).value
+        original_error = original_result.error
+
+        attempts: list[Strategy] = []
+        result = original_result
+        while True:
+            plan = repair.plan_recovery(
+                failed_agent=agent_name,
+                original=result,
+                attempts_so_far=tuple(attempts),
+            )
+            if plan.strategy is Strategy.ABORT:
+                logger.info(
+                    "repair_abort",
+                    extra={
+                        "agent": agent_name,
+                        "attempts": len(attempts),
+                        "reason": plan.reason,
+                    },
+                )
+                # Persist a single ABORT row so /trace shows the give-up
+                # decision and Phase 17's fitness math can see "this kind
+                # of failure exhausted N strategies".
+                abort_ts = store.now_iso()
+                self._persist_repair_run(
+                    workflow_run_id=workflow_run_id,
+                    agent_name=agent_name,
+                    failure_kind=failure_kind,
+                    original_error=original_error,
+                    strategy_attempted=plan.strategy.value,
+                    peer_agent=None,
+                    override_model=None,
+                    attempt_index=len(attempts),
+                    outcome="aborted",
+                    started_at=abort_ts,
+                    ended_at=abort_ts,
+                )
+                return result
+            if plan.strategy is Strategy.REPLACE_WITH_PEER:
+                # 13c: dispatch the peer in the failing agent's slot. The
+                # peer's agent_runs row records under ITS real name (not
+                # the failed agent's name) so /decisions and joins stay
+                # honest. The substitution is observable via repair_runs
+                # (Phase 13e) and the row's retried=1 flag.
+                attempts.append(plan.strategy)
+                peer = self.registry.get(plan.peer_agent or "")
+                if peer is None:
+                    logger.warning(
+                        "repair_peer_not_registered",
+                        extra={"agent": agent_name, "peer": plan.peer_agent},
+                    )
+                    # Audit the strategy-was-tried-but-couldn't-execute case.
+                    abort_ts = store.now_iso()
+                    self._persist_repair_run(
+                        workflow_run_id=workflow_run_id,
+                        agent_name=agent_name,
+                        failure_kind=failure_kind,
+                        original_error=original_error,
+                        strategy_attempted=plan.strategy.value,
+                        peer_agent=plan.peer_agent,
+                        override_model=None,
+                        attempt_index=len(attempts) - 1,
+                        outcome="failed",
+                        started_at=abort_ts,
+                        ended_at=abort_ts,
+                    )
+                    return result
+                logger.info(
+                    "agent_replace_with_peer",
+                    extra={
+                        "agent": agent_name,
+                        "peer": plan.peer_agent,
+                        "attempt_index": len(attempts) - 1,
+                    },
+                )
+                peer_started_at = store.now_iso()
+                peer_result = await self._dispatch_agent_async(
+                    agent=peer,
+                    agent_name=plan.peer_agent,
+                    message=message,
+                    history=history,
+                    summary_text=summary_text,
+                    prior_findings=prior_findings,
+                    workflow=workflow,
+                    context=context,
+                    workflow_run_id=workflow_run_id,
+                    override_model=None,
+                    retried=True,
+                )
+                peer_ended_at = store.now_iso()
+                self._persist_repair_run(
+                    workflow_run_id=workflow_run_id,
+                    agent_name=agent_name,
+                    failure_kind=failure_kind,
+                    original_error=original_error,
+                    strategy_attempted=plan.strategy.value,
+                    peer_agent=plan.peer_agent,
+                    override_model=None,
+                    attempt_index=len(attempts) - 1,
+                    outcome="recovered" if peer_result.ok else "failed",
+                    started_at=peer_started_at,
+                    ended_at=peer_ended_at,
+                )
+                if peer_result.ok:
+                    return peer_result
+                # Peer also failed; loop continues. Keep `result` pointing
+                # at the ORIGINAL failure so plan_recovery classifies
+                # against the original agent's error kind, not the peer's.
+                continue
+
+            attempts.append(plan.strategy)
+            extra_metadata: dict = {}
+            if plan.prompt_hint:
+                extra_metadata["repair_prompt_hint"] = plan.prompt_hint
+            if plan.max_tokens_cap:
+                extra_metadata["max_tokens_override"] = plan.max_tokens_cap
+
+            logger.info(
+                "agent_retry",
+                extra={
+                    "agent": agent_name,
+                    "strategy": plan.strategy.value,
+                    "model": plan.override_model,
+                    "attempt_index": len(attempts) - 1,
+                },
+            )
+            retry_started_at = store.now_iso()
+            result = await self._dispatch_agent_async(
+                agent=agent,
+                agent_name=agent_name,
+                message=message,
+                history=history,
+                summary_text=summary_text,
+                prior_findings=prior_findings,
+                workflow=workflow,
+                context=context,
+                workflow_run_id=workflow_run_id,
+                override_model=plan.override_model,
+                retried=True,
+                extra_metadata=extra_metadata or None,
+            )
+            retry_ended_at = store.now_iso()
+            self._persist_repair_run(
+                workflow_run_id=workflow_run_id,
+                agent_name=agent_name,
+                failure_kind=failure_kind,
+                original_error=original_error,
+                strategy_attempted=plan.strategy.value,
+                peer_agent=None,
+                override_model=plan.override_model,
+                attempt_index=len(attempts) - 1,
+                outcome="recovered" if result.ok else "failed",
+                started_at=retry_started_at,
+                ended_at=retry_ended_at,
+            )
+            if result.ok:
+                return result
+
+    # ---------- Phase 13c: peer-replacement helper for fan-out modes ----------
+
+    async def _maybe_replace_failed(
+        self,
+        *,
+        agent_name: str,
+        original_result: AgentResult,
+        message: str,
+        history: list,
+        summary_text: str | None,
+        prior_findings: list[str],
+        workflow: "Workflow",
+        context: "Context",
+        workflow_run_id: int | None,
+    ) -> tuple[AgentResult, str | None] | None:
+        """Ask Repair for the FIRST recovery plan only; if it's
+        REPLACE_WITH_PEER, dispatch the peer and return (result, peer_name).
+        Otherwise return None (caller keeps the original failure).
+
+        All five fan-out modes (parallel, collaborative, competitive,
+        debate, speculative) use this instead of the full sequential
+        ladder: multi-strategy cancel-and-retry inside asyncio.gather is
+        ambiguous, but a single peer substitution is a clean one-hop
+        replacement.
+        """
+        from ubongo.agents.repair import Strategy, _classify_failure
+
+        repair = self.registry.get("repair")
+        if repair is None or not hasattr(repair, "plan_recovery"):
+            return None
+        plan = repair.plan_recovery(
+            failed_agent=agent_name,
+            original=original_result,
+            attempts_so_far=(),
+        )
+        if plan.strategy is not Strategy.REPLACE_WITH_PEER or not plan.peer_agent:
+            return None
+        peer = self.registry.get(plan.peer_agent)
+        failure_kind = _classify_failure(agent_name, original_result.error).value
+        if peer is None:
+            logger.warning(
+                "repair_peer_not_registered",
+                extra={"agent": agent_name, "peer": plan.peer_agent},
+            )
+            abort_ts = store.now_iso()
+            self._persist_repair_run(
+                workflow_run_id=workflow_run_id,
+                agent_name=agent_name,
+                failure_kind=failure_kind,
+                original_error=original_result.error,
+                strategy_attempted=plan.strategy.value,
+                peer_agent=plan.peer_agent,
+                override_model=None,
+                attempt_index=0,
+                outcome="failed",
+                started_at=abort_ts,
+                ended_at=abort_ts,
+            )
+            return None
+        logger.info(
+            "agent_replace_with_peer_fanout",
+            extra={"agent": agent_name, "peer": plan.peer_agent},
+        )
+        started_at = store.now_iso()
+        peer_result = await self._dispatch_agent_async(
+            agent=peer,
+            agent_name=plan.peer_agent,
+            message=message,
+            history=history,
+            summary_text=summary_text,
+            prior_findings=prior_findings,
+            workflow=workflow,
+            context=context,
+            workflow_run_id=workflow_run_id,
+            override_model=None,
+            retried=True,
+        )
+        ended_at = store.now_iso()
+        self._persist_repair_run(
+            workflow_run_id=workflow_run_id,
+            agent_name=agent_name,
+            failure_kind=failure_kind,
+            original_error=original_result.error,
+            strategy_attempted=plan.strategy.value,
+            peer_agent=plan.peer_agent,
+            override_model=None,
+            attempt_index=0,
+            outcome="recovered" if peer_result.ok else "failed",
+            started_at=started_at,
+            ended_at=ended_at,
+        )
+        return (peer_result, plan.peer_agent)
+
+    # ---------- sequential mode (Phase 9 baseline + Phase 13 Repair ladder) ----------
 
     async def _run_sequential(
         self,
@@ -276,7 +592,6 @@ class WorkflowRunner:
         last_composer_result: AgentResult | None = None
         evaluator_confidence: float | None = None
         any_failure = False
-        retried_agents: set[str] = set()
 
         repair = self.registry.get("repair")
 
@@ -304,40 +619,21 @@ class WorkflowRunner:
                 retried=False,
             )
 
-            # Phase 11d: on failure, ask Repair for a single retry (sequential only).
-            if (
-                not result.ok
-                and repair is not None
-                and agent_name not in retried_agents
-                and hasattr(repair, "plan_retry")
-            ):
-                input_for_plan = AgentInput(
+            # Phase 13b: on failure, walk the Repair strategy ladder. Each
+            # strategy is one fresh dispatch; loop until ok or ABORT.
+            if not result.ok and repair is not None and hasattr(repair, "plan_recovery"):
+                result = await self._recover_or_give_up(
+                    agent=agent,
+                    agent_name=agent_name,
+                    original_result=result,
                     message=message,
-                    history=tuple(history),
+                    history=history,
                     summary_text=summary_text,
-                    prior_findings=tuple(prior_findings),
-                    metadata={"persona": workflow.persona, "skill": workflow.skill_name},
+                    prior_findings=prior_findings,
+                    workflow=workflow,
+                    context=context,
+                    workflow_run_id=workflow_run_id,
                 )
-                plan = repair.plan_retry(agent_name, result, input_for_plan)
-                if plan is not None:
-                    retried_agents.add(agent_name)
-                    logger.info(
-                        "agent_retry",
-                        extra={"agent": agent_name, "model": plan.get("model")},
-                    )
-                    result = await self._dispatch_agent_async(
-                        agent=agent,
-                        agent_name=agent_name,
-                        message=message,
-                        history=history,
-                        summary_text=summary_text,
-                        prior_findings=prior_findings,
-                        workflow=workflow,
-                        context=context,
-                        workflow_run_id=workflow_run_id,
-                        override_model=plan.get("model"),
-                        retried=True,
-                    )
 
             if result.ok:
                 if result.text:
@@ -369,8 +665,9 @@ class WorkflowRunner:
         """Fan out every agent in workflow.agents via asyncio.gather.
 
         - Every agent sees prior_findings == () (no inter-agent threading).
-        - Repair retry does not fire in parallel mode (cancel-and-retry semantics
-          are ambiguous; Phase 13 may revisit).
+        - Phase 13c: per-producer peer replacement via _maybe_replace_failed
+          (the only Repair strategy fan-out modes use; cancel-and-retry
+          semantics in asyncio.gather are still ambiguous).
         - last-composer-wins still holds, picked by INDEX in workflow.agents
           (deterministic, even though tasks finish in any order).
         - WorkflowResult.ok requires every agent to succeed.
@@ -407,6 +704,29 @@ class WorkflowRunner:
             for name, agent in zip(agent_names, agents)
         ]
         results: list[AgentResult] = await asyncio.gather(*tasks)
+
+        # Phase 13c: per-failure peer replacement. Single hop only.
+        for i, (name, result) in enumerate(zip(agent_names, results)):
+            if result.ok:
+                continue
+            replaced = await self._maybe_replace_failed(
+                agent_name=name,
+                original_result=result,
+                message=message,
+                history=history,
+                summary_text=summary_text,
+                prior_findings=[],
+                workflow=workflow,
+                context=context,
+                workflow_run_id=workflow_run_id,
+            )
+            if replaced is not None:
+                peer_result, peer_name = replaced
+                if peer_result.ok:
+                    results[i] = peer_result
+                    peer_agent = self.registry.get(peer_name)
+                    if peer_agent is not None:
+                        agents[i] = peer_agent
 
         last_ok_result: AgentResult | None = None
         last_composer_result: AgentResult | None = None
@@ -494,6 +814,25 @@ class WorkflowRunner:
             for name, agent in zip(competitor_names, competitor_agents)
         ]
         results: list[AgentResult] = await asyncio.gather(*tasks)
+
+        # Phase 13c: per-failure peer replacement before ranking, so a
+        # recovered candidate still competes. Single hop only (fan-out rule).
+        for i, (name, result) in enumerate(zip(competitor_names, results)):
+            if result.ok:
+                continue
+            replaced = await self._maybe_replace_failed(
+                agent_name=name,
+                original_result=result,
+                message=message,
+                history=history,
+                summary_text=summary_text,
+                prior_findings=[],
+                workflow=workflow,
+                context=context,
+                workflow_run_id=workflow_run_id,
+            )
+            if replaced is not None and replaced[0].ok:
+                results[i] = replaced[0]
 
         ok_pairs = [(n, r) for n, r in zip(competitor_names, results) if r.ok]
         if not ok_pairs:
@@ -619,6 +958,33 @@ class WorkflowRunner:
         ]
         results: list[AgentResult] = await asyncio.gather(*tasks)
 
+        # Phase 13c: for each failed producer, ask Repair if peer-replacement
+        # applies. If so, the peer's result takes that slot (with the peer's
+        # role heading); /trace shows the peer's agent_runs row under its
+        # real name. The smoke 12.4 fix routes critic_no_candidate to
+        # architect, restoring the merged-doc's critic section.
+        for i, (name, agent, result) in enumerate(zip(producer_names, producer_agents, results)):
+            if result.ok:
+                continue
+            replaced = await self._maybe_replace_failed(
+                agent_name=name,
+                original_result=result,
+                message=message,
+                history=history,
+                summary_text=summary_text,
+                prior_findings=[],
+                workflow=workflow,
+                context=context,
+                workflow_run_id=workflow_run_id,
+            )
+            if replaced is not None:
+                peer_result, peer_name = replaced
+                if peer_result.ok:
+                    results[i] = peer_result
+                    peer_agent = self.registry.get(peer_name)
+                    if peer_agent is not None:
+                        producer_agents[i] = peer_agent
+
         # Structural merge: one section per ok producer, ordered by
         # workflow.agents (deterministic).
         sections: list[str] = []
@@ -714,16 +1080,20 @@ class WorkflowRunner:
 
         transcript: list[tuple[str, str]] = []  # [(speaker, text), ...]
         any_failure = False
+        # Phase 13c: a debater recovered by peer replacement keeps that peer
+        # for the rest of the turn (original speaker name -> peer name).
+        substitutions: dict[str, str] = {}
 
         for round_no in range(rounds):
             for speaker in (debater_a_name, debater_b_name):
-                agent = self.registry[speaker]
+                actual = substitutions.get(speaker, speaker)
+                agent = self.registry[actual]
                 prior = [f"## Round {i // 2 + 1} — {sp}\n\n{txt}"
                          for i, (sp, txt) in enumerate(transcript)]
                 debate_role = "challenge" if transcript else None
                 result = await self._dispatch_agent_async(
                     agent=agent,
-                    agent_name=speaker,
+                    agent_name=actual,
                     message=message,
                     history=history,
                     summary_text=summary_text,
@@ -736,13 +1106,31 @@ class WorkflowRunner:
                     extra_metadata=({"debate_role": debate_role} if debate_role else None),
                 )
                 if not result.ok:
+                    # Phase 13c: one peer substitution before short-circuiting,
+                    # so a failed debater does not drop a voice from synthesis.
+                    replaced = await self._maybe_replace_failed(
+                        agent_name=actual,
+                        original_result=result,
+                        message=message,
+                        history=history,
+                        summary_text=summary_text,
+                        prior_findings=prior,
+                        workflow=workflow,
+                        context=context,
+                        workflow_run_id=workflow_run_id,
+                    )
+                    if replaced is not None and replaced[0].ok:
+                        peer_result, peer_name = replaced
+                        substitutions[speaker] = peer_name
+                        transcript.append((peer_name, peer_result.text))
+                        continue
                     any_failure = True
                     logger.warning(
                         "debate_short_circuit",
-                        extra={"speaker": speaker, "round": round_no + 1},
+                        extra={"speaker": actual, "round": round_no + 1},
                     )
                     break
-                transcript.append((speaker, result.text))
+                transcript.append((actual, result.text))
             else:
                 continue
             break  # debate short-circuited; jump to synthesis with whatever exists
@@ -848,6 +1236,26 @@ class WorkflowRunner:
 
         cheap_result = cheap_task.result() if cheap_task.done() and not cheap_task.cancelled() else None
         strong_result = strong_task.result() if strong_task.done() and not strong_task.cancelled() else None
+
+        # Phase 13c: cheap is the speculative leader. If it ran but failed,
+        # attempt one peer substitution before falling back to strong. A
+        # timed-out cheap (no AgentResult) skips replacement — strong is the
+        # natural fallback there. A failed strong while cheap is ok is left
+        # alone: the successful leader already satisfies the turn.
+        if cheap_result is not None and not cheap_result.ok:
+            replaced = await self._maybe_replace_failed(
+                agent_name=cheap_name,
+                original_result=cheap_result,
+                message=message,
+                history=history,
+                summary_text=summary_text,
+                prior_findings=[],
+                workflow=workflow,
+                context=context,
+                workflow_run_id=workflow_run_id,
+            )
+            if replaced is not None and replaced[0].ok:
+                cheap_result = replaced[0]
 
         # Pick base: prefer cheap (speculative payoff). Fall back to strong.
         if cheap_result and cheap_result.ok:

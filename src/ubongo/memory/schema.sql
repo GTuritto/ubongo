@@ -79,6 +79,22 @@ CREATE TABLE IF NOT EXISTS governance_decisions (
   decided_at TIMESTAMP NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS repair_runs (
+  id INTEGER PRIMARY KEY,
+  workflow_run_id INTEGER NOT NULL REFERENCES workflow_runs(id),
+  agent TEXT NOT NULL,                           -- the agent that failed
+  failure_kind TEXT NOT NULL,                    -- FailureKind value
+  original_error TEXT,                           -- AgentResult.error string
+  strategy_attempted TEXT NOT NULL,              -- Strategy value
+  peer_agent TEXT,                               -- when strategy=replace_with_peer
+  override_model TEXT,                           -- when strategy=*_model_*
+  attempt_index INTEGER NOT NULL,                -- 0-based per failed agent
+  outcome TEXT NOT NULL CHECK (outcome IN ('recovered', 'failed', 'aborted')),
+  started_at TIMESTAMP NOT NULL,
+  ended_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_repair_runs_workflow ON repair_runs(workflow_run_id);
+
 CREATE TABLE IF NOT EXISTS evolution_lineage (
   id INTEGER PRIMARY KEY,
   target TEXT NOT NULL,

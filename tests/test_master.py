@@ -267,10 +267,20 @@ def test_handle_happy_path_returns_response_with_token():
 
 
 def test_handle_error_path_returns_polite_message_and_ok_false():
+    """Phase 13f: when the persona LLM fails and Repair exhausts the ladder,
+    Master returns the unrecoverable-apology template (not the generic
+    "Sorry, I couldn't reach the model" string from pre-Phase-13).
+
+    Also: Response.requires_user_decision=True so the REPL can prompt for
+    a y/n retry; repair_summary captures what was attempted."""
     with patch("ubongo.agents.personas.complete", side_effect=LLMError("boom", cause=RuntimeError("nope"))):
         response = master.handle("hi", "casual", auto_mode=False)
     assert response.ok is False
-    assert "Sorry, I couldn't reach the model" in response.text
+    assert "couldn't recover" in response.text
+    assert "casual" in response.text  # failing agent named
+    assert response.requires_user_decision is True
+    assert response.repair_summary is not None
+    assert response.repair_summary["failing_agent"] == "casual"
 
 
 def test_handle_appends_user_and_assistant_messages_on_success():
@@ -338,6 +348,111 @@ def test_handle_persists_workflow_run_with_failure_outcome_on_llm_error():
     # decision still recorded with action=auto (Phase 14 will downgrade)
     gd = _query_one("SELECT action FROM governance_decisions")
     assert gd["action"] == "auto"
+
+
+# --- Phase 13d: WriteBuffer rollback regression ---
+
+
+def test_handle_failure_does_not_persist_assistant_message_or_vault():
+    """Phase 13d formalizes: when result.ok=False after Repair gives up,
+    the WriteBuffer drops the staged assistant-message commit. No
+    `messages` row for the assistant turn, no vault append for today.
+
+    The Phase-7 queue still records the row with source='error' (that's
+    audit, not result). The user message is committed inline (it's input,
+    not output) so it stays."""
+    from datetime import datetime, timezone
+
+    with patch("ubongo.agents.personas.complete", side_effect=LLMError("boom", cause=RuntimeError("nope"))):
+        master.handle("hi", "casual", auto_mode=False)
+
+    # No assistant row.
+    messages = store.last_n_messages(1, 10)
+    roles = [m.role for m in messages]
+    assert roles == ["user"]
+
+    # Queue row marked source='error'.
+    queue_row = _query_one("SELECT source FROM notification_queue ORDER BY id DESC LIMIT 1")
+    assert queue_row is not None and queue_row["source"] == "error"
+
+    # No agent_runs row for "memory" — the buffer dropped the staged
+    # commit, so the memory bookkeeping never ran.
+    mem_rows = store.connection().execute(
+        "SELECT COUNT(*) AS n FROM agent_runs WHERE agent = 'memory'"
+    ).fetchone()
+    assert mem_rows["n"] == 0
+
+
+def test_handle_response_no_repair_summary_when_no_failure():
+    """Happy path: no repair fired, no summary, no y/n prompt."""
+    with patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
+        response = master.handle("hi", "casual", auto_mode=False)
+    assert response.ok is True
+    assert response.requires_user_decision is False
+    assert response.repair_summary is None
+
+
+def test_handle_repair_summary_aggregates_attempts():
+    """Phase 13f: repair_summary captures attempts count + last attempt's
+    kind/strategy/agent/error."""
+    with patch("ubongo.agents.personas.complete", side_effect=LLMError("boom", cause=RuntimeError("x"))):
+        response = master.handle("hi", "casual", auto_mode=False)
+    assert response.repair_summary is not None
+    assert response.repair_summary["attempts"] >= 1
+    assert response.repair_summary["failing_agent"] == "casual"
+    assert response.repair_summary["last_kind"] in (
+        "model_error", "abort",  # the final row may be the ABORT terminator
+    )
+
+
+def test_handle_workflow_run_outcome_repaired_when_recovery_succeeded():
+    """Phase 13e: when Repair fires and recovers, workflow_runs.outcome
+    is 'repaired' (not plain 'success')."""
+    # Seed: the runner produces a repair_runs row directly. We avoid mocking
+    # the full ladder by inserting one via the store post-execute. The
+    # master.handle path then re-queries repair_runs and flips the outcome.
+    # Easier path: monkeypatch the runner to record a repair attempt.
+    from ubongo import runner as runner_module
+
+    real_execute = runner_module.WorkflowRunner.execute
+
+    def execute_with_repair_row(self, workflow, ctx, message, workflow_run_id=None):
+        result = real_execute(self, workflow, ctx, message, workflow_run_id=workflow_run_id)
+        if workflow_run_id is not None:
+            store.append_repair_run(
+                workflow_run_id=workflow_run_id,
+                agent="architect", failure_kind="model_error",
+                original_error="persona_llm_error",
+                strategy_attempted="retry_different_model_same_prompt",
+                peer_agent=None, override_model="fallback-m",
+                attempt_index=0, outcome="recovered",
+                started_at=store.now_iso(), ended_at=store.now_iso(),
+            )
+        return result
+
+    with patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
+        with patch.object(runner_module.WorkflowRunner, "execute", execute_with_repair_row):
+            master.handle("hi", "casual", auto_mode=False)
+
+    wf = _query_one("SELECT outcome FROM workflow_runs ORDER BY id DESC LIMIT 1")
+    assert wf is not None
+    assert wf["outcome"] == "repaired"
+
+
+def test_handle_success_commits_via_write_buffer():
+    """Happy path: WriteBuffer.commit fires, assistant message + memory
+    agent_runs row both land."""
+    with patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
+        master.handle("hi", "casual", auto_mode=False)
+
+    messages = store.last_n_messages(1, 10)
+    roles = [m.role for m in messages]
+    assert roles == ["user", "assistant"]
+    mem_rows = store.connection().execute(
+        "SELECT outcome FROM agent_runs WHERE agent = 'memory'"
+    ).fetchall()
+    assert len(mem_rows) == 1
+    assert mem_rows[0]["outcome"] == "success"
 
 
 def test_handle_emits_master_decision_log(caplog):

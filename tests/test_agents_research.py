@@ -131,6 +131,24 @@ def test_research_default_model_resolves_from_settings():
     assert agent.max_tokens == 800
 
 
+def test_research_appends_repair_prompt_hint_and_max_tokens_override():
+    _seed_messages()
+    agent = ResearchAgent()
+    inp = AgentInput(
+        message="explain caching",
+        history=({"role": "user", "content": "explain caching"},),
+        summary_text=None,
+        prior_findings=(),
+        metadata={"repair_prompt_hint": "Limit to one paragraph.", "max_tokens_override": 200},
+    )
+    with patch("ubongo.agents.research.complete", return_value=_completion("ok")) as m:
+        agent.run(inp, context=None)
+    sp = m.call_args.kwargs["system_prompt"]
+    assert "## Repair guidance" in sp
+    assert "Limit to one paragraph." in sp
+    assert m.call_args.kwargs["max_tokens"] == 200
+
+
 def test_last_n_messages_global_returns_cross_conversation():
     _seed_messages("architect")
     # Force a new conversation by calling start_conversation directly

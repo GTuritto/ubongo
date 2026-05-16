@@ -210,21 +210,48 @@ def test_history_no_conv_id_still_includes_message():
 
 
 class StubRepair:
+    """Mimics RepairAgent.plan_recovery for runner tests.
+
+    Configure with an ordered list of RecoveryPlans. Each plan_recovery()
+    call pops the next plan; when the list is empty, returns ABORT.
+    Phase 11's plan_retry is kept as a shim for compat with the few
+    tests that still call it directly.
+    """
+
     name = "repair"
     role = "stub"
     default_model = ""
     composer = False
+    max_attempts = 3
 
-    def __init__(self, plan: dict | None):
-        self._plan = plan
-        self.calls: list[tuple[str, AgentResult]] = []
+    def __init__(self, plans: list | None = None, plan: dict | None = None):
+        # Two construction styles supported:
+        #  - plans=[RecoveryPlan(...), ...] for the Phase-13 path
+        #  - plan={"model": "..."} for the Phase-11 plan_retry shim (used
+        #    by test_repair_agent_in_workflow_agents_list_is_skipped and
+        #    test_parallel_does_not_retry_on_failure, which never exercise
+        #    plan_recovery — they only verify the call is/isn't made).
+        from ubongo.agents.repair import RecoveryPlan, Strategy
+
+        self._plans: list = list(plans or [])
+        self._legacy_plan = plan
+        self.calls: list[tuple[str, int]] = []  # (agent_name, attempts_so_far_len)
 
     def run(self, input, context):
         return AgentResult(text="", ok=True, model=None, tokens_in=0, tokens_out=0, latency_ms=0)
 
+    def plan_recovery(self, *, failed_agent, original, attempts_so_far):
+        from ubongo.agents.repair import RecoveryPlan, Strategy
+
+        self.calls.append((failed_agent, len(attempts_so_far)))
+        if self._plans:
+            return self._plans.pop(0)
+        return RecoveryPlan(strategy=Strategy.ABORT, reason="stub_ladder_exhausted")
+
     def plan_retry(self, agent_name, original_result, input):
-        self.calls.append((agent_name, original_result))
-        return self._plan
+        # Phase 11 shim retained so the few legacy tests that mock this
+        # directly keep working.
+        return self._legacy_plan
 
 
 class FlakyAgent:
@@ -253,8 +280,15 @@ class FlakyAgent:
 
 
 def test_repair_retries_failing_agent_once():
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
     agent = FlakyAgent(fail_first=True)
-    repair = StubRepair(plan={"model": "fallback-model"})
+    repair = StubRepair(plans=[
+        RecoveryPlan(
+            strategy=Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT,
+            override_model="fallback-model",
+        ),
+    ])
     runner = WorkflowRunner({"architect": agent, "repair": repair})
     wf_run_id = _seed_workflow_run()
     result = runner.execute(_wf(("architect",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
@@ -271,6 +305,8 @@ def test_repair_retries_failing_agent_once():
 
 
 def test_repair_gives_up_after_second_failure():
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
     class AlwaysFail(FlakyAgent):
         def run(self, input, context):
             self.calls.append({"override_model": input.metadata.get("override_model")})
@@ -281,7 +317,13 @@ def test_repair_gives_up_after_second_failure():
             )
 
     agent = AlwaysFail()
-    repair = StubRepair(plan={"model": "fallback-model"})
+    # Stub returns one retry plan, then ABORT on the next call (default).
+    repair = StubRepair(plans=[
+        RecoveryPlan(
+            strategy=Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT,
+            override_model="fallback-model",
+        ),
+    ])
     runner = WorkflowRunner({"architect": agent, "repair": repair})
     wf_run_id = _seed_workflow_run()
     result = runner.execute(_wf(("architect",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
@@ -295,9 +337,10 @@ def test_repair_gives_up_after_second_failure():
     assert [(r["outcome"], r["retried"]) for r in rows] == [("failure", 0), ("failure", 1)]
 
 
-def test_repair_skipped_when_plan_returns_none():
+def test_repair_aborts_immediately_when_ladder_is_empty():
+    """When plan_recovery returns ABORT on the first call, no retry fires."""
     agent = FlakyAgent(fail_first=True)
-    repair = StubRepair(plan=None)
+    repair = StubRepair(plans=[])  # default: ABORT
     runner = WorkflowRunner({"architect": agent, "repair": repair})
     wf_run_id = _seed_workflow_run()
     result = runner.execute(_wf(("architect",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
@@ -306,11 +349,336 @@ def test_repair_skipped_when_plan_returns_none():
     assert len(repair.calls) == 1
 
 
+def test_repair_walks_full_ladder_then_recovers():
+    """Agent fails twice, succeeds on third attempt. Verifies the runner
+    iterates plan_recovery → dispatch → check OK → repeat correctly."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    class FailsTwice:
+        name = "architect"
+        role = "fails twice"
+        default_model = "m"
+        composer = True
+
+        def __init__(self):
+            self.calls: list[dict] = []
+
+        def run(self, input, context):
+            self.calls.append({
+                "override_model": input.metadata.get("override_model"),
+                "prompt_hint": input.metadata.get("repair_prompt_hint"),
+                "max_tokens": input.metadata.get("max_tokens_override"),
+            })
+            if len(self.calls) < 3:
+                return AgentResult(
+                    text="", ok=False, model="m",
+                    tokens_in=0, tokens_out=0, latency_ms=1,
+                    error="persona_llm_error",
+                )
+            return AgentResult(
+                text="recovered on third try", ok=True, model="smaller",
+                tokens_in=10, tokens_out=10, latency_ms=2,
+            )
+
+    agent = FailsTwice()
+    repair = StubRepair(plans=[
+        RecoveryPlan(
+            strategy=Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT,
+            override_model="fallback",
+        ),
+        RecoveryPlan(
+            strategy=Strategy.RETRY_SMALLER_MODEL_SHORTER_PROMPT,
+            override_model="smaller",
+            prompt_hint="Be concise.",
+            max_tokens_cap=200,
+        ),
+    ])
+    runner = WorkflowRunner({"architect": agent, "repair": repair})
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(_wf(("architect",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
+    assert result.ok is True
+    assert result.text == "recovered on third try"
+    assert len(agent.calls) == 3
+    # First call has no overrides; second has fallback model; third has smaller + hint.
+    assert agent.calls[0]["override_model"] is None
+    assert agent.calls[1]["override_model"] == "fallback"
+    assert agent.calls[1]["prompt_hint"] is None
+    assert agent.calls[2]["override_model"] == "smaller"
+    assert agent.calls[2]["prompt_hint"] == "Be concise."
+    assert agent.calls[2]["max_tokens"] == 200
+    # Three agent_runs rows: first failed, second retried+failed, third retried+ok.
+    rows = store.connection().execute(
+        "SELECT outcome, retried FROM agent_runs WHERE workflow_run_id = ? ORDER BY id",
+        (wf_run_id,),
+    ).fetchall()
+    assert [(r["outcome"], r["retried"]) for r in rows] == [
+        ("failure", 0), ("failure", 1), ("success", 1),
+    ]
+
+
+def test_repair_passes_prompt_hint_to_agent_via_metadata():
+    """RETRY_SAME_MODEL_VARIANT_PROMPT plumbs the prompt_hint through
+    AgentInput.metadata['repair_prompt_hint']."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    class RecordsMetadata:
+        name = "evaluator"
+        role = "records"
+        default_model = "m"
+        composer = False
+
+        def __init__(self):
+            self.captured: list[dict] = []
+
+        def run(self, input, context):
+            self.captured.append(dict(input.metadata))
+            if len(self.captured) == 1:
+                return AgentResult(
+                    text="", ok=False, model="m",
+                    tokens_in=0, tokens_out=0, latency_ms=1,
+                    error="evaluator_parse_error",
+                )
+            return AgentResult(
+                text='{"confidence": 0.7}', ok=True, model="m",
+                tokens_in=5, tokens_out=5, latency_ms=2, confidence=0.7,
+            )
+
+    agent = RecordsMetadata()
+    repair = StubRepair(plans=[
+        RecoveryPlan(
+            strategy=Strategy.RETRY_SAME_MODEL_VARIANT_PROMPT,
+            prompt_hint="JSON ONLY please.",
+        ),
+    ])
+    runner = WorkflowRunner({"evaluator": agent, "repair": repair})
+    runner.execute(_wf(("evaluator",)), _ctx(1), "hi", workflow_run_id=_seed_workflow_run())
+    assert len(agent.captured) == 2
+    assert agent.captured[0].get("repair_prompt_hint") is None
+    assert agent.captured[1].get("repair_prompt_hint") == "JSON ONLY please."
+
+
+def test_repair_peer_unregistered_returns_original_failure():
+    """When plan names a peer that isn't in the registry, the runner logs
+    and bails out — no infinite ladder loop."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    agent = FlakyAgent(fail_first=True)
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="architect_peer"),
+    ])
+    runner = WorkflowRunner({"architect": agent, "repair": repair})
+    result = runner.execute(_wf(("architect",)), _ctx(None), "hi")
+    assert result.ok is False
+    assert len(agent.calls) == 1
+    assert len(repair.calls) == 1
+
+
+def test_repair_peer_replacement_dispatches_peer_in_sequential():
+    """13c: when plan_recovery yields REPLACE_WITH_PEER and the peer is in
+    the registry, the runner dispatches the peer in the failing slot. The
+    peer's agent_runs row records under ITS real name with retried=1."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    class FailingCritic:
+        name = "critic"
+        role = "fails"
+        default_model = "m"
+        composer = False
+
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, input, context):
+            self.calls += 1
+            return AgentResult(
+                text="", ok=False, model="m",
+                tokens_in=0, tokens_out=0, latency_ms=1,
+                error="critic_no_candidate",
+            )
+
+    class SuccessfulPeer:
+        name = "architect"
+        role = "stands in"
+        default_model = "peer-m"
+        composer = True
+
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, input, context):
+            self.calls += 1
+            return AgentResult(
+                text="peer composed this", ok=True, model="peer-m",
+                tokens_in=5, tokens_out=10, latency_ms=2,
+            )
+
+    critic = FailingCritic()
+    peer = SuccessfulPeer()
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="architect"),
+    ])
+    runner = WorkflowRunner({"critic": critic, "architect": peer, "repair": repair})
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(_wf(("critic",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
+    assert result.ok is True
+    assert result.text == "peer composed this"
+    assert critic.calls == 1
+    assert peer.calls == 1
+    # agent_runs rows: critic (failure, retried=0), architect (success, retried=1).
+    rows = store.connection().execute(
+        "SELECT agent, outcome, retried FROM agent_runs WHERE workflow_run_id = ? ORDER BY id",
+        (wf_run_id,),
+    ).fetchall()
+    assert [(r["agent"], r["outcome"], r["retried"]) for r in rows] == [
+        ("critic", "failure", 0),
+        ("architect", "success", 1),
+    ]
+
+
+def test_repair_runs_persisted_on_successful_recovery():
+    """Phase 13e: a successful peer replacement produces one repair_runs row
+    with outcome='recovered'."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    class FailingCritic:
+        name = "critic"
+        role = "fails"
+        default_model = "m"
+        composer = False
+        def __init__(self):
+            self.calls = 0
+        def run(self, input, context):
+            self.calls += 1
+            return AgentResult(
+                text="", ok=False, model="m",
+                tokens_in=0, tokens_out=0, latency_ms=1,
+                error="critic_no_candidate",
+            )
+
+    class FineArchitect:
+        name = "architect"
+        role = "stands in"
+        default_model = "m"
+        composer = True
+        def run(self, input, context):
+            return AgentResult(
+                text="peer composed", ok=True, model="m",
+                tokens_in=5, tokens_out=10, latency_ms=2,
+            )
+
+    critic = FailingCritic()
+    peer = FineArchitect()
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="architect"),
+    ])
+    runner = WorkflowRunner({"critic": critic, "architect": peer, "repair": repair})
+    wf_run_id = _seed_workflow_run()
+    runner.execute(_wf(("critic",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
+    rows = store.repair_runs_for_workflow(wf_run_id)
+    assert len(rows) == 1
+    assert rows[0]["agent"] == "critic"
+    assert rows[0]["failure_kind"] == "precondition_missing"
+    assert rows[0]["original_error"] == "critic_no_candidate"
+    assert rows[0]["strategy_attempted"] == "replace_with_peer"
+    assert rows[0]["peer_agent"] == "architect"
+    assert rows[0]["outcome"] == "recovered"
+
+
+def test_repair_runs_persisted_with_abort_on_ladder_exhausted():
+    """When the ladder is exhausted, a final ABORT repair_runs row records
+    the give-up so /trace and Phase 17's fitness math can see it."""
+    agent = FlakyAgent(fail_first=True)
+    repair = StubRepair(plans=[])  # plan_recovery returns ABORT immediately
+    runner = WorkflowRunner({"architect": agent, "repair": repair})
+    wf_run_id = _seed_workflow_run()
+    runner.execute(_wf(("architect",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
+    rows = store.repair_runs_for_workflow(wf_run_id)
+    assert len(rows) == 1
+    assert rows[0]["strategy_attempted"] == "abort"
+    assert rows[0]["outcome"] == "aborted"
+
+
+def test_collaborative_peer_replaces_failed_critic():
+    """Smoke 12.4 regression: in collaborative mode, a failing critic gets
+    replaced by its peer (architect) so the merged document still has the
+    critic-slot section."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    class FailingCritic:
+        name = "critic"
+        role = "contrarian challenger"
+        default_model = "m"
+        composer = False
+        def __init__(self):
+            self.calls = 0
+        def run(self, input, context):
+            self.calls += 1
+            return AgentResult(
+                text="", ok=False, model="m",
+                tokens_in=0, tokens_out=0, latency_ms=1,
+                error="critic_no_candidate",
+            )
+
+    class FineResearch:
+        name = "research"
+        role = "retrieval and synthesis"
+        default_model = "m"
+        composer = False
+        def __init__(self):
+            self.calls = 0
+        def run(self, input, context):
+            self.calls += 1
+            return AgentResult(
+                text="research findings", ok=True, model="m",
+                tokens_in=5, tokens_out=10, latency_ms=2,
+            )
+
+    class FineArchitect:
+        name = "architect"
+        role = "persona composer"
+        default_model = "m"
+        composer = True
+        def __init__(self):
+            self.calls = 0
+        def run(self, input, context):
+            self.calls += 1
+            return AgentResult(
+                text=f"architect call #{self.calls}", ok=True, model="m",
+                tokens_in=5, tokens_out=10, latency_ms=2,
+            )
+
+    research = FineResearch()
+    critic = FailingCritic()
+    architect = FineArchitect()
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="architect"),
+    ])
+    runner = WorkflowRunner({
+        "research": research, "critic": critic,
+        "architect": architect, "repair": repair,
+    })
+    workflow = Workflow(
+        persona="architect", model="m", skill_name=None,
+        execution_mode="collaborative",
+        agents=("research", "critic", "architect"),
+    )
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(workflow, _ctx(1), "hi", workflow_run_id=wf_run_id)
+    assert result.ok is True
+    # Three sections in the merge (research role, architect-role-from-peer,
+    # architect role): critic's failure was replaced by architect.
+    assert "## retrieval and synthesis" in result.text
+    assert "## persona composer" in result.text
+    # architect ran twice: once as critic's peer, once as the normal architect.
+    assert architect.calls == 2
+    assert critic.calls == 1
+
+
 def test_repair_agent_in_workflow_agents_list_is_skipped():
     """Listing 'repair' inside workflow.agents is a defensive no-op: Repair
-    is consulted via plan_retry, not run as a workflow step."""
+    is consulted via plan_recovery, not run as a workflow step."""
     agent = FlakyAgent(fail_first=False)
-    repair = StubRepair(plan={"model": "x"})
+    repair = StubRepair(plans=[])  # never called since agent succeeds
     runner = WorkflowRunner({"architect": agent, "repair": repair})
     result = runner.execute(_wf(("repair", "architect")), _ctx(None), "hi")
     assert result.ok is True
@@ -405,16 +773,51 @@ def test_parallel_all_failing_returns_failure_result():
 
 
 def test_parallel_does_not_retry_on_failure():
-    """Sequential mode consults RepairAgent on agent_failed; parallel does not.
-    Cancel-and-retry semantics in fan-out are ambiguous; Phase 13 may revisit."""
+    """Phase 13c: parallel mode consults Repair ONLY for peer replacement
+    (single hop). Multi-strategy retry stays sequential-only. When the
+    plan is anything other than REPLACE_WITH_PEER, the original failure
+    stands.
+
+    This stub returns no plans, so plan_recovery yields ABORT — the
+    original failure stays."""
     agent = FlakyAgent(fail_first=True)
-    repair = StubRepair(plan={"model": "fallback"})
+    repair = StubRepair(plans=[])  # plan_recovery returns ABORT
     runner = WorkflowRunner({"architect": agent, "repair": repair})
     conv_id = store.current_or_new_conversation("architect")
     runner.execute(_wf_parallel(("architect",)), _ctx(conv_id), "hi")
-    # Only one call, never retried.
+    # Only one call to the agent (no retry).
     assert len(agent.calls) == 1
-    assert repair.calls == []  # Repair was not consulted in parallel mode
+    # Repair WAS consulted once (peer-replacement check) but the plan was
+    # ABORT so no peer was dispatched.
+    assert len(repair.calls) == 1
+
+
+def test_parallel_peer_replaces_failed_producer():
+    """Phase 13c: parallel mode substitutes a peer for a failed producer
+    when plan_recovery yields REPLACE_WITH_PEER."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    failing = FakeAgent("research", ok=False, text="", error="boom")
+    peer = _composer_agent("architect", text="peer wrote this")
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="architect"),
+    ])
+    runner = WorkflowRunner({"research": failing, "architect": peer, "repair": repair})
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(
+        _wf_parallel(("research", "architect")), _ctx(1), "hi", workflow_run_id=wf_run_id
+    )
+    assert result.ok is True
+    # The peer slot succeeded, and the architect already ran on its own slot.
+    rows = store.connection().execute(
+        "SELECT agent, outcome, retried FROM agent_runs WHERE workflow_run_id = ? ORDER BY id",
+        (wf_run_id,),
+    ).fetchall()
+    # research failed, architect ran twice (its own slot + as research's peer).
+    agents_seen = [(r["agent"], r["outcome"], r["retried"]) for r in rows]
+    assert ("research", "failure", 0) in agents_seen
+    assert ("architect", "success", 0) in agents_seen
+    assert ("architect", "success", 1) in agents_seen
 
 
 def test_parallel_agents_see_no_prior_findings():
@@ -584,6 +987,78 @@ def test_competitive_all_competitors_failing_returns_failure():
     assert evaluator.calls == []  # rank never called when no ok candidates
 
 
+def test_competitive_peer_replaces_failed_candidate():
+    """Phase 13c: a failed candidate is replaced by its peer before ranking,
+    so the recovered candidate still competes (and can win)."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    failing = FakeAgent("coding", ok=False, text="", error="boom")
+    peer = _composer_agent("architect", text="peer wrote this")
+    evaluator = FakeEvaluator(ranking={
+        "winner": "coding", "winner_index": 0,
+        "reason": "recovered candidate was best",
+        "scores": [{"index": 0, "score": 0.9, "note": "ok"},
+                   {"index": 1, "score": 0.5, "note": "weaker"}],
+    })
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="architect"),
+    ])
+    runner = WorkflowRunner({
+        "coding": failing, "architect": peer,
+        "evaluator": evaluator, "repair": repair,
+    })
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(
+        _wf_competitive(("coding", "architect", "evaluator")), _ctx(1), "write a fn",
+        workflow_run_id=wf_run_id,
+    )
+    assert result.ok is True
+    # The recovered candidate (architect peer in coding's slot) won.
+    assert result.text == "peer wrote this"
+    assert result.evaluator_confidence == 0.9
+    # The peer's text entered the ranking set.
+    assert ("peer wrote this" in [t for _, t in evaluator.calls[0]["candidates"]])
+    rows = store.connection().execute(
+        "SELECT agent, outcome, retried FROM agent_runs WHERE workflow_run_id = ? ORDER BY id",
+        (wf_run_id,),
+    ).fetchall()
+    seen = [(r["agent"], r["outcome"], r["retried"]) for r in rows]
+    assert ("coding", "failure", 0) in seen
+    assert ("architect", "success", 1) in seen  # ran as coding's peer
+    repair_rows = store.repair_runs_for_workflow(wf_run_id)
+    assert len(repair_rows) == 1
+    assert repair_rows[0]["strategy_attempted"] == "replace_with_peer"
+    assert repair_rows[0]["peer_agent"] == "architect"
+    assert repair_rows[0]["outcome"] == "recovered"
+
+
+def test_competitive_unrecoverable_candidate_not_replaced():
+    """Phase 13c: when Repair returns ABORT (no peer), a failed candidate is
+    not replaced; competition proceeds with the remaining ok candidates."""
+    failing = FakeAgent("coding", ok=False, text="", error="boom")
+    survivor = _composer_agent("architect", text="architect text")
+    evaluator = FakeEvaluator(ranking={
+        "winner": "architect", "winner_index": 0,
+        "reason": "only ok candidate",
+        "scores": [{"index": 0, "score": 0.6, "note": "ok"}],
+    })
+    repair = StubRepair(plans=[])  # plan_recovery -> ABORT
+    runner = WorkflowRunner({
+        "coding": failing, "architect": survivor,
+        "evaluator": evaluator, "repair": repair,
+    })
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(
+        _wf_competitive(("coding", "architect", "evaluator")), _ctx(1), "x",
+        workflow_run_id=wf_run_id,
+    )
+    assert result.ok is True
+    assert result.text == "architect text"
+    # Only the survivor competed; no peer was dispatched.
+    assert [n for n, _ in evaluator.calls[0]["candidates"]] == ["architect"]
+    assert store.repair_runs_for_workflow(wf_run_id) == []
+
+
 # --- Phase 12c: Collaborative mode ---
 
 
@@ -746,6 +1221,43 @@ def test_debate_short_circuits_on_debater_failure_synth_still_runs():
 def test_debate_collaborative_post_step_runs_trailing_evaluator():
     """Renamed-position anchor: keep collaborative test grouped after debate."""
 
+
+def test_debate_peer_replaces_failed_debater():
+    """Phase 13c: a failed debater is replaced by its peer before synthesis,
+    so the synthesizer still sees a full-width transcript."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    architect = _composer_agent("architect", text="architect argues X")
+    operator = FakeAgent("operator", ok=False, text="", error="boom")
+    casual = _composer_agent("casual", text="casual rescued the debate")
+    synth = _composer_agent("synth", text="synthesized")
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="casual"),
+    ])
+    runner = WorkflowRunner({
+        "architect": architect, "operator": operator,
+        "casual": casual, "synth": synth, "repair": repair,
+    })
+    wf = Workflow(
+        persona="architect", model="m", skill_name=None,
+        execution_mode="debate", agents=("architect", "operator", "synth"),
+        rounds=1,
+    )
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(wf, _ctx(1), "q", workflow_run_id=wf_run_id)
+    assert result.ok is True
+    # The peer's contribution reached the synthesizer's transcript.
+    synth_prior = synth.calls[0].prior_findings
+    assert any("casual rescued the debate" in pf for pf in synth_prior)
+    assert len(operator.calls) == 1   # failed once
+    assert len(casual.calls) == 1     # ran once as operator's peer
+    repair_rows = store.repair_runs_for_workflow(wf_run_id)
+    assert len(repair_rows) == 1
+    assert repair_rows[0]["strategy_attempted"] == "replace_with_peer"
+    assert repair_rows[0]["peer_agent"] == "casual"
+    assert repair_rows[0]["outcome"] == "recovered"
+
+
 # --- Phase 12e: Speculative mode ---
 
 
@@ -858,6 +1370,80 @@ def test_speculative_requires_at_least_2_agents():
     conv_id = store.current_or_new_conversation("architect")
     with pytest.raises(ValueError, match="cheap, strong"):
         runner.execute(wf, _ctx(conv_id), "q")
+
+
+def test_speculative_peer_replaces_failed_leader():
+    """Phase 13c: cheap is the speculative leader; when it fails it is
+    replaced by its peer, and the peer's text becomes the leader text."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    cheap = FakeAgent("casual", ok=False, text="", error="boom")
+    strong = FakeAgent("operator", text="thorough answer")
+    peer = _composer_agent("architect", text="architect rescued the leader")
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="architect"),
+    ])
+    runner = WorkflowRunner({
+        "casual": cheap, "operator": strong,
+        "architect": peer, "repair": repair,
+    })
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(
+        _wf_speculative(("casual", "operator")), _ctx(1), "q",
+        workflow_run_id=wf_run_id,
+    )
+    assert result.ok is True
+    assert result.text == "architect rescued the leader"
+    repair_rows = store.repair_runs_for_workflow(wf_run_id)
+    assert len(repair_rows) == 1
+    assert repair_rows[0]["strategy_attempted"] == "replace_with_peer"
+    assert repair_rows[0]["peer_agent"] == "architect"
+    assert repair_rows[0]["outcome"] == "recovered"
+
+
+def test_speculative_non_leader_failure_not_replaced():
+    """Phase 13c: when the leader (cheap) succeeds, a failed strong is left
+    alone — peer replacement is scoped to the leader slot."""
+    from ubongo.agents.repair import RecoveryPlan, Strategy
+
+    cheap = FakeAgent("casual", text="quick answer")
+    strong = FakeAgent("operator", ok=False, text="", error="boom")
+    peer = _composer_agent("architect", text="should not run")
+    repair = StubRepair(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="architect"),
+    ])
+    runner = WorkflowRunner({
+        "casual": cheap, "operator": strong,
+        "architect": peer, "repair": repair,
+    })
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(
+        _wf_speculative(("casual", "operator")), _ctx(1), "q",
+        workflow_run_id=wf_run_id,
+    )
+    assert result.ok is True
+    assert result.text == "quick answer"
+    assert repair.calls == []  # Repair never consulted; leader succeeded
+    assert store.repair_runs_for_workflow(wf_run_id) == []
+
+
+def test_speculative_unrecoverable_leader_falls_back_to_strong():
+    """Phase 13c: when Repair returns ABORT for a failed leader, no peer is
+    dispatched and the turn falls back to strong (the natural fallback)."""
+    cheap = FakeAgent("casual", ok=False, text="", error="boom")
+    strong = FakeAgent("operator", text="thorough answer")
+    repair = StubRepair(plans=[])  # plan_recovery -> ABORT
+    runner = WorkflowRunner({
+        "casual": cheap, "operator": strong, "repair": repair,
+    })
+    wf_run_id = _seed_workflow_run()
+    result = runner.execute(
+        _wf_speculative(("casual", "operator")), _ctx(1), "q",
+        workflow_run_id=wf_run_id,
+    )
+    assert result.ok is True
+    assert result.text == "thorough answer"
+    assert store.repair_runs_for_workflow(wf_run_id) == []
 
 
 def test_collaborative_runs_trailing_evaluator_sequentially_after_merge():

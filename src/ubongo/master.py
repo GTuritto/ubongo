@@ -23,6 +23,7 @@ from ubongo.classifier import Classification
 from ubongo.delivery import queue
 from ubongo.governance.decision import Action, Decision, decide as governance_decide
 from ubongo.memory import store
+from ubongo.memory.write_buffer import workflow_buffer
 
 logger = logging.getLogger("ubongo.master")
 
@@ -69,6 +70,12 @@ class Response:
     persona: str
     skill_name: str | None
     delivery_token: queue.DeliveryToken
+    # Phase 13f: when Repair gave up on a failure, the caller (REPL / one-shot)
+    # may want to surface a y/n retry prompt. `repair_summary` is None when no
+    # repair fired; otherwise carries {attempts, last_kind, last_strategy,
+    # last_error, failing_agent} extracted from repair_runs.
+    requires_user_decision: bool = False
+    repair_summary: dict | None = None
 
 
 _PERSONA_DEFAULT_WORKFLOW: dict[str, str] = {
@@ -86,6 +93,16 @@ CRITIC_HIGH: float = 0.6
 _REJECT_MESSAGE = (
     "I'm not confident enough in my answer to give it. "
     "Try rephrasing or breaking the question down."
+)
+
+# Phase 13f: shown when Repair exhausted its strategy ladder.
+# {attempts}/{last_kind}/{last_strategy}/{failing_agent}/{last_error} fill in
+# from the repair_summary dict; missing fields render as "—".
+_REPAIR_EXHAUSTED_TEMPLATE = (
+    "I couldn't recover from a {last_kind} in the {failing_agent} step "
+    "after {attempts} repair attempt(s). Last strategy tried: "
+    "{last_strategy}. Last error: {last_error}. "
+    "Try rephrasing, switching mode (/mode), or simplifying the request."
 )
 
 
@@ -120,6 +137,26 @@ class MasterAgent:
 
             self._runner = WorkflowRunner(default_registry())
         return self._runner
+
+    def _build_repair_summary(self, workflow_run_id: int | None) -> dict | None:
+        """Phase 13f: aggregate repair_runs into a Response-friendly summary.
+        Returns None when no repair_runs row exists for this workflow_run."""
+        if workflow_run_id is None:
+            return None
+        try:
+            repairs = store.repair_runs_for_workflow(workflow_run_id)
+        except Exception:
+            return None
+        if not repairs:
+            return None
+        last = repairs[-1]
+        return {
+            "attempts": len(repairs),
+            "last_kind": last.get("failure_kind"),
+            "last_strategy": last.get("strategy_attempted"),
+            "failing_agent": last.get("agent"),
+            "last_error": last.get("original_error"),
+        }
 
     def classify(self, message: str, ctx: Context) -> Classification:
         return classifier.classify(message)
@@ -249,7 +286,28 @@ class MasterAgent:
         pending_skill: str | None = None,
         pending_workflow: str | None = None,
     ) -> Response:
-        """End-to-end orchestration. Returns a Response; caller prints + flushes."""
+        """End-to-end orchestration. Returns a Response; caller prints + flushes.
+
+        Phase 13d: the body runs inside a `workflow_buffer()` context. The
+        assistant-message commit is staged via `buf.stage(...)` and either
+        committed (on result.ok) or dropped (on failure). Audit rows
+        (agent_runs, governance_decisions, workflow_runs, notification_queue)
+        still write inline — they record what happened, not the result.
+        """
+        with workflow_buffer() as buf:
+            return self._handle_with_buffer(
+                buf, message, persona_name, auto_mode, pending_skill, pending_workflow
+            )
+
+    def _handle_with_buffer(
+        self,
+        buf,
+        message: str,
+        persona_name: str,
+        auto_mode: bool = False,
+        pending_skill: str | None = None,
+        pending_workflow: str | None = None,
+    ) -> Response:
         ctx = Context(
             conversation_id=None,
             persona=persona_name,
@@ -324,6 +382,28 @@ class MasterAgent:
                 )
                 critic_used = True
 
+        # Phase 13f: build repair_summary (if any repair_runs landed) so the
+        # Response can surface a y/n retry prompt to the REPL and so the
+        # failure apology can interpolate the last failure kind/strategy.
+        repair_summary = self._build_repair_summary(workflow_run_id)
+        if not result.ok and repair_summary is not None:
+            apology = _REPAIR_EXHAUSTED_TEMPLATE.format(
+                attempts=repair_summary["attempts"],
+                last_kind=repair_summary["last_kind"] or "—",
+                last_strategy=repair_summary["last_strategy"] or "—",
+                failing_agent=repair_summary["failing_agent"] or "—",
+                last_error=repair_summary["last_error"] or "—",
+            )
+            result = WorkflowResult(
+                text=apology,
+                ok=False,
+                tokens_in=0,
+                tokens_out=0,
+                model="",
+                latency_ms=0,
+                evaluator_confidence=result.evaluator_confidence,
+            )
+
         # Phase 10: governance runs before the assistant-message commit so a
         # `reject` decision can override the response text. The rejection is
         # the assistant turn; persist it so /recall and the vault are coherent.
@@ -344,14 +424,22 @@ class MasterAgent:
         if result.ok:
             mem_started = store.now_iso()
             mem_t0 = time.monotonic()
-            assistant_msg_id = default_memory_agent.commit_assistant_turn(
-                conversation_id=conv_id,
-                content=result.text,
-                persona=chosen,
-                model=result.model,
-                tokens_in=result.tokens_in,
-                tokens_out=result.tokens_out,
+            # Phase 13d: stage the assistant-message commit instead of
+            # executing it directly. The buf.commit() below either runs
+            # every staged callable (success) or drops them all (failure).
+            buf.stage(
+                lambda: default_memory_agent.commit_assistant_turn(
+                    conversation_id=conv_id,
+                    content=result.text,
+                    persona=chosen,
+                    model=result.model,
+                    tokens_in=result.tokens_in,
+                    tokens_out=result.tokens_out,
+                ),
+                description="commit_assistant_turn",
             )
+            committed = buf.commit()
+            assistant_msg_id = committed[0] if committed else None
             mem_elapsed_ms = int((time.monotonic() - mem_t0) * 1000)
             store.append_agent_run(
                 workflow_run_id=workflow_run_id,
@@ -367,6 +455,12 @@ class MasterAgent:
                 started_at=mem_started,
                 ended_at=store.now_iso(),
             )
+        else:
+            # Workflow failed (e.g., repair exhausted, all agents failed).
+            # Nothing was staged for the assistant message; drop the buffer
+            # explicitly so the contract is satisfied and the implicit-drop
+            # warning doesn't fire.
+            buf.drop()
         ts_now = store.now_iso()
         store.upsert_session(
             active_persona=chosen,
@@ -375,9 +469,21 @@ class MasterAgent:
             auto_mode=auto_mode,
         )
 
+        # Phase 13e: distinguish "succeeded thanks to Repair" from a plain
+        # first-try success. Light up `repaired` when any repair_runs row
+        # reports outcome='recovered' AND the workflow's final result is ok.
+        repair_outcome = "success" if result.ok else "failure"
+        if result.ok:
+            try:
+                repairs = store.repair_runs_for_workflow(workflow_run_id)
+                if any(r["outcome"] == "recovered" for r in repairs):
+                    repair_outcome = "repaired"
+            except Exception:
+                # Defensive: don't let trace bookkeeping fail the turn.
+                pass
         store.update_workflow_run_outcome(
             workflow_run_id,
-            outcome="success" if result.ok else "failure",
+            outcome=repair_outcome,
             ended_at=ts_now,
         )
 
@@ -458,6 +564,9 @@ class MasterAgent:
             persona=chosen,
             skill_name=workflow.skill_name,
             delivery_token=token,
+            # Phase 13f: surface y/n retry intent only when Repair gave up.
+            requires_user_decision=(not result.ok and repair_summary is not None),
+            repair_summary=repair_summary,
         )
 
 

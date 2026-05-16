@@ -98,3 +98,19 @@ def test_extract_evaluator_issues_only_matches_eval_prefix():
     out = _extract_evaluator_issues(findings)
     assert out is not None
     assert out.startswith("Confidence:")
+
+
+def test_critic_appends_repair_prompt_hint_and_max_tokens_override():
+    """Phase 13b: Repair hint reaches the critic's system prompt."""
+    agent = CriticAgent()
+    inp = AgentInput(
+        message="x", history=({"role": "user", "content": "x"},),
+        summary_text=None, prior_findings=("the candidate response",),
+        metadata={"repair_prompt_hint": "Be terse.", "max_tokens_override": 200},
+    )
+    with patch("ubongo.agents.critic.complete", return_value=_completion("- bullet")) as m:
+        agent.run(inp, context=None)
+    sp = m.call_args.kwargs["system_prompt"]
+    assert "## Repair guidance" in sp
+    assert "Be terse." in sp
+    assert m.call_args.kwargs["max_tokens"] == 200
