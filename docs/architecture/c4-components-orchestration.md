@@ -75,14 +75,19 @@ fixed sequence and there is no bypass path:
 
 Mode Dispatch selects one of six strategies:
 
-| Mode | Status | Behavior |
-|------|--------|----------|
-| `sequential` | Active | Threads `prior_findings` forward agent to agent; drives the Repair recovery ladder. |
-| `parallel` | Active | `asyncio.gather` fan-out; agents see no `prior_findings`. |
-| `competitive` | Phase 12 | Multiple agents, best result wins. |
-| `collaborative` | Phase 12 | Agents refine a shared draft. |
-| `debate` | Phase 12 | Adversarial multi-round exchange. |
-| `speculative` | Phase 12 | Fast draft plus verification. |
+All six modes are active (Phase 12, merged). Only `sequential` and `parallel`
+auto-route; the other four are opt-in per turn via `/mode <workflow>`.
+
+| Mode | Routing | Behavior |
+|------|---------|----------|
+| `sequential` | Auto | Threads `prior_findings` forward agent to agent; drives the full Repair recovery ladder. |
+| `parallel` | Auto | `asyncio.gather` fan-out; agents see no `prior_findings`. |
+| `competitive` | `/mode` | Same input to several agents; the Evaluator's `rank()` picks the winner. |
+| `collaborative` | `/mode` | Agents refine a shared draft. |
+| `debate` | `/mode` | Agents argue N rounds (default 2); the Evaluator synthesizes. |
+| `speculative` | `/mode` | Cheap draft plus a strong check; the Evaluator's `agree()` decides whether to correct. |
+
+In every fan-out mode, Repair acts only by peer replacement (`_maybe_replace_failed`); the full strategy ladder runs in `sequential` alone.
 
 ## Repair
 

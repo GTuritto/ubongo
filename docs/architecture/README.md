@@ -3,8 +3,9 @@
 Architecture documentation for Ubongo using the [C4 model](https://c4model.com/).
 Diagrams are Mermaid C4; GitHub and most Markdown viewers render them inline.
 
-Reflects the codebase as of Phase 13 (Phases 0-11 merged to `main`, Repair
-activation in progress). See [STATUS.md](../../STATUS.md) for current progress.
+Reflects the codebase as of Phase 15 (Phases 0-14 merged to `main`; Phase 15,
+approval gates + sandboxing, in progress on `phase-15-approval-sandbox`). See
+[STATUS.md](../../STATUS.md) for current progress.
 
 ## Diagrams
 
