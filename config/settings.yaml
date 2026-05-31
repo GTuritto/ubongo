@@ -77,6 +77,11 @@ evolution:
   max_calls_per_hour: 30
   population_size: 8
   generations_per_run: 3
+  # Phase 17: per-run sample cap for /evaluate. With ~2 LLM calls per
+  # (variant, sample), an 8-variant generation at 5 samples is ~80 calls, so
+  # under max_calls_per_hour=30 a single /evaluate fully scores ~3 variants and
+  # reports the rest skipped. Raise this (or max_calls_per_hour) for fuller runs.
+  samples_per_eval: 5
   cron: null
   fitness_weights:
     success_rate: 0.40
