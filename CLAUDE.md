@@ -4,7 +4,7 @@ Ubongo is a personal, mood-aware AI mind for one user (Giuseppe Turitto), runnin
 
 ## Status
 
-See [STATUS.md](STATUS.md) for current phase progress. As of 2026-05-14: Phases 0 through 11 complete and merged to `main` (~4,925 LOC under `src/`, 326 / 326 pytest green, full Phases 0-11 smoke playbook passes). Ten worker agents are registered. Sequential execution mode only; Phase 12 brings the other five. The build runs across 22 phases with sub-phases and per-phase testing plans in [UBONGO_BUILD.md](UBONGO_BUILD.md).
+See [STATUS.md](STATUS.md) for current phase progress. As of 2026-05-31: Phases 0 through 16 complete and merged to `main` (~8,033 LOC under `src/`, 549 / 549 pytest green, full Phases 0-16 smoke playbook passes) — Tiers 1-4 (Foundation, Multi-Agent, Self-Healing, Governance) done, and Tier 5 (Self-Improvement) opened with Phase 16. Ten worker agents are registered. All six execution modes (sequential, parallel, competitive, collaborative, debate, speculative) are live (Phase 12); the Repair Agent walks a full strategy ladder (Phase 13); the governance decision matrix gates auto / ask_clarification / require_approval / reject with an interactive approval flow and a hardened Execution sandbox (Phases 14-15); and `/optimize <target>` generates persisted prompt variants via the new `src/ubongo/evolution/` package (Phase 16). Next: Phase 17 (Sandboxed Evaluation + Fitness). The build runs across 22 phases with sub-phases and per-phase testing plans in [UBONGO_BUILD.md](UBONGO_BUILD.md).
 
 The build specification is [UBONGO_BUILD.md](UBONGO_BUILD.md). Treat it as the source of truth for v0.1 scope. The conceptual origin is [UBONGO_VISION.md](UBONGO_VISION.md) — the design exposition that v0.1 now realizes.
 

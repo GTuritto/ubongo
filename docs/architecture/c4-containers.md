@@ -76,11 +76,14 @@ C4Container
 - **Single process, hand-rolled.** No LangGraph, Temporal, Ray, Docker, or
   Redis. Concurrency inside the Workflow Runner is plain `asyncio`.
 
-## Containers not yet built (Phases 16-21)
+## Containers partly built / not yet built (Phases 16-21)
 
-The SQLite schema already defines `evolution_lineage`,
-`evolution_evaluations`, `pending_promotions`, and `active_evolutions`, but the
-**GP self-improvement loop** that fills them is a future tier. When it lands it
-will be an additional container reading held-out conversation fixtures and
-writing variants for human-approved promotion. Embedding indexing
-(`sqlite-vec`) and bidirectional vault sync are likewise future containers.
+Phase 16 built the first slice of the **GP self-improvement layer**: the
+`src/ubongo/evolution/` package (target registry, variant generator, lineage
+persistence) and the `/optimize <target>` command, which writes
+`evolution_lineage` rows on demand. The rest of the loop — sandboxed
+**evaluation + fitness** over held-out conversation fixtures (Phase 17), the
+autonomous **scheduler** (Phase 18), and **promotions** writing
+`pending_promotions` / `active_evolutions` (Phase 19) — is still a future tier.
+Embedding indexing (`sqlite-vec`) and bidirectional vault sync are likewise
+future containers.

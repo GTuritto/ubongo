@@ -1,6 +1,6 @@
 # Ubongo System Architecture (Current Implementation)
 
-This document describes the current codebase state (through Phase 11 in `STATUS.md`), focusing on runtime flow, subsystem boundaries, and persistent data model.
+This document describes the current codebase state (through Phase 16 in `STATUS.md` — Tiers 1-4 complete, Tier 5 opened), focusing on runtime flow, subsystem boundaries, and persistent data model. For a layered C4 view see [docs/architecture/](architecture/README.md); this file is the single-page runtime reference.
 
 Diagram source file (editable in draw.io):
 - [system-architecture.drawio](./diagrams/system-architecture.drawio)
@@ -13,8 +13,8 @@ Summary:
 - CLI (`__main__.py`, `repl.py`, `oneshot.py`) enters through `MasterAgent`.
 - `MasterAgent` handles classify/plan/execute/govern/compose and persistence seams.
 - `WorkflowRunner` dispatches worker agents from a registry of ten: three personas (`architect`, `operator`, `casual`), `research`, `memory`, `evaluator`, `critic`, `coding`, `execution`, `repair`. Persona names are bare (no `persona:` prefix as of Phase 10).
-- The runner consults `RepairAgent.plan_retry` on `agent_failed` and re-dispatches the failing agent ONCE with a model fallback (Phase 11d). The retry's row is marked `agent_runs.retried = 1`.
-- `sandbox.py` (Phase 11b) is the single safety contract for shell execution; the Execution Agent and the `/exec` REPL command both route through it.
+- The runner walks the full Repair strategy ladder on `agent_failed` (Phase 13): `RepairAgent.plan_recovery` classifies the failure into one of seven `FailureKind`s and returns an ordered `RecoveryPlan` (variant prompt -> different model -> smaller model + shorter prompt -> peer replacement -> abort), capped at `agents.repair.max_attempts`. In `sequential` mode the runner drives the whole ladder; in the five fan-out modes Repair acts only by peer replacement. Each attempt is persisted to `repair_runs`; the recovered retry's `agent_runs` row is marked `retried = 1`. (Phase 11's `plan_retry` shim is retained for back-compat.)
+- `sandbox.py` (Phase 11b, hardened Phase 15c) is the single safety contract for shell execution: an allowlist resolved to absolute program paths, no shell metacharacters, no path traversal, a filesystem allowlist (path args must resolve inside the repo), `shell=False`, an empty child `PATH`, repo-root cwd, and a 10s timeout. The Execution Agent and the `/exec` REPL command both route through it. Full contract in [docs/SECURITY.md](SECURITY.md).
 - Queue and event bus coordinate side effects (`before_send`, `after_send`).
 - SQLite store is canonical memory; vault is projected markdown.
 
@@ -54,7 +54,7 @@ Flow:
 3. Persist user turn + insert `workflow_runs` (`in_progress`)
 4. `WorkflowRunner.execute()` agent dispatch; on `agent_failed` consult `RepairAgent.plan_retry` and rerun once with model fallback
 5. Phase 10 borderline confidence (evaluator score in `[0.2, 0.6)`) triggers a second runner pass `(critic, persona)` under the same `workflow_run_id`; the retry's text replaces the response
-6. `MasterAgent.decide()` runs governance with `evaluator_confidence`; reject below `0.2` overrides response text with `_REJECT_MESSAGE`
+6. `MasterAgent.decide()` runs the governance decision matrix (Phase 14, `config/governance.yaml`): `score_risk` / `score_confidence` / `score_reversibility` feed a 5-rule matrix returning `auto` / `ask_clarification` / `require_approval` / `reject`. A `_GATED_MESSAGES` map swaps the response for non-`auto` actions; `require_approval` additionally attaches an `ApprovalRequest` that the REPL surfaces as an interactive `y/n/why` gate (Phase 15) — `y` re-issues the turn with `approved=True`, the choice persists to `governance_decisions.approval_response`. One-shot is non-interactive (gated turns exit `rc=1`).
 7. Persist assistant turn (Memory Agent owns the write) + governance decision + workflow outcome update
 8. Enqueue response + `before_send`
 9. Print response to terminal
@@ -132,11 +132,12 @@ Draw.io page: `SQLite Data Model`
 
 Core operational tables:
 - `conversations`, `messages`, `summaries`, `sessions`
-- `workflow_runs`, `agent_runs`, `governance_decisions`
-- `notification_queue`
+- `workflow_runs`, `agent_runs`, `governance_decisions` (carries `risk` / `confidence` / `reversibility` / `action` / `approval_response`), `repair_runs` (one row per Repair strategy attempt, Phase 13)
+- `notification_queue`, `vault_links`
+- `evolution_lineage` (populated by Phase 16's `/optimize`)
 
-Future-phase tables already present in schema:
-- `facts`, `evolution_lineage`, `evolution_evaluations`, `pending_promotions`, `active_evolutions`, `vault_links`
+Schema present, not yet populated (Phases 17/19/20):
+- `facts`, `evolution_evaluations`, `pending_promotions`, `active_evolutions`
 
 ```mermaid
 erDiagram
@@ -222,7 +223,7 @@ erDiagram
 
 Workflows are configured in `config/workflows.yaml` and routed by `config/routing.yaml`.
 
-Current execution mode implemented: `sequential`. Phase 12 adds parallel / competitive / collaborative / debate / speculative.
+All six execution modes are live (Phase 12): `sequential`, `parallel`, `competitive`, `collaborative`, `debate`, `speculative`. The `WorkflowRunner` is async internally (one strategy coroutine per mode, selected off `workflow.execution_mode`) but sync at its public `execute()` boundary. Only `sequential` and `parallel` auto-route; the other four are opt-in per turn via `/mode <workflow>`. `competitive` uses `EvaluatorAgent.rank()` to pick a winner; `speculative` uses `EvaluatorAgent.agree()`; `debate` runs N rounds (default 2) then a synthesizer turn.
 
 Runtime pattern:
 - `classifier.classify()` -> `router.route_workflow()` + hysteresis
@@ -263,10 +264,11 @@ flowchart TD
 ## 7) REPL Command Surface
 
 Implemented command families in `repl.py`:
-- Persona and mode: `/architect`, `/operator`, `/casual`, `/auto`
+- Persona and mode: `/architect`, `/operator`, `/casual`, `/auto`, `/mode <workflow> | list` (Phase 12; pins the next turn's workflow/execution mode)
 - Skills/meta: `/skill <name>`, `/skills`, `/summary`, `/reload`
-- Observability: `/queue [N]`, `/decisions [N]`, `/agents`, `/trace [N]` (Phase 10)
+- Observability: `/queue [N]`, `/decisions [N]`, `/agents`, `/trace [N]` (Phase 10), `/policy` (Phase 14; prints the live decision matrix)
 - Sandbox debug: `/exec <cmd>` (Phase 11; bypasses `master.handle`, no workflow_runs row)
+- Self-improvement: `/optimize <target> | (no arg lists targets)` (Phase 16; generates + persists prompt variants, a direct tool like `/exec`)
 - Control: `/exit`
 
 ## 8) Prompt and Configuration Hierarchy
@@ -290,13 +292,16 @@ flowchart TD
     TEMPLATE["config/skills/[name]/prompts/*.md"] --> USERMSG["skill-specific user message"]
 ```
 
-## 9) Phase 10 + 11 Patterns
+## 9) Cross-Cutting Patterns
 
-Three patterns introduced in Phases 10 and 11 that later phases inherit:
+Patterns introduced across the tiers that later phases inherit:
 
 - **Composer attribute (Phase 10).** Agents declare `composer: bool` (read via `getattr(agent, "composer", False)`; default False). The runner picks `WorkflowResult.text` from the LAST composer agent's text, not the last successful agent. This lets validators (Evaluator, Critic) and helpers (Research, Execution) run AFTER the persona without claiming the response. In `coding_session` BOTH `coding` and `architect` are composers; last-composer-wins makes the architect's wrap the user-facing reply.
-- **Borderline-Critic loop (Phase 10).** When the Evaluator returns confidence in `[0.2, 0.6)`, Master runs a SECOND `runner.execute(...)` pass with `agents=("critic", persona)` under the same `workflow_run_id`. The retry's text replaces the response. Below `0.2` the governance stub returns `reject` and Master overrides the response text with `_REJECT_MESSAGE` (the rejection is still committed to messages + vault for `/recall` coherence).
-- **Repair-by-runner (Phase 11).** `RepairAgent` lives in the registry but never runs as a workflow step. The runner consults `RepairAgent.plan_retry(failed_agent, original_result, input)` on `agent_failed`; if it returns a `{"model": ...}` plan, the runner reruns the failing agent ONCE with `override_model` plumbed through `AgentInput.metadata`. Each agent is retried at most once per workflow run. The retry row is marked `agent_runs.retried = 1` and `/trace` renders `(retried)` on it.
+- **Borderline-Critic loop (Phase 10).** When the Evaluator returns confidence in `[0.2, 0.6)` (band now in `governance.yaml::thresholds.critic_band`), Master runs a SECOND `runner.execute(...)` pass with `agents=("critic", persona)` under the same `workflow_run_id`. The retry's text replaces the response.
+- **Repair ladder (Phase 13; supersedes Phase 11's single retry).** `RepairAgent` lives in the registry but never runs as a workflow step. On `agent_failed` the runner consults `RepairAgent.plan_recovery`, which classifies the failure into one of seven `FailureKind`s and returns an ordered `RecoveryPlan` (variant prompt -> different model -> smaller model + shorter prompt -> peer replacement -> abort), capped at `agents.repair.max_attempts`. `sequential` drives the full ladder; fan-out modes use peer replacement only. Every attempt persists to `repair_runs`; `/trace` renders an indented `repair:` line, and a recovered turn sets `workflow_runs.outcome='repaired'`.
+- **Governance decision matrix (Phases 14-15; supersedes the Phase-10 reject stub).** `score_risk` / `score_confidence` / `score_reversibility` feed a 5-rule matrix in `governance.yaml` returning `auto` / `ask_clarification` / `require_approval` / `reject`. Non-`auto` actions swap the response via `_GATED_MESSAGES`; `require_approval` drives the REPL's interactive `y/n/why` gate, with the choice persisted to `governance_decisions.approval_response`. Gated turns are still committed to messages + vault for `/recall` coherence.
+- **Commit-on-success buffer (Phase 13).** `master.handle` wraps the turn body in a `workflow_buffer` (`memory/write_buffer.py`): the assistant-message commit is staged and either `commit()`ed on `result.ok` or `drop()`ped on failure, so a half-finished turn never leaves partial rows. Phase 16+ writers inherit the seam.
+- **Evolution lineage (Phase 16).** The `src/ubongo/evolution/` package (`targets`, `generator`, `lineage`) generates prompt variants on `/optimize` and persists them to `evolution_lineage`. `parent_id` resolves from `active_evolutions` (NULL until Phase 19 promotions exist); generations increment per target. This is the seam Phases 17-19 build evaluation, the autonomous loop, and promotions onto.
 
 ---
 

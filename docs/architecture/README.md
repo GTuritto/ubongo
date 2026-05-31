@@ -3,9 +3,9 @@
 Architecture documentation for Ubongo using the [C4 model](https://c4model.com/).
 Diagrams are Mermaid C4; GitHub and most Markdown viewers render them inline.
 
-Reflects the codebase as of Phase 15 (Phases 0-14 merged to `main`; Phase 15,
-approval gates + sandboxing, in progress on `phase-15-approval-sandbox`). See
-[STATUS.md](../../STATUS.md) for current progress.
+Reflects the codebase as of Phase 16 (Phases 0-15 merged to `main`; Phase 16,
+variant generation, merged via PR #8) — Tiers 1-4 complete and Tier 5
+(Self-Improvement) opened. See [STATUS.md](../../STATUS.md) for current progress.
 
 ## Diagrams
 
@@ -25,9 +25,12 @@ they are not needed to understand the whole.
 
 ## Scope
 
-These diagrams document what is built. The GP self-improvement loop
-(Phases 16-19) and wiki-memory features (Phases 20-21) are noted where their
-seams already exist — the SQLite `evolution_*` tables, the Event Bus extension
-points — but are not yet drawn as live containers. The build specification in
+These diagrams document what is built. Phase 16 lit up the first piece of the
+GP self-improvement layer: `/optimize <target>` generates prompt variants and
+writes `evolution_lineage` rows (the `src/ubongo/evolution/` package). The rest
+of the loop — evaluation/fitness, the autonomous scheduler, and promotions
+(Phases 17-19) — and the wiki-memory features (Phases 20-21) are noted where
+their seams already exist (the remaining `evolution_*` tables, the Event Bus
+extension points) but are not yet drawn as live containers. The build specification in
 [UBONGO_BUILD.md](../../UBONGO_BUILD.md) remains the source of truth for v0.1
 scope.

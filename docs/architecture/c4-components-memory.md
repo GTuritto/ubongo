@@ -47,7 +47,9 @@ C4Component
   schema spans conversation state (`conversations`, `messages`, `summaries`,
   `sessions`, `facts`), execution tracing (`workflow_runs`, `agent_runs`,
   `governance_decisions`, `repair_runs`), delivery (`notification_queue`), the
-  vault graph (`vault_links`), and the not-yet-populated evolution tables.
+  vault graph (`vault_links`), and the evolution tables (`evolution_lineage`
+  populated by Phase 16's `/optimize`; `evolution_evaluations`,
+  `pending_promotions`, `active_evolutions` still empty until Phases 17/19).
 - **Compaction** keeps context bounded: long conversations are summarized into
   `summaries` rows, which the Workflow Runner reads back as `summary_text`.
 - **The vault is a projection.** The **Vault Projector** renders memory into
@@ -61,6 +63,6 @@ Conversation state   conversations, messages, summaries, sessions, facts
 Execution tracing    workflow_runs, agent_runs, governance_decisions, repair_runs
 Delivery             notification_queue
 Vault graph          vault_links
-Evolution (future)   evolution_lineage, evolution_evaluations,
-                     pending_promotions, active_evolutions
+Evolution            evolution_lineage (Phase 16, /optimize); evolution_evaluations,
+                     pending_promotions, active_evolutions (Phases 17/19, empty)
 ```
