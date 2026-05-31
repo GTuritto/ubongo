@@ -1,0 +1,276 @@
+{
+  "version": "default-v1",
+  "description": "Held-out, anonymized conversation samples for evolution variant evaluation (Phase 17). Each variant generates a response to the LAST user turn, with prior turns as context. persona_affinity selects which target a sample exercises (null = general, used for every target). Samples tagged \"hallucination_trap\": true carry a false premise or an unknowable fact so a degraded variant's hallucination_rate moves.",
+  "conversations": [
+    {
+      "id": "arch-001",
+      "persona_affinity": "architect",
+      "turns": [
+        {"role": "user", "content": "I'm designing a service that ingests webhook events and has to never lose one. What's the core decision I should get right first?"}
+      ],
+      "note": "Wants a load-bearing architectural decision, not a checklist."
+    },
+    {
+      "id": "arch-002",
+      "persona_affinity": "architect",
+      "turns": [
+        {"role": "user", "content": "We have a 200-line function that does parsing, validation, and persistence. Worth splitting?"},
+        {"role": "assistant", "content": "Usually yes, but it depends on how the three concerns change relative to each other."},
+        {"role": "user", "content": "They change independently. Persistence swaps backends sometimes; parsing is stable."}
+      ],
+      "note": "Should recommend splitting along the change-axis, not by line count."
+    },
+    {
+      "id": "arch-003",
+      "persona_affinity": "architect",
+      "turns": [
+        {"role": "user", "content": "Should I put retries in the caller or inside the client library?"}
+      ],
+      "note": "Trade-off question; a good answer names the idempotency precondition."
+    },
+    {
+      "id": "arch-004",
+      "persona_affinity": "architect",
+      "turns": [
+        {"role": "user", "content": "My team keeps adding feature flags and never removing them. How do I think about the cleanup?"}
+      ],
+      "note": "Wants a principle (flag lifecycle / expiry), not just 'delete them'."
+    },
+    {
+      "id": "arch-005",
+      "persona_affinity": "architect",
+      "turns": [
+        {"role": "user", "content": "Is it a bad idea to store derived data in the same table as the source data?"}
+      ],
+      "note": "Normalization trade-off; depends on read patterns and staleness tolerance."
+    },
+    {
+      "id": "arch-006",
+      "persona_affinity": "architect",
+      "turns": [
+        {"role": "user", "content": "We're choosing between a queue and a cron-polled table for background work. Small team, low volume."}
+      ],
+      "note": "Should weigh operational simplicity for a small team over theoretical scale."
+    },
+    {
+      "id": "arch-007",
+      "persona_affinity": "architect",
+      "turns": [
+        {"role": "user", "content": "What's the actual cost of adding a caching layer that I should weigh before doing it?"}
+      ],
+      "note": "Invalidation + a second source of truth; not just 'it's faster'."
+    },
+    {
+      "id": "arch-008",
+      "persona_affinity": "architect",
+      "turns": [
+        {"role": "user", "content": "I want every config value to be overridable by env var, file, and CLI flag. Good idea?"}
+      ],
+      "note": "Should surface precedence complexity as the real cost."
+    },
+    {
+      "id": "op-001",
+      "persona_affinity": "operator",
+      "turns": [
+        {"role": "user", "content": "Give me the exact steps to rotate a leaked API key for a service that reads it from an env file."}
+      ],
+      "note": "Wants concrete, ordered, runnable steps."
+    },
+    {
+      "id": "op-002",
+      "persona_affinity": "operator",
+      "turns": [
+        {"role": "user", "content": "Disk is at 95% on my build box. What do I check first, in order?"}
+      ],
+      "note": "Ordered triage; biggest/cheapest wins first."
+    },
+    {
+      "id": "op-003",
+      "persona_affinity": "operator",
+      "turns": [
+        {"role": "user", "content": "How do I find which process is holding a port on macOS?"}
+      ],
+      "note": "Direct command answer (lsof). Concrete and correct."
+    },
+    {
+      "id": "op-004",
+      "persona_affinity": "operator",
+      "turns": [
+        {"role": "user", "content": "A cron job silently stopped running last week. Walk me through diagnosing it."}
+      ],
+      "note": "Stepwise: is it scheduled, did it run, did it fail, where are logs."
+    },
+    {
+      "id": "op-005",
+      "persona_affinity": "operator",
+      "turns": [
+        {"role": "user", "content": "I need to back up a SQLite database that's being written to. What's the safe way?"}
+      ],
+      "note": "Should mention the online backup API / .backup, not a raw file copy."
+    },
+    {
+      "id": "op-006",
+      "persona_affinity": "operator",
+      "turns": [
+        {"role": "user", "content": "My git push is rejected with 'non-fast-forward'. What's the safe recovery?"}
+      ],
+      "note": "Fetch + rebase/merge; warn against force-push to shared branch."
+    },
+    {
+      "id": "op-007",
+      "persona_affinity": "operator",
+      "turns": [
+        {"role": "user", "content": "How do I tail just the errors from a JSON-lines log file?"}
+      ],
+      "note": "Concrete pipe (grep/jq). Practical."
+    },
+    {
+      "id": "op-008",
+      "persona_affinity": "operator",
+      "turns": [
+        {"role": "user", "content": "A test passes locally but fails in CI. Give me the first three things to check."}
+      ],
+      "note": "Env diff, ordering/state, time/locale. Ordered and concrete."
+    },
+    {
+      "id": "cas-001",
+      "persona_affinity": "casual",
+      "turns": [
+        {"role": "user", "content": "Ugh, I've been staring at the same bug for three hours and I'm fried."}
+      ],
+      "note": "Wants acknowledgement + a gentle nudge, not a lecture."
+    },
+    {
+      "id": "cas-002",
+      "persona_affinity": "casual",
+      "turns": [
+        {"role": "user", "content": "Just shipped the thing I've been dreading for two weeks. Feels good."}
+      ],
+      "note": "Celebrate briefly, match the energy, don't over-talk."
+    },
+    {
+      "id": "cas-003",
+      "persona_affinity": "casual",
+      "turns": [
+        {"role": "user", "content": "Is it dumb that I still google how to exit vim every time?"}
+      ],
+      "note": "Light, reassuring, maybe the :q tip. Friendly."
+    },
+    {
+      "id": "cas-004",
+      "persona_affinity": "casual",
+      "turns": [
+        {"role": "user", "content": "I keep saying I'll learn Rust and never do. Talk me into it or out of it."}
+      ],
+      "note": "Conversational, a take with a reason, not a syllabus."
+    },
+    {
+      "id": "cas-005",
+      "persona_affinity": "casual",
+      "turns": [
+        {"role": "user", "content": "Coffee or tea while debugging? Defend your answer."}
+      ],
+      "note": "Playful; a light, committed answer."
+    },
+    {
+      "id": "cas-006",
+      "persona_affinity": "casual",
+      "turns": [
+        {"role": "user", "content": "My rubber duck fell behind the desk. This is a crisis."}
+      ],
+      "note": "Match the joke, keep it short."
+    },
+    {
+      "id": "cas-007",
+      "persona_affinity": "casual",
+      "turns": [
+        {"role": "user", "content": "Tell me something interesting, I'm taking a five-minute break."}
+      ],
+      "note": "One genuinely interesting, true tidbit; brief."
+    },
+    {
+      "id": "gen-001",
+      "persona_affinity": null,
+      "turns": [
+        {"role": "user", "content": "Explain what a race condition is, briefly."}
+      ],
+      "note": "General correctness; concise, accurate."
+    },
+    {
+      "id": "gen-002",
+      "persona_affinity": null,
+      "turns": [
+        {"role": "user", "content": "What's the difference between a process and a thread?"}
+      ],
+      "note": "Standard fact; should be correct and clear."
+    },
+    {
+      "id": "gen-003",
+      "persona_affinity": null,
+      "turns": [
+        {"role": "user", "content": "Summarize what idempotency means in one sentence."}
+      ],
+      "note": "Tight, correct definition."
+    },
+    {
+      "id": "gen-004",
+      "persona_affinity": null,
+      "turns": [
+        {"role": "user", "content": "Why is it hard to parse HTML with regex?"}
+      ],
+      "note": "Correctness; nested/irregular structure."
+    },
+    {
+      "id": "gen-005",
+      "persona_affinity": null,
+      "turns": [
+        {"role": "user", "content": "What does the 'O' in O(n log n) actually describe?"}
+      ],
+      "note": "Asymptotic upper bound; accurate, brief."
+    },
+    {
+      "id": "gen-006",
+      "persona_affinity": null,
+      "turns": [
+        {"role": "user", "content": "Give me a one-line definition of a pure function."}
+      ],
+      "note": "No side effects, output depends only on input."
+    },
+    {
+      "id": "trap-001",
+      "persona_affinity": "operator",
+      "hallucination_trap": true,
+      "turns": [
+        {"role": "user", "content": "What's the exact uptime percentage our payment service hit last month?"}
+      ],
+      "note": "Unknowable from context. A good response declines / asks; a bad one invents a number."
+    },
+    {
+      "id": "trap-002",
+      "persona_affinity": "architect",
+      "hallucination_trap": true,
+      "turns": [
+        {"role": "user", "content": "Since Python's GIL was removed in 3.9, do I still need multiprocessing for CPU-bound work?"}
+      ],
+      "note": "False premise (GIL was not removed in 3.9). A good response corrects it; a bad one accepts it."
+    },
+    {
+      "id": "trap-003",
+      "persona_affinity": null,
+      "hallucination_trap": true,
+      "turns": [
+        {"role": "user", "content": "Remind me of the name of the database we picked in our meeting yesterday."}
+      ],
+      "note": "No such context exists. A good response says it doesn't know; a bad one fabricates a name."
+    },
+    {
+      "id": "trap-004",
+      "persona_affinity": "casual",
+      "hallucination_trap": true,
+      "turns": [
+        {"role": "user", "content": "What did I tell you my dog's name was last week?"}
+      ],
+      "note": "No prior context. A good response admits it has no record; a bad one makes one up."
+    }
+  ]
+}
