@@ -22,7 +22,7 @@ _BANNER = "Ubongo REPL ready. /exit to quit."
 _AUTO_ENABLED = "Auto routing enabled."
 _LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 _HELP_COMMANDS = (
-    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /policy, /agents, /trace, /exec <cmd>, /mode <workflow>, /optimize <target>, /reload, /exit."
+    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /policy, /agents, /trace, /exec <cmd>, /mode <workflow>, /optimize <target>, /evaluate <target>, /reload, /exit."
 )
 
 
@@ -262,6 +262,106 @@ def _render_optimize(target: str) -> str:
         elif variant.strategy == "recombine":
             extra = f" (peer={variant.metadata.get('peer')})"
         lines.append(f"  [{idx}] #{row_id} {variant.strategy}{extra}: {preview}")
+    return "\n".join(lines)
+
+
+_EVALUATE_LIST_SENTINEL = "__list__"
+
+
+def _parse_evaluate_command(line: str) -> str | None:
+    """Returns the target from `/evaluate <target>`, the sentinel "__list__"
+    for `/evaluate` (no arg, lists targets), or None for other commands."""
+    raw = line.strip().lstrip("/")
+    parts = raw.split(maxsplit=1)
+    if parts[0].lower() != "evaluate":
+        return None
+    if len(parts) == 1 or not parts[1].strip():
+        return _EVALUATE_LIST_SENTINEL
+    return parts[1].strip()
+
+
+def _render_evaluate_targets() -> str:
+    """Phase 17e: list targets that have at least one generated variant."""
+    from ubongo.evolution import targets as _targets
+    from ubongo.memory import store as _store
+
+    names = [t for t in _targets.evolvable_targets() if _store.max_lineage_generation(t) > 0]
+    if not names:
+        return "No evaluable targets. Run /optimize <target> to generate variants first."
+    lines = ["Evaluable targets (have variants):"]
+    lines.extend(f"  {name}" for name in names)
+    lines.append("Run /evaluate <target> to score the latest generation.")
+    return "\n".join(lines)
+
+
+def _render_evaluate(target: str) -> str:
+    """Score a target's latest generation, persist evaluations, render the
+    fitness leaderboard (Phase 17e).
+
+    A direct tool like /optimize: no master.handle, no governance, no enqueue.
+    The sandbox harness has no side effects; only evolution_evaluations rows
+    are written here, after fitness is computed across the cohort.
+    """
+    from ubongo.evolution import fitness, sandbox
+    from ubongo.evolution.targets import UnknownTargetError, is_target
+    from ubongo.memory import store
+
+    if not is_target(target):
+        return f"Unknown target: {target}.\n{_render_evaluate_targets()}"
+
+    generation = store.max_lineage_generation(target)
+    if generation == 0:
+        return f"No variants for {target}. Run /optimize {target} first."
+
+    variant_rows = store.lineage_for_target(target, generation=generation)
+    strategy_by_id = {r["id"]: (r["variant_metadata"] or {}).get("strategy") for r in variant_rows}
+
+    try:
+        result = sandbox.evaluate_target(variant_rows, target)
+    except UnknownTargetError:
+        return f"Unknown target: {target}.\n{_render_evaluate_targets()}"
+
+    if not result.cohort:
+        return (
+            f"No variants evaluated for {target} (call budget exhausted before "
+            f"any variant, or all samples were dropped). "
+            f"{result.skipped}/{result.total_variants} skipped."
+        )
+
+    ranked = fitness.rank_cohort(result.cohort)
+    for metrics, fit in ranked:
+        store.append_evaluation(
+            lineage_id=metrics.lineage_id,
+            sample_set=result.sample_set_version,
+            success_rate=metrics.success_rate,
+            cost=metrics.cost,
+            latency_ms=metrics.latency_ms,
+            hallucination_rate=metrics.hallucination_rate,
+            user_correction_rate=metrics.user_correction_rate,
+            fitness=fit,
+        )
+
+    header = (
+        f"Leaderboard for {target}, generation {generation} "
+        f"(sample_set={result.sample_set_version}; "
+        f"{result.evaluated}/{result.total_variants} scored, {result.skipped} skipped):"
+    )
+    lines = [header]
+    for rank, (metrics, fit) in enumerate(ranked, start=1):
+        strat = strategy_by_id.get(metrics.lineage_id) or "?"
+        lines.append(
+            f"  {rank}. #{metrics.lineage_id} {strat:<20} "
+            f"fitness={fit:.3f}  "
+            f"success={metrics.success_rate:.2f} "
+            f"halluc={metrics.hallucination_rate:.2f} "
+            f"corr={metrics.user_correction_rate:.2f} "
+            f"cost={metrics.cost:.0f}tok lat={metrics.latency_ms:.0f}ms"
+        )
+    if result.skipped:
+        lines.append(
+            f"  ({result.skipped} variant(s) skipped by the call budget; raise "
+            f"evolution.max_calls_per_hour or lower samples_per_eval for a fuller run.)"
+        )
     return "\n".join(lines)
 
 
@@ -601,6 +701,13 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
                     print(_render_optimize_targets())
                 else:
                     print(_render_optimize(arg))
+                continue
+            if head == "evaluate":
+                arg = _parse_evaluate_command(stripped)
+                if arg is None or arg == _EVALUATE_LIST_SENTINEL:
+                    print(_render_evaluate_targets())
+                else:
+                    print(_render_evaluate(arg))
                 continue
             if head == "reload":
                 print(_reload_all())
