@@ -680,6 +680,20 @@ def append_governance_decision(
     return int(cursor.lastrowid)
 
 
+def update_governance_decision(decision_id: int, approval_response: str) -> None:
+    """Phase 15b: persist the user's y/n approval onto a governance_decisions
+    row written earlier in the turn with approval_response=NULL.
+
+    The row is INSERTed synchronously during master.handle; the interactive
+    approval prompt happens after handle() returns, so the response is patched
+    in by a second call from the REPL.
+    """
+    connection().execute(
+        "UPDATE governance_decisions SET approval_response = ? WHERE id = ?",
+        (approval_response, decision_id),
+    )
+
+
 def append_repair_run(
     workflow_run_id: int,
     *,

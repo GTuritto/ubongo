@@ -23,4 +23,9 @@ def run(message: str, persona: str | None = None) -> int:
     response = master.handle(message, chosen, auto_mode=False)
     print(response.text)
     queue.flush_delivered(response.delivery_token)
+    # Phase 15: one-shot is non-interactive — a turn held for approval cannot
+    # be approved here. Print the gated message and exit non-zero; the user
+    # re-runs (or uses the REPL to approve).
+    if response.approval is not None:
+        return 1
     return 0 if response.ok else 1
