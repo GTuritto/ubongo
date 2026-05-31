@@ -325,7 +325,22 @@ Tier 5 (Self-Improvement) opens with on-demand variant generation. `/optimize <t
 
 ## Phase 17 — Sandboxed Evaluation + Fitness
 
-*(Populated when Phase 17 is implemented.)*
+The optimize→evaluate half of the GP loop closes. `/evaluate <target>` scores a target's latest generation of variants against the held-out conversation set (`tests/manual/fixtures/sample_conversations.json`, 33 anonymized samples) and prints a fitness-ranked leaderboard. For each sample a variant generates a response (system prompt = `UBONGO.md` + variant text, no skill/memory layers, for isolation), then one judge call returns `{quality, hallucination, would_user_correct}`. Fitness is a cohort-normalized weighted sum (`evolution.fitness_weights`); ties break on `lineage_id` ascending. A `CallBudget` (seeded from `evolution.max_calls_per_hour`) throttles cost and returns partial results; `evolution.samples_per_eval` (default 5) caps samples per variant. The harness has **no** side effects — only `evolution_evaluations` rows are written. `EvaluatorAgent` and governance are untouched. Like `/optimize`, `/evaluate` is a direct tool (no `master.handle`).
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| 17.1 | List evaluable targets (none yet) | fresh DB, `/evaluate` | "No evaluable targets. Run /optimize..." |
+| 17.2 | Seed a generation | `/optimize persona:casual` | 8 variants written (Phase 16). |
+| 17.3 | List evaluable targets | `/evaluate` | Lists `persona:casual`. |
+| 17.4 | Evaluate | `/evaluate persona:casual` | "Leaderboard for persona:casual, generation 1 ..."; ranked rows `#<id> <strategy> fitness=… success=… halluc=… corr=… cost=…tok lat=…ms`. |
+| 17.5 | Fitness ordering | inspect 17.4 | Rows sorted by fitness descending; ties resolve to lower `#lineage_id` first. |
+| 17.6 | Persisted | `sqlite3 data/ubongo.db "SELECT COUNT(*) FROM evolution_evaluations e JOIN evolution_lineage l ON l.id=e.lineage_id WHERE l.target='persona:casual'"` | Equals the number of variants scored. |
+| 17.7 | Cost cap throttles | set `evolution.max_calls_per_hour: 10` in a scratch config; `/evaluate persona:casual` | Fewer variants scored; a "skipped by the call budget" note prints; partial leaderboard still shown. |
+| 17.8 | Hallucination signal | inspect a low-quality variant's row | `halluc` column is elevated relative to a clean variant (the trap samples drive it). |
+| 17.9 | Determinism | run 17.4 twice on identical inputs (mock or fixed seed) | Leaderboard order is stable. |
+| 17.10 | Unknown target | `/evaluate persona:bogus` | "Unknown target: persona:bogus." + target list; no rows written. |
+| 17.11 | Help | `/help` or unknown command | Usage line includes `/evaluate <target>`. |
+| 17.12 | Pytest passes | `uv run pytest tests/` | All green (583 expected after Phase 17: Phase-16's 549 + 34 evaluation tests). |
 
 ## Phase 18 — GP Loop (autonomous)
 
