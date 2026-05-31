@@ -308,7 +308,20 @@ limits (no OS-level isolation; network governed by the allowlist, not blocked).
 
 ## Phase 16 — Variant Generation
 
-*(Populated when Phase 16 is implemented.)*
+Tier 5 (Self-Improvement) opens with on-demand variant generation. `/optimize <target>` mutates an evolvable persona prompt into `population_size` (8) strategy-diverse alternates and persists each as an `evolution_lineage` row. Five strategies (paraphrase, prune, expand, recombine, perturb_temperature) are allocated round-robin, so a run is never all-paraphrase; `perturb_temperature` is a pure-metadata variant (same text, a sampling-temperature delta, no LLM call). No evaluation, no loop, no promotions — those are Phases 17–19. The schema (`evolution_lineage`) and the `settings.evolution` block already shipped, so there is no migration. `/optimize` is a direct REPL tool (like `/exec`): no `master.handle`, no governance, no enqueue.
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| 16.1 | List evolvable targets | `/optimize` | Lists `persona:architect`, `persona:operator`, `persona:casual`. |
+| 16.2 | Generate variants | `/optimize persona:casual` | Prints "8 variant(s) for persona:casual, generation 1"; eight numbered lines, each `#<id> <strategy>: <preview>`. |
+| 16.3 | Diversity | inspect 16.2 output | Not all paraphrases; at least four distinct strategy labels; one `perturb_temperature (Δtemp=…)`. |
+| 16.4 | Plausibility | read the previews | The casual-voice alternates read as real prompts, not gibberish. |
+| 16.5 | Lineage persisted | `sqlite3 data/ubongo.db "SELECT generation, COUNT(*) FROM evolution_lineage WHERE target='persona:casual' GROUP BY generation"` | One row: `1\|8`. |
+| 16.6 | Generation increments | `/optimize persona:casual` again, then re-run 16.5 | Two rows: `1\|8` and `2\|8`. |
+| 16.7 | Parent is NULL (no promotion yet) | `sqlite3 data/ubongo.db "SELECT DISTINCT parent_id FROM evolution_lineage WHERE target='persona:casual'"` | NULL only. |
+| 16.8 | Unknown target | `/optimize persona:bogus` | "Unknown target: persona:bogus." + the target list; no rows written. |
+| 16.9 | Help | `/help` or any unknown command | Usage line includes `/optimize <target>`. |
+| 16.10 | Pytest passes | `uv run pytest tests/` | All green (549 expected after Phase 16: Phase-15's 515 + 34 evolution/optimize tests). |
 
 ## Phase 17 — Sandboxed Evaluation + Fitness
 

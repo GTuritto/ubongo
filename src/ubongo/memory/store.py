@@ -954,3 +954,127 @@ def last_n_workflow_runs(n: int = 1) -> list[dict]:
             "repair_runs": rr_by_wf.get(row["id"], []),
         })
     return out
+
+
+# --- Evolution lineage (Phase 16) -------------------------------------------
+# The `evolution_lineage` table (and the downstream evaluation / promotion
+# tables) already ships in schema.sql. Phase 16 only writes lineage rows; the
+# rest stay empty until Phases 17 / 19.
+
+
+def append_lineage_variant(
+    *,
+    target: str,
+    parent_id: int | None,
+    generation: int,
+    variant_text: str,
+    variant_metadata: dict | None,
+    created_at: str | None = None,
+) -> int:
+    """Persist one evolution_lineage row, returns the new id.
+
+    `parent_id` points to the lineage row the variant descends from — the
+    currently-promoted active variant when one exists, else NULL (Phase 16 has
+    no promotions yet, so it is always NULL). `variant_metadata` records
+    provenance (strategy, base source, perturbation deltas) as JSON.
+    """
+    import json as _json
+
+    conn = connection()
+    cursor = conn.execute(
+        """
+        INSERT INTO evolution_lineage
+            (target, parent_id, generation, variant_text, variant_metadata,
+             created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            target,
+            parent_id,
+            generation,
+            variant_text,
+            _json.dumps(variant_metadata) if variant_metadata is not None else None,
+            created_at or now_iso(),
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
+def lineage_for_target(target: str, generation: int | None = None) -> list[dict]:
+    """Return evolution_lineage rows for a target, oldest first.
+
+    Optionally filtered to a single generation. `variant_metadata` is parsed
+    back to a dict (or {} when null / unparseable). Used by the REPL, tests,
+    and Phase 17's evaluation step.
+    """
+    import json as _json
+
+    conn = connection()
+    if generation is None:
+        rows = conn.execute(
+            """
+            SELECT id, target, parent_id, generation, variant_text,
+                   variant_metadata, created_at
+            FROM evolution_lineage
+            WHERE target = ?
+            ORDER BY id
+            """,
+            (target,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT id, target, parent_id, generation, variant_text,
+                   variant_metadata, created_at
+            FROM evolution_lineage
+            WHERE target = ? AND generation = ?
+            ORDER BY id
+            """,
+            (target, generation),
+        ).fetchall()
+
+    out: list[dict] = []
+    for row in rows:
+        try:
+            meta = _json.loads(row["variant_metadata"]) if row["variant_metadata"] else {}
+        except Exception:
+            meta = {}
+        out.append({
+            "id": row["id"],
+            "target": row["target"],
+            "parent_id": row["parent_id"],
+            "generation": row["generation"],
+            "variant_text": row["variant_text"],
+            "variant_metadata": meta,
+            "created_at": row["created_at"],
+        })
+    return out
+
+
+def max_lineage_generation(target: str) -> int:
+    """Return the highest generation recorded for a target, or 0 if none.
+
+    `record_variants` uses this to compute the next generation (0 → first run
+    writes generation 1).
+    """
+    conn = connection()
+    row = conn.execute(
+        "SELECT MAX(generation) AS g FROM evolution_lineage WHERE target = ?",
+        (target,),
+    ).fetchone()
+    return int(row["g"]) if row and row["g"] is not None else 0
+
+
+def active_lineage_id(target: str) -> int | None:
+    """Return the promoted lineage id for a target, or None when unpromoted.
+
+    Reads `active_evolutions` — empty in Phase 16, so this is always None. It
+    is the parent pointer source for new variants and the seam Phase 19 fills
+    when it writes promotions.
+    """
+    conn = connection()
+    row = conn.execute(
+        "SELECT lineage_id FROM active_evolutions WHERE target = ?",
+        (target,),
+    ).fetchone()
+    return int(row["lineage_id"]) if row else None

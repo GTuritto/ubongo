@@ -104,5 +104,15 @@ def load_governance(path: Path | None = None, *, force_reload: bool = False) -> 
     return cfg
 
 
+def load_evolution(path: Path | None = None, *, force_reload: bool = False) -> dict[str, Any]:
+    """Return the `evolution:` block from settings.yaml (Phase 16).
+
+    A thin accessor over `load_config()` so the GP layer reads its knobs
+    (`population_size`, generator model) through one named entry point. Returns
+    an empty dict if the block is absent, so callers can fall back to defaults.
+    """
+    return load_config(path, force_reload=force_reload).get("evolution", {})
+
+
 def reload() -> None:
     _cache.clear()
