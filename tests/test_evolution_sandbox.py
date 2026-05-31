@@ -153,6 +153,16 @@ def test_judge_parser_tolerates_code_fence() -> None:
     assert parsed == (0.7, 0.1, False)
 
 
+def test_judge_parser_extracts_object_from_prose() -> None:
+    # Judges sometimes wrap the JSON in explanation despite the rubric.
+    raw = (
+        "Here is my assessment of the response:\n"
+        '{"quality": 0.6, "hallucination": 0.3, "would_user_correct": true}\n'
+        "The response was mostly fine but a bit vague."
+    )
+    assert sandbox._parse_judgment(raw) == (0.6, 0.3, True)
+
+
 def test_judge_parser_rejects_malformed() -> None:
     assert sandbox._parse_judgment("not json") is None
     assert sandbox._parse_judgment('{"quality": "high"}') is None

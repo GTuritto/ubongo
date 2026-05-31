@@ -45,10 +45,15 @@ _UBONGO_MD = _REPO_ROOT / "config" / "UBONGO.md"
 _DEFAULT_SAMPLES_PATH = _REPO_ROOT / "tests" / "manual" / "fixtures" / "sample_conversations.json"
 
 _GEN_MAX_TOKENS = 600
-_JUDGE_MAX_TOKENS = 250
+# 250 truncated verbose judges mid-JSON in live runs (~1/3 parse failures);
+# 400 gives the flat 3-field object ample room.
+_JUDGE_MAX_TOKENS = 400
 _DEFAULT_SAMPLES_PER_EVAL = 5
 
 _CODE_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL | re.IGNORECASE)
+# Fallback: pluck the first flat {...} object out of prose-wrapped output. The
+# judgment JSON has no nested objects, so a brace-free body match is safe.
+_JSON_OBJECT_RE = re.compile(r"\{[^{}]*\}", re.DOTALL)
 
 _JUDGE_RUBRIC = (
     "You are an evaluation judge scoring an assistant response to a user. "
@@ -159,14 +164,34 @@ def _strip_code_fence(text: str) -> str:
     return match.group(1) if match else text.strip()
 
 
+def _load_judgment_object(raw: str) -> dict | None:
+    """Get the judgment dict from the raw judge output. Tries, in order:
+    the fence-stripped whole string, then the first flat {...} object embedded
+    in prose (judges sometimes wrap the JSON in explanation despite the rubric).
+    """
+    cleaned = _strip_code_fence(raw)
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict):
+            return data
+    except (json.JSONDecodeError, ValueError):
+        pass
+    match = _JSON_OBJECT_RE.search(cleaned)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, ValueError):
+            return None
+    return None
+
+
 def _parse_judgment(raw: str) -> tuple[float, float, bool] | None:
     """Parse the judge JSON. Returns (quality, hallucination, would_correct)
     or None on failure."""
-    try:
-        data = json.loads(_strip_code_fence(raw))
-    except (json.JSONDecodeError, ValueError):
-        return None
-    if not isinstance(data, dict):
+    data = _load_judgment_object(raw)
+    if data is None:
         return None
     try:
         quality = max(0.0, min(1.0, float(data["quality"])))
