@@ -1078,3 +1078,141 @@ def active_lineage_id(target: str) -> int | None:
         (target,),
     ).fetchone()
     return int(row["lineage_id"]) if row else None
+
+
+# --- Evolution evaluations (Phase 17) ---------------------------------------
+# One row per (variant, sample_set): the aggregate metrics + fitness from
+# running a lineage variant against the held-out conversation set.
+
+
+def append_evaluation(
+    *,
+    lineage_id: int,
+    sample_set: str,
+    success_rate: float | None,
+    cost: float | None,
+    latency_ms: float | None,
+    hallucination_rate: float | None,
+    user_correction_rate: float | None,
+    fitness: float,
+    evaluated_at: str | None = None,
+) -> int:
+    """Persist one evolution_evaluations row, returns the new id."""
+    conn = connection()
+    cursor = conn.execute(
+        """
+        INSERT INTO evolution_evaluations
+            (lineage_id, sample_set, success_rate, cost, latency_ms,
+             hallucination_rate, user_correction_rate, fitness, evaluated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            lineage_id,
+            sample_set,
+            success_rate,
+            cost,
+            latency_ms,
+            hallucination_rate,
+            user_correction_rate,
+            fitness,
+            evaluated_at or now_iso(),
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
+def evaluations_for_target(target: str, generation: int | None = None) -> list[dict]:
+    """Return evaluation rows for a target, joined to their lineage variant,
+    ranked best-first (fitness desc, then lineage_id asc — the deterministic
+    tiebreak). Powers the `/evaluate` leaderboard and Phase 19 promotion.
+
+    Each dict carries the evaluation metrics plus the variant's `lineage_id`,
+    `generation`, `strategy` (from `variant_metadata`), and `variant_text`.
+    """
+    import json as _json
+
+    conn = connection()
+    if generation is None:
+        rows = conn.execute(
+            """
+            SELECT e.id, e.lineage_id, e.sample_set, e.success_rate, e.cost,
+                   e.latency_ms, e.hallucination_rate, e.user_correction_rate,
+                   e.fitness, e.evaluated_at,
+                   l.generation, l.variant_text, l.variant_metadata
+            FROM evolution_evaluations e
+            JOIN evolution_lineage l ON l.id = e.lineage_id
+            WHERE l.target = ?
+            ORDER BY e.fitness DESC, e.lineage_id ASC
+            """,
+            (target,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT e.id, e.lineage_id, e.sample_set, e.success_rate, e.cost,
+                   e.latency_ms, e.hallucination_rate, e.user_correction_rate,
+                   e.fitness, e.evaluated_at,
+                   l.generation, l.variant_text, l.variant_metadata
+            FROM evolution_evaluations e
+            JOIN evolution_lineage l ON l.id = e.lineage_id
+            WHERE l.target = ? AND l.generation = ?
+            ORDER BY e.fitness DESC, e.lineage_id ASC
+            """,
+            (target, generation),
+        ).fetchall()
+
+    out: list[dict] = []
+    for row in rows:
+        try:
+            meta = _json.loads(row["variant_metadata"]) if row["variant_metadata"] else {}
+        except Exception:
+            meta = {}
+        out.append({
+            "id": row["id"],
+            "lineage_id": row["lineage_id"],
+            "sample_set": row["sample_set"],
+            "success_rate": row["success_rate"],
+            "cost": row["cost"],
+            "latency_ms": row["latency_ms"],
+            "hallucination_rate": row["hallucination_rate"],
+            "user_correction_rate": row["user_correction_rate"],
+            "fitness": row["fitness"],
+            "evaluated_at": row["evaluated_at"],
+            "generation": row["generation"],
+            "strategy": meta.get("strategy"),
+            "variant_text": row["variant_text"],
+        })
+    return out
+
+
+def latest_evaluation_for_lineage(lineage_id: int) -> dict | None:
+    """Return the most recent evaluation row for a lineage variant, or None.
+
+    Used to skip re-evaluating a variant already scored this run.
+    """
+    conn = connection()
+    row = conn.execute(
+        """
+        SELECT id, lineage_id, sample_set, success_rate, cost, latency_ms,
+               hallucination_rate, user_correction_rate, fitness, evaluated_at
+        FROM evolution_evaluations
+        WHERE lineage_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (lineage_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row["id"],
+        "lineage_id": row["lineage_id"],
+        "sample_set": row["sample_set"],
+        "success_rate": row["success_rate"],
+        "cost": row["cost"],
+        "latency_ms": row["latency_ms"],
+        "hallucination_rate": row["hallucination_rate"],
+        "user_correction_rate": row["user_correction_rate"],
+        "fitness": row["fitness"],
+        "evaluated_at": row["evaluated_at"],
+    }
