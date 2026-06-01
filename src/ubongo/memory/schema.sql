@@ -130,6 +130,27 @@ CREATE TABLE IF NOT EXISTS active_evolutions (
   promoted_at TIMESTAMP NOT NULL
 );
 
+-- Phase 18: one row per autonomous GP cycle. Doubles as the rolling-hour
+-- throttle window (sum calls_spent over ended_at in the trailing hour) and the
+-- crash-recovery / round-robin log.
+CREATE TABLE IF NOT EXISTS evolution_runs (
+  id INTEGER PRIMARY KEY,
+  target TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  calls_spent INTEGER NOT NULL DEFAULT 0,
+  outcome TEXT NOT NULL CHECK (outcome IN ('started', 'completed', 'partial', 'aborted')),
+  started_at TIMESTAMP NOT NULL,
+  ended_at TIMESTAMP
+);
+
+-- Phase 18: single-row control state for the autonomous loop. Persisted so the
+-- loop comes back paused after a restart and /evolution survives sessions.
+CREATE TABLE IF NOT EXISTS evolution_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  status TEXT NOT NULL CHECK (status IN ('running', 'paused', 'off')),
+  updated_at TIMESTAMP NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS notification_queue (
   id INTEGER PRIMARY KEY,
   content TEXT NOT NULL,
@@ -157,3 +178,5 @@ CREATE INDEX IF NOT EXISTS idx_workflow_runs_conv ON workflow_runs(conversation_
 CREATE INDEX IF NOT EXISTS idx_agent_runs_workflow ON agent_runs(workflow_run_id);
 CREATE INDEX IF NOT EXISTS idx_lineage_target_gen ON evolution_lineage(target, generation);
 CREATE INDEX IF NOT EXISTS idx_pending_undecided ON pending_promotions(decided_at) WHERE decided_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_evolution_runs_ended ON evolution_runs(ended_at);
+CREATE INDEX IF NOT EXISTS idx_evolution_runs_target ON evolution_runs(target, generation);

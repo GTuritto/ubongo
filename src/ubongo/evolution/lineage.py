@@ -32,11 +32,16 @@ def record_variants(target: str, variants: list[Variant]) -> list[int]:
         return []
 
     generation = next_generation(target)
-    parent_id = store.active_lineage_id(target)
+    # Phase 18: a variant mutated from a prior survivor carries its own
+    # parent_id (cross-generation lineage). Otherwise fall back to the
+    # currently-promoted active variant (Phase 16 behavior — NULL until a
+    # Phase 19 promotion exists).
+    active_parent = store.active_lineage_id(target)
 
     ids: list[int] = []
     for variant in variants:
         metadata = {"strategy": variant.strategy, **variant.metadata}
+        parent_id = variant.parent_id if variant.parent_id is not None else active_parent
         row_id = store.append_lineage_variant(
             target=target,
             parent_id=parent_id,

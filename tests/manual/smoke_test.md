@@ -344,7 +344,22 @@ The optimize→evaluate half of the GP loop closes. `/evaluate <target>` scores 
 
 ## Phase 18 — GP Loop (autonomous)
 
-*(Populated when Phase 18 is implemented.)*
+The two halves connect into a continuous background loop. When `evolution.enabled=true`, the REPL starts a daemon thread running `EvolutionLoop`; it comes up **paused** (persisted status), so nothing spends until `/evolution resume`. Each cycle picks the stalest target (round-robin), generates a generation seeded from the previous one's champion survivor (cross-generation lineage; `parent_id` set), evaluates it under a shared `CallBudget`, and records an `evolution_runs` row. The throttle is now a real rolling-hour window (sum `calls_spent` over the trailing hour); `evolution.cron` is `null` (continuous) or an integer = min seconds between cycles. Progress is DB-derived, so killing the REPL mid-generation and restarting resumes the last completed generation (an unevaluated latest generation is re-evaluated, not regenerated). `/evolution status|pause|resume|off` control it. Promotions (acting on winners) are Phase 19. Two new tables (`evolution_runs`, `evolution_state`) via `CREATE TABLE IF NOT EXISTS` — no ALTER.
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| 18.1 | Loop starts paused | `evolution.enabled: true`; launch REPL; `/evolution status` | status=paused; per-target generations listed; throttle 0/N. |
+| 18.2 | Resume | `/evolution resume` | "resumed (status=running)". |
+| 18.3 | Loop runs | wait a few minutes; `/evolution status` | ≥1 generation completed; calls-in-last-hour climbing; recent cycles listed. |
+| 18.4 | Round-robin | after 3+ cycles | generations advance across all three persona targets (lineage timestamps interleave). |
+| 18.5 | Cross-generation lineage | `sqlite3 data/ubongo.db "SELECT DISTINCT parent_id FROM evolution_lineage WHERE target='persona:architect' AND generation=2"` | non-NULL (gen 2 seeded from a gen-1 survivor). |
+| 18.6 | Pause | `/evolution pause`; wait; `/evolution status` | no new generations after the in-flight one finishes. |
+| 18.7 | Throttle respected | set `max_calls_per_hour: 5`; resume; watch | a cycle stays ≤5 calls in the window; `/evolution status` throttle ≤5/5; further cycles skipped until the window frees. |
+| 18.8 | Cron pacing | set `cron: 120`; resume | cycles start no more often than every 120s. |
+| 18.9 | Crash recovery | kill the REPL mid-cycle; restart; `/evolution status` | resumes from the last completed generation; no duplicate generation; an interrupted generation is re-evaluated. |
+| 18.10 | Off | `/evolution off` | loop idles until `resume`. |
+| 18.11 | Disabled | `evolution.enabled: false`; launch; `/evolution status` | note that the loop thread does not start; `/evolution resume` warns to enable it. |
+| 18.12 | Pytest passes | `uv run pytest tests/` | All green (623 expected after Phase 18: Phase-17's 584 + 39 loop/selection/throttle/control/recovery tests). |
 
 ## Phase 19 — GP Targets Expanded + Promotions
 

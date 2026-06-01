@@ -124,3 +124,18 @@ def test_next_generation(db) -> None:
     assert lineage.next_generation("persona:casual") == 1
     lineage.record_variants("persona:casual", _variants(1))
     assert lineage.next_generation("persona:casual") == 2
+
+
+def test_record_variants_honors_per_variant_parent_id(db) -> None:
+    # Phase 18: a variant carrying its own parent_id (cross-generation) wins
+    # over the active-promotion fallback. parent_id must be a real lineage row
+    # (FK), as it always is in the loop (a prior survivor).
+    parent = store.append_lineage_variant(
+        target="persona:architect", parent_id=None, generation=1,
+        variant_text="champion", variant_metadata={"strategy": "prune"},
+    )
+    variants = [Variant(strategy="paraphrase", text="child", metadata={}, parent_id=parent)]
+    ids = lineage.record_variants("persona:architect", variants)
+    child = [r for r in store.lineage_for_target("persona:architect") if r["id"] == ids[0]][0]
+    assert child["parent_id"] == parent
+    assert child["generation"] == 2
