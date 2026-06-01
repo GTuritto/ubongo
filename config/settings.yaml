@@ -82,6 +82,13 @@ evolution:
   # under max_calls_per_hour=30 a single /evaluate fully scores ~3 variants and
   # reports the rest skipped. Raise this (or max_calls_per_hour) for fuller runs.
   samples_per_eval: 5
+  # Phase 18: top-K variants of a generation that "survive" — the champion
+  # among them seeds the next generation (cross-generation lineage).
+  survivors: 3
+  # Phase 18: autonomous-loop pacing. null = continuous (bounded only by
+  # max_calls_per_hour over a rolling hour); an integer = minimum seconds
+  # between cycle starts. The loop starts PAUSED regardless; /evolution resume
+  # begins it.
   cron: null
   fitness_weights:
     success_rate: 0.40
