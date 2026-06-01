@@ -22,7 +22,7 @@ _BANNER = "Ubongo REPL ready. /exit to quit."
 _AUTO_ENABLED = "Auto routing enabled."
 _LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 _HELP_COMMANDS = (
-    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /policy, /agents, /trace, /exec <cmd>, /mode <workflow>, /optimize <target>, /evaluate <target>, /reload, /exit."
+    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /policy, /agents, /trace, /exec <cmd>, /mode <workflow>, /optimize <target>, /evaluate <target>, /evolution <status|pause|resume|off>, /reload, /exit."
 )
 
 
@@ -302,7 +302,7 @@ def _render_evaluate(target: str) -> str:
     The sandbox harness has no side effects; only evolution_evaluations rows
     are written here, after fitness is computed across the cohort.
     """
-    from ubongo.evolution import fitness, sandbox
+    from ubongo.evolution import loop, sandbox
     from ubongo.evolution.targets import UnknownTargetError, is_target
     from ubongo.memory import store
 
@@ -328,18 +328,7 @@ def _render_evaluate(target: str) -> str:
             f"{result.skipped}/{result.total_variants} skipped."
         )
 
-    ranked = fitness.rank_cohort(result.cohort)
-    for metrics, fit in ranked:
-        store.append_evaluation(
-            lineage_id=metrics.lineage_id,
-            sample_set=result.sample_set_version,
-            success_rate=metrics.success_rate,
-            cost=metrics.cost,
-            latency_ms=metrics.latency_ms,
-            hallucination_rate=metrics.hallucination_rate,
-            user_correction_rate=metrics.user_correction_rate,
-            fitness=fit,
-        )
+    ranked = loop.persist_cohort_evaluations(result)
 
     header = (
         f"Leaderboard for {target}, generation {generation} "
@@ -363,6 +352,85 @@ def _render_evaluate(target: str) -> str:
             f"evolution.max_calls_per_hour or lower samples_per_eval for a fuller run.)"
         )
     return "\n".join(lines)
+
+
+_EVOLUTION_SUBCOMMANDS = ("status", "pause", "resume", "off")
+
+
+def _parse_evolution_command(line: str) -> str | None:
+    """Returns the subcommand from `/evolution <sub>` (defaults to "status"),
+    or None for other commands. Unknown subcommands return the raw token so the
+    dispatcher can show usage."""
+    raw = line.strip().lstrip("/")
+    parts = raw.split(maxsplit=1)
+    if parts[0].lower() != "evolution":
+        return None
+    if len(parts) == 1 or not parts[1].strip():
+        return "status"
+    return parts[1].strip().split()[0].lower()
+
+
+def _render_evolution_status() -> str:
+    """Phase 18d: render loop control state + per-target progress + throttle."""
+    from ubongo.config import load_evolution
+    from ubongo.evolution import targets as _targets
+    from ubongo.memory import store as _store
+
+    evo = load_evolution()
+    enabled = bool(evo.get("enabled", False))
+    status = _store.get_evolution_status()
+    cap = int(evo.get("max_calls_per_hour", 30))
+    used = _store.calls_in_last_hour()
+    cron = evo.get("cron")
+    pace = "continuous" if cron is None else f"every {cron}s"
+
+    lines = [
+        f"Evolution loop: status={status}  enabled={enabled}  "
+        f"throttle={used}/{cap} calls in last hour  pacing={pace}",
+    ]
+    if not enabled:
+        lines.append("  (evolution.enabled is false in settings.yaml — the loop thread does not start.)")
+    for target in _targets.evolvable_targets():
+        gen = _store.max_lineage_generation(target)
+        if gen == 0:
+            lines.append(f"  {target:<20} no generations yet")
+            continue
+        evals = _store.evaluations_for_target(target, generation=gen)
+        best = evals[0]["fitness"] if evals else None
+        best_str = f"best fitness={best:.3f}" if best is not None else "unevaluated"
+        last = _store.last_cycle_at(target) or "never"
+        lines.append(f"  {target:<20} gen {gen}  {best_str}  last cycle {last}")
+    recent = _store.evolution_runs_recent(3)
+    if recent:
+        lines.append("  recent cycles:")
+        for r in recent:
+            lines.append(
+                f"    #{r['id']} {r['target']} gen{r['generation']} "
+                f"{r['outcome']} calls={r['calls_spent']}"
+            )
+    return "\n".join(lines)
+
+
+def _render_evolution_control(sub: str) -> str:
+    """Phase 18e: apply pause/resume/off and report. resume warns if the loop
+    is disabled in settings (the thread never started)."""
+    from ubongo.config import load_evolution
+    from ubongo.memory import store as _store
+
+    if sub == "resume":
+        _store.set_evolution_status("running")
+        if not load_evolution().get("enabled", False):
+            return ("Status set to running, but evolution.enabled is false in "
+                    "settings.yaml so the loop thread is not active. Enable it and "
+                    "restart the REPL to run.")
+        return "Evolution loop resumed (status=running). Generations will run, throttled."
+    if sub == "pause":
+        _store.set_evolution_status("paused")
+        return "Evolution loop paused. The in-flight cycle finishes; no new ones start."
+    if sub == "off":
+        _store.set_evolution_status("off")
+        return "Evolution loop off. It idles until /evolution resume."
+    return f"Unknown subcommand: {sub}. Usage: /evolution status|pause|resume|off."
 
 
 def _render_exec(cmd: str) -> str:
@@ -628,6 +696,21 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
     pending_skill: str | None = None
     pending_workflow: str | None = None
     print(_BANNER)
+
+    # Phase 18: start the autonomous GP loop in a background daemon thread when
+    # evolution.enabled. It comes up paused (persisted status), so nothing runs
+    # until /evolution resume. Stopped on every REPL exit path via finally.
+    from ubongo.evolution.loop import EvolutionLoop
+    _evolution_loop = EvolutionLoop()
+    _evolution_loop.start()
+
+    try:
+        return _repl_loop(persona, auto_mode, pending_skill, pending_workflow)
+    finally:
+        _evolution_loop.stop()
+
+
+def _repl_loop(persona, auto_mode, pending_skill, pending_workflow) -> int:
     while True:
         try:
             line = input("> ")
@@ -708,6 +791,15 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
                     print(_render_evaluate_targets())
                 else:
                     print(_render_evaluate(arg))
+                continue
+            if head == "evolution":
+                sub = _parse_evolution_command(stripped)
+                if sub is None or sub == "status":
+                    print(_render_evolution_status())
+                elif sub in ("pause", "resume", "off"):
+                    print(_render_evolution_control(sub))
+                else:
+                    print(f"Unknown subcommand: {sub}. Usage: /evolution status|pause|resume|off.")
                 continue
             if head == "reload":
                 print(_reload_all())
