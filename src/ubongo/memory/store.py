@@ -175,6 +175,14 @@ def connection() -> sqlite3.Connection:
     return bootstrap()
 
 
+def is_connected() -> bool:
+    """True if a DB connection exists in this process. Lets read paths (e.g. the
+    Phase 19 live swap in build_system_prompt) skip a promotion lookup in
+    processes that never opened the DB, rather than bootstrapping one as a side
+    effect of pure prompt assembly."""
+    return _connection is not None
+
+
 # --- conversations ---
 
 
@@ -1051,6 +1059,20 @@ def lineage_for_target(target: str, generation: int | None = None) -> list[dict]
     return out
 
 
+def lineage_row(lineage_id: int) -> dict | None:
+    """Return a single evolution_lineage row by id (target, generation,
+    variant_text, parent_id), or None."""
+    conn = connection()
+    r = conn.execute(
+        "SELECT id, target, parent_id, generation, variant_text FROM evolution_lineage WHERE id = ?",
+        (lineage_id,),
+    ).fetchone()
+    if r is None:
+        return None
+    return {"id": r["id"], "target": r["target"], "parent_id": r["parent_id"],
+            "generation": r["generation"], "variant_text": r["variant_text"]}
+
+
 def max_lineage_generation(target: str) -> int:
     """Return the highest generation recorded for a target, or 0 if none.
 
@@ -1347,3 +1369,132 @@ def set_evolution_status(status: str) -> None:
         """,
         (status, now_iso()),
     )
+
+
+# --- Promotions: pending queue + active swap (Phase 19) ---------------------
+# pending_promotions: the loop proposes here when a champion beats the active
+# baseline; the user approves/rejects via /improvements. active_evolutions: the
+# single promoted variant per target, consulted by the live read paths
+# (build_system_prompt, router, repair) for the live swap.
+
+
+def append_pending_promotion(*, target: str, lineage_id: int, proposed_at: str | None = None) -> int:
+    """Enqueue a promotion proposal; returns its id."""
+    conn = connection()
+    cursor = conn.execute(
+        """
+        INSERT INTO pending_promotions (lineage_id, target, proposed_at)
+        VALUES (?, ?, ?)
+        """,
+        (lineage_id, target, proposed_at or now_iso()),
+    )
+    return int(cursor.lastrowid)
+
+
+def has_open_promotion(target: str) -> bool:
+    """True if `target` already has an undecided promotion (the proposer skips
+    re-proposing while one is pending)."""
+    conn = connection()
+    row = conn.execute(
+        "SELECT 1 FROM pending_promotions WHERE target = ? AND decided_at IS NULL LIMIT 1",
+        (target,),
+    ).fetchone()
+    return row is not None
+
+
+def open_pending_promotions() -> list[dict]:
+    """Undecided promotions, oldest first, joined to their lineage variant
+    (target, lineage_id, variant_text, strategy, generation). Powers
+    `/improvements`."""
+    import json as _json
+
+    conn = connection()
+    rows = conn.execute(
+        """
+        SELECT p.id, p.target, p.lineage_id, p.proposed_at,
+               l.variant_text, l.variant_metadata, l.generation
+        FROM pending_promotions p
+        JOIN evolution_lineage l ON l.id = p.lineage_id
+        WHERE p.decided_at IS NULL
+        ORDER BY p.id
+        """,
+    ).fetchall()
+    out: list[dict] = []
+    for r in rows:
+        try:
+            meta = _json.loads(r["variant_metadata"]) if r["variant_metadata"] else {}
+        except Exception:
+            meta = {}
+        out.append({
+            "id": r["id"], "target": r["target"], "lineage_id": r["lineage_id"],
+            "proposed_at": r["proposed_at"], "variant_text": r["variant_text"],
+            "strategy": meta.get("strategy"), "kind": meta.get("kind", "prompt"),
+            "generation": r["generation"],
+        })
+    return out
+
+
+def get_pending_promotion(promotion_id: int) -> dict | None:
+    conn = connection()
+    r = conn.execute(
+        "SELECT id, target, lineage_id, proposed_at, decided_at, decision "
+        "FROM pending_promotions WHERE id = ?",
+        (promotion_id,),
+    ).fetchone()
+    if r is None:
+        return None
+    return {"id": r["id"], "target": r["target"], "lineage_id": r["lineage_id"],
+            "proposed_at": r["proposed_at"], "decided_at": r["decided_at"],
+            "decision": r["decision"]}
+
+
+def decide_promotion(promotion_id: int, decision: str, *, decided_at: str | None = None) -> None:
+    """Stamp a pending promotion as approved/rejected. Idempotent-safe: only
+    patches rows still undecided."""
+    if decision not in ("approved", "rejected"):
+        raise ValueError(f"invalid decision: {decision}")
+    conn = connection()
+    conn.execute(
+        "UPDATE pending_promotions SET decision = ?, decided_at = ? "
+        "WHERE id = ? AND decided_at IS NULL",
+        (decision, decided_at or now_iso(), promotion_id),
+    )
+
+
+def set_active_evolution(target: str, lineage_id: int, *, promoted_at: str | None = None) -> None:
+    """Promote a variant: upsert the single active row for the target. The live
+    read paths consult this for the swap."""
+    conn = connection()
+    conn.execute(
+        """
+        INSERT INTO active_evolutions (target, lineage_id, promoted_at) VALUES (?, ?, ?)
+        ON CONFLICT(target) DO UPDATE SET lineage_id = excluded.lineage_id,
+                                          promoted_at = excluded.promoted_at
+        """,
+        (target, lineage_id, promoted_at or now_iso()),
+    )
+
+
+def clear_active_evolution(target: str) -> bool:
+    """Roll back a promotion: remove the active row (revert to file/default).
+    Returns True if a row was removed."""
+    conn = connection()
+    cur = conn.execute("DELETE FROM active_evolutions WHERE target = ?", (target,))
+    return cur.rowcount > 0
+
+
+def active_evolution(target: str) -> dict | None:
+    """The active promoted variant for a target (id + variant_text), or None."""
+    conn = connection()
+    r = conn.execute(
+        """
+        SELECT a.lineage_id, a.promoted_at, l.variant_text, l.generation
+        FROM active_evolutions a JOIN evolution_lineage l ON l.id = a.lineage_id
+        WHERE a.target = ?
+        """,
+        (target,),
+    ).fetchone()
+    if r is None:
+        return None
+    return {"lineage_id": r["lineage_id"], "promoted_at": r["promoted_at"],
+            "variant_text": r["variant_text"], "generation": r["generation"]}

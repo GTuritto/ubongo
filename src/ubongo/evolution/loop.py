@@ -109,6 +109,9 @@ def run_one_cycle(
             result = sandbox.evaluate_target(variant_rows, target, budget=budget)
             persist_cohort_evaluations(result)
             store.finish_evolution_run(run_id, calls_spent=budget.spent, outcome=_outcome(result))
+            if result.evaluated > 0:
+                from ubongo.evolution import promotion
+                promotion.propose_if_better(target, latest_gen)
             events.dispatch("evolution_generation", {
                 "target": target, "generation": latest_gen, "action": "reevaluated",
                 "evaluated": result.evaluated, "skipped": result.skipped,
@@ -148,6 +151,11 @@ def run_one_cycle(
     result = sandbox.evaluate_target(variant_rows, target, budget=budget)
     persist_cohort_evaluations(result)
     store.finish_evolution_run(run_id, calls_spent=budget.spent, outcome=_outcome(result))
+    # Phase 19: propose a promotion when this generation's champion beats the
+    # active baseline by the margin. The user approves via /improvements.
+    if result.evaluated > 0:
+        from ubongo.evolution import promotion
+        promotion.propose_if_better(target, new_gen)
     events.dispatch("evolution_generation", {
         "target": target, "generation": new_gen, "action": "generated",
         "evaluated": result.evaluated, "skipped": result.skipped,

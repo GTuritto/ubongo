@@ -90,3 +90,12 @@ def test_idle_when_no_targets(db, monkeypatch) -> None:
     r = loop.run_one_cycle(budget=CallBudget(200))
     assert r.action == "idle"
     assert r.target is None
+
+
+def test_cycle_proposes_promotion_when_champion_beats_baseline(db, monkeypatch) -> None:
+    # Phase 19: a generated+evaluated cohort enqueues a pending promotion (the
+    # first generation beats the 0.0 baseline by the margin).
+    from ubongo.memory import store as _store
+    monkeypatch.setattr(selection, "next_target", lambda: "persona:architect")
+    loop.run_one_cycle(budget=CallBudget(200))
+    assert len(_store.open_pending_promotions()) >= 1

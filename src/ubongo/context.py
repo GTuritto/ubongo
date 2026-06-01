@@ -40,6 +40,12 @@ def build_system_prompt(
 
     persona_path = _CONFIG_DIR / "personas" / f"{persona}.md"
     persona_body = _strip_frontmatter(_read_cached(persona_path))
+    # Phase 19 live swap: a promoted persona variant overrides the file body
+    # (frontmatter — model/max_tokens — still comes from the file). Skipped in
+    # processes with no DB so pure prompt assembly never bootstraps one.
+    promoted = _active_persona_body(persona)
+    if promoted is not None:
+        persona_body = promoted
     sections.append(persona_body.rstrip())
 
     if skill is not None:
@@ -51,6 +57,17 @@ def build_system_prompt(
         sections.append(f"## Agent Role: {agent_role}")
 
     return "\n\n".join(sections)
+
+
+def _active_persona_body(persona: str) -> str | None:
+    """Return the promoted persona variant's body, or None when unpromoted or
+    when this process has no DB connection (pure prompt assembly)."""
+    from ubongo.memory import store
+
+    if not store.is_connected():
+        return None
+    active = store.active_evolution(f"persona:{persona}")
+    return active["variant_text"] if active else None
 
 
 def reload() -> None:
