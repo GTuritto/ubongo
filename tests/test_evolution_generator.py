@@ -108,3 +108,31 @@ def test_unknown_target_raises(db, fake_llm) -> None:
 
 def test_zero_count_returns_empty(db, fake_llm) -> None:
     assert generator.generate("persona:architect", 0) == []
+
+
+# --- Phase 18 extensions: budget gating + parent seeding --------------------
+
+def test_budget_gates_llm_strategies(db, fake_llm) -> None:
+    from ubongo.evolution.sandbox import CallBudget
+    budget = CallBudget(2)
+    variants = generator.generate("persona:architect", 8, budget=budget)
+    # At most 2 LLM strategies ran; perturb_temperature (free) fills the rest.
+    assert budget.spent <= 2
+    llm_variants = [v for v in variants if v.strategy != "perturb_temperature"]
+    assert len(llm_variants) <= 2
+
+
+def test_parent_text_and_id_threaded(db, fake_llm) -> None:
+    variants = generator.generate(
+        "persona:architect", 4, parent_text="SURVIVOR BODY", parent_id=42,
+    )
+    assert variants
+    assert all(v.parent_id == 42 for v in variants)
+    # base_source reflects the parent, not the base prompt.
+    assert all(v.metadata.get("base_source") == "parent:42" for v in variants)
+
+
+def test_no_budget_no_parent_is_phase16_behavior(db, fake_llm) -> None:
+    variants = generator.generate("persona:architect", 8)
+    assert len(variants) == 8
+    assert all(v.parent_id is None for v in variants)
