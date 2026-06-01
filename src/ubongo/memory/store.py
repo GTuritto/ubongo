@@ -1216,3 +1216,134 @@ def latest_evaluation_for_lineage(lineage_id: int) -> dict | None:
         "fitness": row["fitness"],
         "evaluated_at": row["evaluated_at"],
     }
+
+
+# --- Evolution loop runs + control state (Phase 18) -------------------------
+# evolution_runs: one row per autonomous GP cycle. Doubles as the rolling-hour
+# throttle window and the crash-recovery / round-robin log. evolution_state:
+# single-row loop control (running / paused / off), persisted across restarts.
+
+
+def start_evolution_run(*, target: str, generation: int, started_at: str | None = None) -> int:
+    """Insert a cycle row with outcome='started'; returns its id. The loop
+    finishes it via `finish_evolution_run`. A row left 'started' marks an
+    interrupted cycle (crash recovery)."""
+    conn = connection()
+    cursor = conn.execute(
+        """
+        INSERT INTO evolution_runs (target, generation, calls_spent, outcome, started_at)
+        VALUES (?, ?, 0, 'started', ?)
+        """,
+        (target, generation, started_at or now_iso()),
+    )
+    return int(cursor.lastrowid)
+
+
+def finish_evolution_run(
+    run_id: int,
+    *,
+    calls_spent: int,
+    outcome: str,
+    ended_at: str | None = None,
+) -> None:
+    """Patch a cycle row to its terminal outcome ('completed'|'partial'|'aborted')
+    with the calls it spent and an end timestamp (the rolling-window key)."""
+    conn = connection()
+    conn.execute(
+        "UPDATE evolution_runs SET calls_spent = ?, outcome = ?, ended_at = ? WHERE id = ?",
+        (calls_spent, outcome, ended_at or now_iso(), run_id),
+    )
+
+
+def calls_in_last_hour(now: str | None = None) -> int:
+    """Sum calls_spent over cycles that ended within the trailing hour. The
+    rolling-window throttle: remaining = max_calls_per_hour - this."""
+    cutoff_dt = _now() - timedelta(hours=1)
+    cutoff = cutoff_dt.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    conn = connection()
+    row = conn.execute(
+        "SELECT COALESCE(SUM(calls_spent), 0) AS n FROM evolution_runs "
+        "WHERE ended_at IS NOT NULL AND ended_at >= ?",
+        (cutoff,),
+    ).fetchone()
+    return int(row["n"]) if row and row["n"] is not None else 0
+
+
+def seconds_since_last_cycle() -> float | None:
+    """Seconds since the most recent cycle ended (any target), or None if no
+    cycle has ever completed. Drives the `evolution.cron` interval pacing."""
+    conn = connection()
+    row = conn.execute(
+        "SELECT MAX(ended_at) AS t FROM evolution_runs WHERE ended_at IS NOT NULL"
+    ).fetchone()
+    if not row or row["t"] is None:
+        return None
+    last = _parse_iso(row["t"])
+    return (_now() - last).total_seconds()
+
+
+def last_cycle_at(target: str) -> str | None:
+    """Most recent completed-cycle end time for a target, or None if it has
+    never run a cycle. Used by staleness-based target selection."""
+    conn = connection()
+    row = conn.execute(
+        "SELECT MAX(ended_at) AS t FROM evolution_runs "
+        "WHERE target = ? AND ended_at IS NOT NULL",
+        (target,),
+    ).fetchone()
+    return row["t"] if row and row["t"] is not None else None
+
+
+def interrupted_evolution_runs() -> list[dict]:
+    """Cycles still marked 'started' (no terminal outcome) — interrupted by a
+    crash. The loop reconciles these on restart."""
+    conn = connection()
+    rows = conn.execute(
+        "SELECT id, target, generation, started_at FROM evolution_runs "
+        "WHERE outcome = 'started' ORDER BY id"
+    ).fetchall()
+    return [
+        {"id": r["id"], "target": r["target"], "generation": r["generation"],
+         "started_at": r["started_at"]}
+        for r in rows
+    ]
+
+
+def evolution_runs_recent(n: int = 10) -> list[dict]:
+    """Most recent cycles, newest first — for `/evolution status`."""
+    if n <= 0:
+        return []
+    conn = connection()
+    rows = conn.execute(
+        "SELECT id, target, generation, calls_spent, outcome, started_at, ended_at "
+        "FROM evolution_runs ORDER BY id DESC LIMIT ?",
+        (n,),
+    ).fetchall()
+    return [
+        {"id": r["id"], "target": r["target"], "generation": r["generation"],
+         "calls_spent": r["calls_spent"], "outcome": r["outcome"],
+         "started_at": r["started_at"], "ended_at": r["ended_at"]}
+        for r in rows
+    ]
+
+
+def get_evolution_status() -> str:
+    """Return the loop control status; defaults to 'paused' when unset so the
+    loop never auto-spends on first launch."""
+    conn = connection()
+    row = conn.execute("SELECT status FROM evolution_state WHERE id = 1").fetchone()
+    return row["status"] if row else "paused"
+
+
+def set_evolution_status(status: str) -> None:
+    """Upsert the single-row loop control state."""
+    if status not in ("running", "paused", "off"):
+        raise ValueError(f"invalid evolution status: {status}")
+    conn = connection()
+    conn.execute(
+        """
+        INSERT INTO evolution_state (id, status, updated_at) VALUES (1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET status = excluded.status, updated_at = excluded.updated_at
+        """,
+        (status, now_iso()),
+    )
