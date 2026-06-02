@@ -22,7 +22,7 @@ _BANNER = "Ubongo REPL ready. /exit to quit."
 _AUTO_ENABLED = "Auto routing enabled."
 _LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 _HELP_COMMANDS = (
-    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /policy, /agents, /trace, /exec <cmd>, /mode <workflow>, /optimize <target>, /evaluate <target>, /evolution <status|pause|resume|off>, /reload, /exit."
+    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /policy, /agents, /trace, /exec <cmd>, /mode <workflow>, /optimize <target>, /evaluate <target>, /evolution <status|pause|resume|off>, /improvements, /reload, /exit."
 )
 
 
@@ -433,6 +433,93 @@ def _render_evolution_control(sub: str) -> str:
     return f"Unknown subcommand: {sub}. Usage: /evolution status|pause|resume|off."
 
 
+def _parse_improvements_command(line: str):
+    """Parse `/improvements [approve <id> | reject <id> | rollback <target>]`.
+    Returns ("list", None), ("approve"|"reject", id:int), ("rollback", target),
+    or None for other commands / malformed args (the dispatcher shows usage)."""
+    raw = line.strip().lstrip("/")
+    parts = raw.split()
+    if not parts or parts[0].lower() != "improvements":
+        return None
+    if len(parts) == 1:
+        return ("list", None)
+    sub = parts[1].lower()
+    if sub in ("approve", "reject"):
+        if len(parts) < 3:
+            return ("usage", None)
+        try:
+            return (sub, int(parts[2]))
+        except ValueError:
+            return ("usage", None)
+    if sub == "rollback":
+        if len(parts) < 3:
+            return ("usage", None)
+        return ("rollback", parts[2])
+    return ("usage", None)
+
+
+def _diff_preview(base: str, variant: str, *, context: int = 2) -> list[str]:
+    """A compact unified diff of base→variant (prompts or serialized config)."""
+    import difflib
+
+    diff = difflib.unified_diff(
+        base.splitlines(), variant.splitlines(),
+        fromfile="active", tofile="candidate", lineterm="", n=context,
+    )
+    lines = list(diff)
+    if len(lines) > 24:
+        lines = lines[:24] + [f"    … ({len(lines) - 24} more diff lines)"]
+    return lines
+
+
+def _render_improvements_list() -> str:
+    """Phase 19e: list open pending promotions with fitness delta + a diff."""
+    from ubongo.evolution import promotion, targets
+    from ubongo.memory import store as _store
+
+    pending = _store.open_pending_promotions()
+    if not pending:
+        return "No pending improvements. The loop proposes one when a variant beats the active baseline."
+    out = [f"Pending improvements ({len(pending)}):"]
+    for p in pending:
+        ev = _store.latest_evaluation_for_lineage(p["lineage_id"])
+        champ = ev["fitness"] if ev else None
+        base = promotion.baseline_fitness(p["target"], p["generation"])
+        delta = f"{base:.3f} → {champ:.3f}" if champ is not None else "n/a"
+        out.append(f"\n  #{p['id']}  {p['target']}  gen {p['generation']}  "
+                   f"strategy={p['strategy']}  fitness {delta}")
+        try:
+            base_text = targets.resolve_base(p["target"])
+        except Exception:
+            base_text = ""
+        for dl in _diff_preview(base_text, p["variant_text"]):
+            out.append(f"    {dl}")
+    out.append("\nApprove with /improvements approve <id>, reject <id>, or /improvements rollback <target>.")
+    return "\n".join(out)
+
+
+def _render_improvements_action(action: str, arg) -> str:
+    from ubongo.evolution import promotion
+
+    if action == "approve":
+        d = promotion.approve(arg)
+        if d is None:
+            return f"No open promotion #{arg}."
+        delta = (f" (fitness {d.baseline_fitness:.3f} → {d.champion_fitness:.3f})"
+                 if d.champion_fitness is not None else "")
+        return f"Approved #{arg}: {d.target} now uses lineage #{d.lineage_id}{delta}. Live swap in effect."
+    if action == "reject":
+        d = promotion.reject(arg)
+        if d is None:
+            return f"No open promotion #{arg}."
+        return f"Rejected #{arg}: {d.target} unchanged."
+    if action == "rollback":
+        ok = promotion.rollback(arg)
+        return (f"Rolled back {arg} to its file/default. Live swap reverted."
+                if ok else f"No active promotion for {arg}.")
+    return "Usage: /improvements [approve <id> | reject <id> | rollback <target>]."
+
+
 def _render_exec(cmd: str) -> str:
     """Phase 11e: debug-only direct sandbox path. Bypasses master.handle —
     no workflow_runs row, no governance, no enqueue, no vault."""
@@ -800,6 +887,15 @@ def _repl_loop(persona, auto_mode, pending_skill, pending_workflow) -> int:
                     print(_render_evolution_control(sub))
                 else:
                     print(f"Unknown subcommand: {sub}. Usage: /evolution status|pause|resume|off.")
+                continue
+            if head == "improvements":
+                parsed = _parse_improvements_command(stripped)
+                if parsed is None or parsed[0] == "list":
+                    print(_render_improvements_list())
+                elif parsed[0] == "usage":
+                    print("Usage: /improvements [approve <id> | reject <id> | rollback <target>].")
+                else:
+                    print(_render_improvements_action(parsed[0], parsed[1]))
                 continue
             if head == "reload":
                 print(_reload_all())

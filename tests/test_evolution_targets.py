@@ -21,18 +21,28 @@ def db(tmp_path: Path):
     store.set_db_path(store._REPO_ROOT / "data" / "ubongo.db")
 
 
-def test_evolvable_targets_are_the_three_personas() -> None:
-    assert targets.evolvable_targets() == [
-        "persona:architect",
-        "persona:operator",
-        "persona:casual",
-    ]
+def test_evolvable_targets_include_personas_and_config(db) -> None:
+    ts = targets.evolvable_targets()
+    # Phase 16 personas...
+    for p in ("persona:architect", "persona:operator", "persona:casual"):
+        assert p in ts
+    # ...plus the Phase 19 config targets.
+    assert "routing:default" in ts
+    assert "retry:repair" in ts
+    assert any(t.startswith("toolchain:") for t in ts)
 
 
-def test_is_target() -> None:
+def test_target_kinds(db) -> None:
+    assert targets.target_kind("persona:architect") == targets.PROMPT
+    assert targets.target_kind("routing:default") == targets.CONFIG
+    assert targets.target_kind("retry:repair") == targets.CONFIG
+
+
+def test_is_target(db) -> None:
     assert targets.is_target("persona:architect")
+    assert targets.is_target("routing:default")  # now a config target (Phase 19)
     assert not targets.is_target("persona:bogus")
-    assert not targets.is_target("routing:default")
+    assert not targets.is_target("nonsense:x")
 
 
 def test_resolve_base_returns_persona_body(db) -> None:

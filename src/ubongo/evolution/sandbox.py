@@ -32,6 +32,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
+
 from ubongo.agents import personas
 from ubongo.config import load_config, load_evolution
 from ubongo.evolution import targets
@@ -234,10 +236,25 @@ def _score_sample(
     if not response_text:
         return None
 
-    user_question = turns[-1]["content"]
+    parsed = _judge(turns[-1]["content"], response_text, judge_model=judge_model)
+    if parsed is None:
+        return None
+    quality, hallucination, would_correct = parsed
+    return _SampleScore(
+        quality=quality,
+        hallucination=hallucination,
+        would_correct=would_correct,
+        gen_tokens=gen.tokens_in + gen.tokens_out,
+        gen_latency_ms=gen.latency_ms,
+    )
+
+
+def _judge(question: str, response_text: str, *, judge_model: str) -> tuple[float, float, bool] | None:
+    """Run the 3-signal judge over a (question, response). Shared by prompt and
+    config evaluation. Returns (quality, hallucination, would_correct) or None."""
     judge_system = (
         _JUDGE_RUBRIC
-        + "\n\n## User question\n\n" + user_question
+        + "\n\n## User question\n\n" + question
         + "\n\n## Assistant response\n\n" + response_text
     )
     try:
@@ -248,21 +265,13 @@ def _score_sample(
             max_tokens=_JUDGE_MAX_TOKENS,
         )
     except LLMError as exc:
-        logger.warning("eval_judge_failed", extra={"sample": sample.get("id"), "cause": str(exc.cause) if exc.cause else None})
+        logger.warning("eval_judge_failed", extra={"cause": str(exc.cause) if exc.cause else None})
         return None
-
     parsed = _parse_judgment(judgment.text)
     if parsed is None:
-        logger.warning("eval_judge_parse_error", extra={"sample": sample.get("id"), "raw_preview": judgment.text[:200]})
+        logger.warning("eval_judge_parse_error", extra={"raw_preview": judgment.text[:200]})
         return None
-    quality, hallucination, would_correct = parsed
-    return _SampleScore(
-        quality=quality,
-        hallucination=hallucination,
-        would_correct=would_correct,
-        gen_tokens=gen.tokens_in + gen.tokens_out,
-        gen_latency_ms=gen.latency_ms,
-    )
+    return parsed
 
 
 # --- per-variant + per-target evaluation ------------------------------------
@@ -313,6 +322,165 @@ def evaluate_variant(
         user_correction_rate=sum(1 for s in scores if s.would_correct) / n,
         cost=sum(s.gen_tokens for s in scores) / n,
         latency_ms=sum(s.gen_latency_ms for s in scores) / n,
+    )
+
+
+_CONFIG_CALLS_PER_SAMPLE = 5  # classify + a few agents + judge (estimate, for the budget)
+
+
+def _sample_turns(sample: dict) -> list[dict] | None:
+    turns = [
+        {"role": t["role"], "content": t["content"]}
+        for t in sample.get("turns", [])
+        if t.get("role") in ("user", "assistant") and t.get("content")
+    ]
+    if not turns or turns[-1]["role"] != "user":
+        return None
+    return turns
+
+
+def _run_workflow_isolated(agent_names, message: str, *, persona: str) -> tuple[str, int]:
+    """Run a workflow's agents on `message` with NO persistence — no agent_runs,
+    no events, no Repair ladder, no governance, no vault/queue. Returns
+    (composer_text, total_tokens). This is the side-effect-free execution the
+    config evaluator judges."""
+    from ubongo import runner
+    from ubongo.agents.base import AgentInput
+    from ubongo.master import Context
+
+    registry = runner.default_registry()
+    ctx = Context(conversation_id=None, persona=persona, auto_mode=False, pending_skill=None)
+    prior: list[str] = []
+    composer_text = ""
+    tokens = 0
+    for name in agent_names:
+        if name == "repair":
+            continue
+        agent = registry.get(name)
+        if agent is None:
+            continue
+        inp = AgentInput(message=message, history=(), summary_text=None,
+                         prior_findings=tuple(prior), metadata={})
+        try:
+            res = agent.run(inp, ctx)
+        except Exception:  # an agent crash must not abort the eval
+            continue
+        tokens += (res.tokens_in or 0) + (res.tokens_out or 0)
+        if res.ok and res.text:
+            prior.append(res.text)
+            if getattr(agent, "composer", False):
+                composer_text = res.text
+    return (composer_text or (prior[-1] if prior else "")), tokens
+
+
+def _score_config_sample(target: str, parsed: dict, sample: dict, *, judge_model: str) -> _SampleScore | None:
+    """Produce a response under the variant config (routing or tool-chain) and
+    judge it. Returns None if the turn or judgment fails."""
+    from ubongo import classifier, router
+
+    turns = _sample_turns(sample)
+    if turns is None:
+        return None
+    message = turns[-1]["content"]
+    t0 = time.monotonic()
+
+    if target == "routing:default":
+        try:
+            cls = classifier.classify(message)
+        except Exception:
+            return None
+        with router.config_override(routing=parsed):
+            wf_name = router.route_workflow(cls)
+            agents = router.workflow_agents(wf_name)
+            persona = router.workflow_persona(wf_name)
+            response, tokens = _run_workflow_isolated(agents, message, persona=persona)
+    elif target.startswith("toolchain:"):
+        wf_name = target[len("toolchain:"):]
+        variant_agents = parsed.get("agents", [])
+        with router.config_override(toolchain={wf_name: variant_agents}):
+            agents = router.workflow_agents(wf_name)
+            persona = router.workflow_persona(wf_name)
+            response, tokens = _run_workflow_isolated(agents, message, persona=persona)
+    else:
+        return None  # retry is scored by a structural proxy, not here
+
+    if not response.strip():
+        return None
+    parsed_judge = _judge(message, response, judge_model=judge_model)
+    if parsed_judge is None:
+        return None
+    quality, hallucination, would_correct = parsed_judge
+    return _SampleScore(
+        quality=quality, hallucination=hallucination, would_correct=would_correct,
+        gen_tokens=tokens, gen_latency_ms=int((time.monotonic() - t0) * 1000),
+    )
+
+
+def evaluate_config_variant(
+    variant_row: dict,
+    target: str,
+    samples: list[dict],
+    *,
+    judge_model: str,
+    budget: CallBudget,
+) -> VariantMetrics | None:
+    """Evaluate one config variant by running the real (overridden) pipeline on
+    the samples and judging the responses. All-or-nothing on the budget so the
+    cohort stays comparable. None if it can't be afforded or every sample drops."""
+    needed = len(samples) * _CONFIG_CALLS_PER_SAMPLE
+    if needed == 0 or not budget.can_afford(needed):
+        return None
+    try:
+        parsed = yaml.safe_load(variant_row["variant_text"])
+    except yaml.YAMLError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+
+    scores: list[_SampleScore] = []
+    for sample in samples:
+        budget.spend(_CONFIG_CALLS_PER_SAMPLE)
+        score = _score_config_sample(target, parsed, sample, judge_model=judge_model)
+        if score is not None:
+            scores.append(score)
+    if not scores:
+        return None
+    n = len(scores)
+    return VariantMetrics(
+        lineage_id=variant_row["id"],
+        success_rate=sum(s.quality for s in scores) / n,
+        hallucination_rate=sum(s.hallucination for s in scores) / n,
+        user_correction_rate=sum(1 for s in scores if s.would_correct) / n,
+        cost=sum(s.gen_tokens for s in scores) / n,
+        latency_ms=sum(s.gen_latency_ms for s in scores) / n,
+    )
+
+
+def evaluate_retry_variant(variant_row: dict) -> VariantMetrics | None:
+    """Score a retry-config variant with a STRUCTURAL PROXY (Phase 19c).
+
+    Retry quality only manifests under failure, which offline samples cannot
+    induce, so this is deliberately not a response-quality signal — it rewards a
+    sane attempt cap and good peer coverage and penalizes an excessive cap
+    (cost). Documented as the weakest fitness in the system; a fault-injection
+    harness is a follow-up. No LLM call.
+    """
+    try:
+        parsed = yaml.safe_load(variant_row["variant_text"])
+    except yaml.YAMLError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    ma = parsed.get("max_attempts", 3)
+    peers = parsed.get("peer_replacements", {}) or {}
+    covered = sum(1 for a in ("coding", "research", "critic") if peers.get(a))
+    attempts_score = 1.0 if 2 <= ma <= 3 else (0.6 if ma == 4 else 0.3)
+    coverage_score = covered / 3.0
+    success = 0.5 * attempts_score + 0.5 * coverage_score
+    return VariantMetrics(
+        lineage_id=variant_row["id"], success_rate=success,
+        hallucination_rate=0.0, user_correction_rate=0.0,
+        cost=float(ma), latency_ms=0.0,
     )
 
 
@@ -368,17 +536,21 @@ def evaluate_target(
     samples = select_samples(sample_set, target, samples_per_eval)
     gen_model = _persona_model(target)
     judge_model = _judge_model()
+    kind = targets.target_kind(target)
 
     cohort: list[VariantMetrics] = []
     skipped = 0
     for row in variant_rows:
-        metrics = evaluate_variant(
-            row,
-            samples,
-            gen_model=gen_model,
-            judge_model=judge_model,
-            budget=budget,
-        )
+        if target == "retry:repair":
+            metrics = evaluate_retry_variant(row)  # structural proxy, no LLM
+        elif kind == targets.CONFIG:
+            metrics = evaluate_config_variant(
+                row, target, samples, judge_model=judge_model, budget=budget,
+            )
+        else:
+            metrics = evaluate_variant(
+                row, samples, gen_model=gen_model, judge_model=judge_model, budget=budget,
+            )
         if metrics is None:
             skipped += 1
         else:

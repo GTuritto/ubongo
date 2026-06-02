@@ -96,6 +96,27 @@ def append_to_daily_note(
     return path
 
 
+def audit_log_path() -> Path:
+    return _vault_root() / "system" / "evolution-audit.md"
+
+
+def append_audit(timestamp: str, line: str) -> Path:
+    """Append one promotion-decision row to vault/system/evolution-audit.md
+    (Phase 19g). Created with a header on first decision. `line` is a
+    pre-formatted markdown list item; the timestamp is prefixed."""
+    path = audit_log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    is_new = not path.exists()
+    with path.open("a", encoding="utf-8") as f:
+        if is_new:
+            f.write("---\ntags: [ubongo, evolution, audit]\n---\n\n"
+                    "# Evolution Promotion Audit\n\n"
+                    "One row per promotion decision (approve / reject / rollback).\n\n")
+        f.write(f"- {timestamp} — {line}\n")
+    logger.info("evolution_audit_written", extra={"path": str(path), "new_file": is_new})
+    return path
+
+
 @dataclass(frozen=True)
 class VaultSnippet:
     path: str

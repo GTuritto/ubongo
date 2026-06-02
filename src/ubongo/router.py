@@ -48,6 +48,73 @@ def _load_workflows() -> dict[str, Any]:
     return data
 
 
+# Phase 19: in-memory overrides for config evaluation (set via config_override),
+# and live-swap reads from active_evolutions. Precedence for effective config:
+# eval override > active promotion > file.
+_routing_override: dict[str, Any] | None = None
+_toolchain_override: dict[str, list] | None = None
+
+
+def _promoted_config(target: str) -> Any | None:
+    """Parsed promoted config for a target, or None (unpromoted / no DB)."""
+    from ubongo.memory import store
+
+    if not store.is_connected():
+        return None
+    active = store.active_evolution(target)
+    if not active:
+        return None
+    try:
+        return yaml.safe_load(active["variant_text"])
+    except yaml.YAMLError:
+        return None
+
+
+def _effective_routing() -> dict[str, Any]:
+    """Routing config: eval override > promoted > file."""
+    if _routing_override is not None:
+        return _routing_override
+    promoted = _promoted_config("routing:default")
+    if isinstance(promoted, dict) and promoted.get("rules"):
+        return promoted
+    return _load_routing()
+
+
+def _effective_agents(name: str) -> tuple[str, ...] | None:
+    """Promoted/overridden agent list for a workflow, or None to fall back to
+    the file."""
+    if _toolchain_override and name in _toolchain_override:
+        return tuple(_toolchain_override[name])
+    promoted = _promoted_config(f"toolchain:{name}")
+    if isinstance(promoted, dict) and isinstance(promoted.get("agents"), list) and promoted["agents"]:
+        return tuple(promoted["agents"])
+    return None
+
+
+class config_override:
+    """Context manager that temporarily forces routing and/or per-workflow tool
+    chains, for side-effect-free config evaluation. Restores on exit."""
+
+    def __init__(self, *, routing: dict | None = None, toolchain: dict | None = None):
+        self._routing = routing
+        self._toolchain = toolchain
+        self._saved: tuple = ()
+
+    def __enter__(self):
+        global _routing_override, _toolchain_override
+        self._saved = (_routing_override, _toolchain_override)
+        if self._routing is not None:
+            _routing_override = self._routing
+        if self._toolchain is not None:
+            _toolchain_override = self._toolchain
+        return self
+
+    def __exit__(self, *exc):
+        global _routing_override, _toolchain_override
+        _routing_override, _toolchain_override = self._saved
+        return False
+
+
 def reload() -> None:
     global _routing_cache, _workflows_cache
     _routing_cache = None
@@ -55,7 +122,14 @@ def reload() -> None:
 
 
 def workflow_agents(name: str) -> tuple[str, ...]:
-    """Return the agent list for a workflow name from workflows.yaml."""
+    """Return the agent list for a workflow name from workflows.yaml.
+
+    Phase 19: a promoted or eval-overridden tool chain for this workflow wins
+    over the file.
+    """
+    effective = _effective_agents(name)
+    if effective is not None:
+        return effective
     data = _load_workflows()
     workflows = data.get("workflows", {}) or {}
     wf = workflows.get(name)
@@ -148,8 +222,11 @@ def _matches(rule_match: dict[str, Any], classification_dict: dict[str, Any]) ->
 
 
 def route_workflow(classification: Classification) -> str:
-    """Map a Classification to a workflow name via routing.yaml rules."""
-    routing = _load_routing()
+    """Map a Classification to a workflow name via routing.yaml rules.
+
+    Phase 19: a promoted or eval-overridden routing config wins over the file.
+    """
+    routing = _effective_routing()
     rules: list[dict] = routing.get("rules", []) or []
     default_workflow: str = routing.get("default_workflow", "casual_reply")
 

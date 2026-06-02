@@ -52,11 +52,15 @@ def test_cycle1_generates_from_base(db) -> None:
     assert store.evolution_runs_recent(1)[0]["outcome"] in ("completed", "partial")
 
 
-def test_cycle_round_robins_targets(db) -> None:
+def test_cycle_round_robins_targets(db, monkeypatch) -> None:
+    # Pin the evolvable set to the three personas so the round-robin is
+    # deterministic and cheap (the full registry also includes config targets).
+    monkeypatch.setattr(targets, "evolvable_targets",
+                        lambda: ["persona:architect", "persona:operator", "persona:casual"])
     seen = []
     for _ in range(3):
         seen.append(loop.run_one_cycle(budget=CallBudget(200)).target)
-    assert sorted(seen) == sorted(targets.evolvable_targets())  # each hit once
+    assert sorted(seen) == ["persona:architect", "persona:casual", "persona:operator"]
 
 
 def test_cycle2_seeds_from_survivor(db, monkeypatch) -> None:
@@ -90,3 +94,12 @@ def test_idle_when_no_targets(db, monkeypatch) -> None:
     r = loop.run_one_cycle(budget=CallBudget(200))
     assert r.action == "idle"
     assert r.target is None
+
+
+def test_cycle_proposes_promotion_when_champion_beats_baseline(db, monkeypatch) -> None:
+    # Phase 19: a generated+evaluated cohort enqueues a pending promotion (the
+    # first generation beats the 0.0 baseline by the margin).
+    from ubongo.memory import store as _store
+    monkeypatch.setattr(selection, "next_target", lambda: "persona:architect")
+    loop.run_one_cycle(budget=CallBudget(200))
+    assert len(_store.open_pending_promotions()) >= 1

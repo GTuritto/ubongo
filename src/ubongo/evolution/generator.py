@@ -21,8 +21,11 @@ is the single entry point a Phase 18 throttle can wrap.
 
 from __future__ import annotations
 
+import copy
 import logging
 from dataclasses import dataclass, field
+
+import yaml
 
 from ubongo.config import load_config
 from ubongo.evolution import targets
@@ -221,6 +224,10 @@ def generate(
     """
     if n <= 0:
         return []
+    # Phase 19: config targets mutate structurally (deterministic, validated),
+    # not via the prompt strategies.
+    if targets.target_kind(target) == targets.CONFIG:
+        return _generate_config(target, n, parent_text=parent_text, parent_id=parent_id)
     if parent_text is not None:
         base = parent_text
         base_source = f"parent:{parent_id}" if parent_id is not None else "parent"
@@ -253,4 +260,141 @@ def generate(
             "evolution_short_run",
             extra={"target": target, "requested": n, "produced": len(variants)},
         )
+    return variants
+
+
+# --- Config-target generation (Phase 19a-c) ---------------------------------
+# Config variants are DETERMINISTIC structural mutations of the live config,
+# each validated by `targets.apply_variant` (invalid mutations are dropped). No
+# LLM call, so they are robust and free; diversity comes from distinct
+# structural edits enumerated in a fixed order.
+
+
+def _serialize_cfg(obj) -> str:
+    return yaml.safe_dump(obj, sort_keys=False, default_flow_style=False).rstrip()
+
+
+def _routing_mutations(parsed: dict):
+    """Yield (strategy, mutated_dict) candidates for a routing config."""
+    from ubongo import router
+
+    workflows = router.workflow_names()
+    rules = parsed.get("rules", [])
+    # retarget rule i -> a different workflow
+    for i, rule in enumerate(rules):
+        cur = rule.get("workflow")
+        alt = next((w for w in workflows if w != cur), None)
+        if alt:
+            m = copy.deepcopy(parsed)
+            m["rules"][i]["workflow"] = alt
+            yield (f"retarget_rule_{i}", m)
+    # reorder adjacent rules
+    for i in range(len(rules) - 1):
+        m = copy.deepcopy(parsed)
+        m["rules"][i], m["rules"][i + 1] = m["rules"][i + 1], m["rules"][i]
+        yield (f"reorder_{i}", m)
+    # change default
+    cur_default = parsed.get("default_workflow")
+    for w in workflows:
+        if w != cur_default:
+            m = copy.deepcopy(parsed)
+            m["default_workflow"] = w
+            yield (f"default_{w}", m)
+            break
+    # drop a rule (falls through to default)
+    if len(rules) > 1:
+        m = copy.deepcopy(parsed)
+        m["rules"].pop()
+        yield ("drop_last_rule", m)
+
+
+def _toolchain_mutations(parsed: dict):
+    from ubongo import runner
+
+    registry = runner.default_registry()
+    agents = parsed.get("agents", [])
+    peers = {"architect": "operator", "operator": "architect", "coding": "architect",
+             "research": "architect", "critic": "architect", "casual": "operator"}
+    # swap an agent for a peer
+    for i, a in enumerate(agents):
+        peer = peers.get(a)
+        if peer and peer in registry:
+            m = copy.deepcopy(parsed)
+            m["agents"][i] = peer
+            yield (f"swap_{a}_to_{peer}", m)
+    # add evaluator if absent
+    if "evaluator" not in agents:
+        m = copy.deepcopy(parsed)
+        m["agents"].append("evaluator")
+        yield ("add_evaluator", m)
+    # reorder adjacent
+    for i in range(len(agents) - 1):
+        m = copy.deepcopy(parsed)
+        m["agents"][i], m["agents"][i + 1] = m["agents"][i + 1], m["agents"][i]
+        yield (f"reorder_{i}", m)
+
+
+def _retry_mutations(parsed: dict):
+    from ubongo import runner
+
+    registry = runner.default_registry()
+    # bump / drop max_attempts
+    cur = parsed.get("max_attempts", 3)
+    for delta in (1, -1):
+        nv = cur + delta
+        if nv >= 1:
+            m = copy.deepcopy(parsed)
+            m["max_attempts"] = nv
+            yield (f"max_attempts_{nv}", m)
+    # flip a peer_replacement to another valid agent
+    peers = parsed.get("peer_replacements", {}) or {}
+    for agent_name, cur_peer in peers.items():
+        alt = next((a for a in ("architect", "operator") if a != cur_peer and a in registry), None)
+        if alt:
+            m = copy.deepcopy(parsed)
+            m["peer_replacements"][agent_name] = alt
+            yield (f"peer_{agent_name}_{alt}", m)
+            break
+
+
+def _mutations_for(target: str, parsed: dict):
+    if target == "routing:default":
+        return _routing_mutations(parsed)
+    if target.startswith("toolchain:"):
+        return _toolchain_mutations(parsed)
+    if target == "retry:repair":
+        return _retry_mutations(parsed)
+    return iter(())
+
+
+def _generate_config(target, n, *, parent_text=None, parent_id=None) -> list[Variant]:
+    base_text = parent_text if parent_text is not None else targets.resolve_base(target)
+    base_source = (f"parent:{parent_id}" if parent_id is not None else f"base:{target}")
+    try:
+        parsed = yaml.safe_load(base_text)
+    except yaml.YAMLError:
+        return []
+    if not isinstance(parsed, dict):
+        return []
+
+    variants: list[Variant] = []
+    seen_text: set[str] = {base_text.strip()}
+    for strategy, mutated in _mutations_for(target, parsed):
+        if len(variants) >= n:
+            break
+        try:
+            targets.apply_variant(target, _serialize_cfg(mutated))  # validate
+        except targets.InvalidVariantError:
+            continue
+        text = _serialize_cfg(mutated)
+        if text.strip() in seen_text:
+            continue
+        seen_text.add(text.strip())
+        variants.append(Variant(
+            strategy=strategy.split("_")[0], text=text,
+            metadata={"base_source": base_source, "kind": "config", "mutation": strategy},
+            parent_id=parent_id,
+        ))
+    if not variants:
+        logger.info("evolution_config_no_variants", extra={"target": target})
     return variants

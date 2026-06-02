@@ -363,7 +363,23 @@ The two halves connect into a continuous background loop. When `evolution.enable
 
 ## Phase 19 — GP Targets Expanded + Promotions
 
-*(Populated when Phase 19 is implemented.)*
+End of Tier 5. The self-improvement loop closes: the loop proposes a promotion when a generation's champion beats the active baseline by `evolution.promotion_margin`; the user approves/rejects/rolls back via `/improvements`; approval performs a **live swap** so behavior actually changes. Audit log at `vault/system/evolution-audit.md`. Evolvable targets expand beyond persona prompts via a target *kind* (`prompt` vs `config`): `routing:default`, `toolchain:<workflow>`, and `retry:repair`. Config variants are deterministic, validated structural mutations; routing/tool-chain variants are evaluated by running the real pipeline under an in-memory override with zero side effects and judging the responses; retry uses a documented structural proxy. Live swap reads `active_evolutions`: `build_system_prompt` (persona), `router.route_workflow` (routing), `router.workflow_agents` (tool-chain). No schema migration (`pending_promotions` / `active_evolutions` already ship).
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| 19.1 | Personas + config targets evolvable | `/optimize` | Lists `persona:*` plus `routing:default`, `toolchain:<wf>`, `retry:repair`. |
+| 19.2 | Loop proposes | enable + `/evolution resume`; wait until a champion beats baseline; `/improvements` | Non-empty: pending promotion(s) with a diff + fitness delta. |
+| 19.3 | Prompt diff | `/improvements` after a persona generation | A unified diff of the candidate persona body vs the active/file body; `fitness base → champ`. |
+| 19.4 | Approve persona → live swap | `/improvements approve <id>`; then ask a normally-classified question | Reply reflects the promoted prompt; `sqlite3 data/ubongo.db "SELECT * FROM active_evolutions"` has the persona row; audit row appended. |
+| 19.5 | Routing variant | `/optimize routing:default`; `/evaluate routing:default` | Structural routing variants generated; leaderboard with fitness (variants ran the real pipeline + judge). |
+| 19.6 | Approve routing → live swap | `/improvements approve <id>` for a `routing:default` promotion; then a turn that the new rule re-routes | The turn routes to the new workflow (scenario 4); `active_evolutions` has the `routing:default` row. |
+| 19.7 | Reject | `/improvements reject <id>` | Recorded; the queue shrinks; no `active_evolutions` change. |
+| 19.8 | Rollback | `/improvements rollback persona:architect` (after an approve) | Reverts to the file body; live swap off; audit row appended; `active_evolutions` row gone. |
+| 19.9 | Audit log | `cat vault/system/evolution-audit.md` | One row per decision (approve / reject / rollback) with target, lineage, fitness delta. |
+| 19.10 | Config eval is side-effect free | after `/evaluate routing:default`, compare `workflow_runs` / `agent_runs` counts before/after | Unchanged — the isolated evaluator writes only `evolution_evaluations`. |
+| 19.11 | Invalid config variant rejected | (unit) malformed routing/tool-chain/retry | `apply_variant` raises; generation drops it; nothing malformed persisted. |
+| 19.12 | Help | `/help` or unknown command | Usage line includes `/improvements`. |
+| 19.13 | Pytest passes | `uv run pytest tests/` | All green (672 expected after Phase 19: Phase-18's 623 + 49 promotion/live-swap/config tests). |
 
 ## Phase 20 — Embeddings + Graph
 

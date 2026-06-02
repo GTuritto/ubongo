@@ -36,7 +36,12 @@ def test_next_target_prefers_never_run(db) -> None:
     assert selection.next_target() == "persona:operator"
 
 
-def test_next_target_oldest_among_all_run(db) -> None:
+def test_next_target_oldest_among_all_run(db, monkeypatch) -> None:
+    # Pin to the personas so "oldest among all-run" is exercised without the
+    # never-run config targets (which sort first) stealing the pick.
+    from ubongo.evolution import targets
+    monkeypatch.setattr(targets, "evolvable_targets",
+                        lambda: ["persona:architect", "persona:operator", "persona:casual"])
     _run("persona:architect", 1, "2026-06-01T10:00:00.000Z")
     _run("persona:operator", 1, "2026-06-01T09:00:00.000Z")  # oldest
     _run("persona:casual", 1, "2026-06-01T11:00:00.000Z")
