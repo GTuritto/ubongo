@@ -57,6 +57,26 @@ def with_summarize_skill(tmp_path: Path):
     skills.set_skills_dir(None)
 
 
+def test_classify_pins_temperature_to_zero() -> None:
+    body = ('{"intent":"technical","tone":"neutral","task_type":"question",'
+            '"suggested_skill":null,"risk":"low","confidence":0.9}')
+    captured: dict = {}
+
+    def _spy(**kwargs):
+        captured.update(kwargs)
+        return _completion(body)
+
+    with patch("ubongo.classifier.complete", side_effect=_spy):
+        classify("design a circuit breaker")
+    assert captured.get("temperature") == 0
+
+
+def test_intent_definitions_in_system_prompt() -> None:
+    prompt = classifier._build_system_prompt()
+    assert "technical:" in prompt and "coding:" in prompt
+    assert "prefer technical over work" in prompt
+
+
 def test_valid_json_passes_through() -> None:
     body = json.dumps({
         "intent": "technical",

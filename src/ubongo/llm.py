@@ -38,6 +38,7 @@ def complete(
     messages: list[dict],
     model: str,
     max_tokens: int,
+    temperature: float | None = None,
 ) -> CompletionResult:
     full_messages = [{"role": "system", "content": system_prompt}, *messages]
 
@@ -45,6 +46,10 @@ def complete(
         "before_llm",
         {"model": model, "max_tokens": max_tokens, "messages_count": len(full_messages)},
     )
+
+    # Only forward temperature when a caller asks for one (the classifier pins
+    # it to 0 for stable routing); otherwise leave the provider/model default.
+    extra: dict = {} if temperature is None else {"temperature": temperature}
 
     last_exc: Exception | None = None
     start = time.perf_counter()
@@ -55,6 +60,7 @@ def complete(
                 model=model,
                 messages=full_messages,
                 max_tokens=max_tokens,
+                **extra,
             )
             latency_ms = int((time.perf_counter() - start) * 1000)
             text = response.choices[0].message.content or ""

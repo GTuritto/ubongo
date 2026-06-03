@@ -40,7 +40,14 @@ _FALLBACK = Classification(
 _BASE_PROMPT = """\
 You are a fast classifier. Read the user message and return ONLY a single JSON object with EXACTLY these keys:
 
-- intent: one of [technical, casual, work, research, coding, other]
+- intent: one of [technical, casual, work, research, coding, other]. Definitions:
+  - technical: software architecture, system/API design, engineering trade-offs, "how does X work", reliability/scaling patterns (e.g. "design a circuit breaker", "should I shard this table"). Design and reasoning, not writing code.
+  - coding: write, debug, refactor, or explain a SPECIFIC piece of code (e.g. "write a function that reverses a list", "why does this loop crash").
+  - research: gather or synthesize information about a topic from prior context or sources (e.g. "what did we decide about caching", "summarize the options").
+  - work: concrete tasks, logistics, status, planning, ops actions (e.g. "rotate this API key", "what's left on the sprint").
+  - casual: chit-chat, social, emotional, venting, small talk.
+  - other: none of the above.
+  When a message is a design/engineering question, prefer technical over work.
 - tone: one of [neutral, frustrated, excited, tired, curious]
 - task_type: one of [command, high_stakes_decision, question, chat, none]
 - suggested_skill: {skill_clause}
@@ -123,6 +130,7 @@ def classify(message: str) -> Classification:
             messages=[{"role": "user", "content": message}],
             model=model,
             max_tokens=128,
+            temperature=0,  # a classifier must be stable across runs
         )
     except LLMError as exc:
         logger.warning(
