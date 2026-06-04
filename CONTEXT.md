@@ -64,6 +64,26 @@ _Avoid_: deploy, rollout, activation (bare).
 The canonical record (SQLite via `memory/store.py`, the projected Markdown vault, and embeddings). The **Memory Agent** is the only Worker Agent that writes it; other agents return Findings, the Memory Agent commits. Every outbound message also passes through `notification_queue`.
 _Avoid_: database (bare), persistence layer.
 
+**Recency window vs. Semantic recall**:
+The two ways recall surfaces context for a turn. **Recency** is the last-N messages of the conversation. **Semantic recall** embeds the current query (`sqlite-vec`) and retrieves the most similar prior messages that fall _outside_ the recency window, returned on `RecallContext.semantic_messages`. Both are best-effort: with embeddings disabled or unavailable, recall degrades cleanly to recency-only.
+_Avoid_: history (bare), context window (ambiguous).
+
+**Vault-link graph**:
+The graph formed by `[[wikilinks]]` in daily notes, recorded in `vault_links` and traversed via `memory/graph.py` (`neighbors`, `backlinks`, bounded `traverse`). Distinct from the lineage graph (that is evolution; this is notes).
+_Avoid_: knowledge graph (overclaims), link index.
+
+**Vault sync / Ingest**:
+Bidirectional vault flow. The system _projects_ turns into daily notes (outbound); the **`VaultWatcher`** poller _ingests_ external edits you make in Obsidian (inbound) — re-embedding them into `vec_vault`. It tells its own writes from your edits via `vault_state` (the hash the system last wrote): match → its write, skip; differ → your edit, ingest. "Ingest" is always the inbound direction.
+_Avoid_: sync (bare, directionless), watch (bare).
+
+**Conflict**:
+An external edit to a vault note the system also manages, queued in `vault_conflicts` for the user to resolve via `/conflicts` (keep-mine / keep-theirs / merge). For append-only daily notes the practical resolution is "coexist."
+_Avoid_: collision (use only in prose), merge conflict (git connotation).
+
+**Audit entry**:
+One categorized row in the unified `vault/system/audit.md` — `category ∈ governance | evolution | sync`. A human-readable record of every gated decision, promotion, and ingest; the file is the source of truth, `/audit` tails it.
+_Avoid_: log (bare), event (reserved for the event bus).
+
 ## Example dialogue
 
 > **Dev:** When the GP loop says a persona variant "beat baseline," what actually changes after I approve it?

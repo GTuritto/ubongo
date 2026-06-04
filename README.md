@@ -12,9 +12,9 @@ A governance layer evaluates risk, confidence, and reversibility per turn and ga
 
 ## Status
 
-**Phases 0 through 11 complete and merged to `main`.** The CLI runs end-to-end: classify, plan, execute through the worker fleet, govern, compose, enqueue, persist. Ten worker agents are registered (Architect, Operator, Casual personas + Research, Memory, Evaluator, Critic, Coding, Execution, Repair). The Evaluator scores every technical turn, the Critic challenges borderline-confidence answers, the Repair Agent retries a failing agent once with a model fallback, and the constrained-bash sandbox grounds shell execution. Sequential execution mode only; parallel + competitive + collaborative + debate + speculative ship in Phase 12. The GP self-improvement loop ships in Phases 16 through 19.
+**v0.1 is complete — all 22 phases (0–21) merged to `main` and certified.** The CLI runs end-to-end: classify, plan, execute through the worker fleet, govern, compose, enqueue, persist. Ten worker agents are registered (Architect, Operator, Casual personas + Research, Memory, Evaluator, Critic, Coding, Execution, Repair); all six execution modes are live; the Repair Agent walks a full recovery ladder; the governance decision matrix gates risky turns through an interactive `y/n/why` approval flow over a hardened sandbox. The Genetic Programming loop is closed: it generates variants (of persona prompts *and* routing rules / tool chains / retry config), evaluates them against held-out samples, evolves generations autonomously, and proposes promotions that take effect via a live swap only after you approve them in `/improvements`. Semantic recall (`sqlite-vec`) augments recency, a vault-link graph is queryable, and a polling watcher ingests edits you make to vault notes (bidirectional sync) with a unified audit log. **723 / 723 tests green; ~11,255 LOC** (under the 15k soft target); the full cumulative smoke passes end-to-end.
 
-The build runs across **22 phases in 6 tiers**. Each phase is implemented on its own branch, ships a working system, and ends with a manual end-to-end smoke test before merging to `main`. See [STATUS.md](STATUS.md) for the live phase tracker and [UBONGO_BUILD.md](UBONGO_BUILD.md) for sub-phases and per-phase testing plans.
+The build ran across **22 phases in 6 tiers**. Each phase was implemented on its own branch, shipped a working system, and ended with a manual end-to-end smoke test before merging to `main`. See [STATUS.md](STATUS.md) for the phase-by-phase changelog and [UBONGO_BUILD.md](UBONGO_BUILD.md) for sub-phases and per-phase testing plans. Next is **v0.2 (Telegram)** — a new transport, additive on the existing event/queue seams.
 
 ## What Ubongo Is
 
@@ -130,21 +130,36 @@ In REPL mode, type messages naturally. Ubongo classifies intent and tone, plans 
 
 Slash commands (REPL only; one-shot uses CLI flags):
 
-Implemented today (Phases 0 through 11):
+The full v0.1 command surface:
 
 ### Persona and workflow control
 
 - `/architect`, `/operator`, `/casual` — force a persona for the current session
 - `/auto` — return to automatic persona selection
+- `/mode <workflow> | list` — pin a workflow (and its execution mode) for the next turn
 
 ### Inspection
 
-- `/agents` — list registered worker agents (10 today: architect, casual, coding, critic, evaluator, execution, memory, operator, repair, research)
+- `/agents` — list registered worker agents (10: architect, casual, coding, critic, evaluator, execution, memory, operator, repair, research)
 - `/skills` — list available skills
 - `/decisions [N]` — last N Master Agent decisions for this session (default 10)
-- `/trace [N]` — full execution trace for the N most recent turns: classification, workflow agents, per-agent timings + tokens + confidence, governance decision (default 1)
+- `/trace [N]` — full execution trace for the N most recent turns: classification, workflow agents, per-agent timings + tokens + confidence, repair line, governance decision (default 1)
+- `/policy` — print the live governance decision matrix
 - `/queue [N]` — outbound queue contents (default 10)
 - `/exec <cmd>` — run one command through the constrained-bash sandbox; debug-only, bypasses the workflow runner
+
+### Self-improvement (genetic programming)
+
+- `/optimize <target>` — generate variants for an evolvable target (`persona:*`, `routing:default`, `toolchain:<wf>`, `retry:repair`)
+- `/evaluate <target>` — score the latest generation's variants into a fitness leaderboard
+- `/evolution <status|pause|resume|off>` — control the autonomous background GP loop (starts paused)
+- `/improvements [approve <id> | reject <id> | rollback <target>]` — review and act on proposed promotions (live swap on approve)
+
+### Memory
+
+- `/recall [query]` — recency window + semantic recall (sqlite-vec) + vault-graph neighbors
+- `/audit [category] [N]` — tail the unified governance + evolution + sync audit log
+- `/conflicts [resolve <id> <keep-mine|keep-theirs|merge>]` — review/resolve external vault-edit collisions
 
 ### Skills
 
@@ -153,7 +168,7 @@ Implemented today (Phases 0 through 11):
 
 ### System
 
-- `/reload` — reload `UBONGO.md`, personas, and skill metadata
+- `/reload` — hot-reload settings, `UBONGO.md`, personas, skills, and routing
 - `/exit` — exit the REPL
 
 Planned (later phases):

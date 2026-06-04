@@ -76,14 +76,21 @@ C4Container
 - **Single process, hand-rolled.** No LangGraph, Temporal, Ray, Docker, or
   Redis. Concurrency inside the Workflow Runner is plain `asyncio`.
 
-## Containers partly built / not yet built (Phases 16-21)
+## Background daemons (Tiers 5–6, all built)
 
-Phase 16 built the first slice of the **GP self-improvement layer**: the
-`src/ubongo/evolution/` package (target registry, variant generator, lineage
-persistence) and the `/optimize <target>` command, which writes
-`evolution_lineage` rows on demand. The rest of the loop — sandboxed
-**evaluation + fitness** over held-out conversation fixtures (Phase 17), the
-autonomous **scheduler** (Phase 18), and **promotions** writing
-`pending_promotions` / `active_evolutions` (Phase 19) — is still a future tier.
-Embedding indexing (`sqlite-vec`) and bidirectional vault sync are likewise
-future containers.
+Two background daemon threads run alongside the synchronous turn loop, started
+and stopped by the REPL:
+
+- **GP self-improvement loop** (`evolution.loop.EvolutionLoop`, Tier 5): the full
+  `src/ubongo/evolution/` package — generation, sandboxed evaluation + fitness
+  over held-out fixtures, the autonomous throttled/pausable cycle, and
+  human-approved promotions (writing `pending_promotions` / `active_evolutions`,
+  applied via live swap). Evolvable targets span persona prompts and
+  routing/tool-chain/retry config. Off (paused) by default.
+- **Vault watcher** (`memory.vault_watch.VaultWatcher`, Tier 6): a no-dependency
+  poller that ingests external vault edits (re-embed into `vec_vault`) and queues
+  conflicts. Off by default.
+
+Semantic recall (`sqlite-vec` indexing of messages and vault notes) is wired into
+the turn path itself (`recall(query)`), best-effort and degrading to recency-only
+when embeddings are unavailable. Nothing in v0.1 is left unbuilt.
