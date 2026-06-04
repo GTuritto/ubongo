@@ -181,6 +181,28 @@ CREATE TABLE IF NOT EXISTS embedding_meta (
   embedded_at TIMESTAMP NOT NULL
 );
 
+-- Phase 21: content hash of what the SYSTEM last wrote to each vault note, so
+-- the watcher tells its own writes (hash matches) from external user edits
+-- (hash differs) — no echo loop.
+CREATE TABLE IF NOT EXISTS vault_state (
+  path TEXT PRIMARY KEY,
+  content_hash TEXT NOT NULL,
+  last_written_at TIMESTAMP NOT NULL
+);
+
+-- Phase 21: edit/write collisions queued for the user to resolve via
+-- /conflicts (a background watcher cannot prompt mid-turn).
+CREATE TABLE IF NOT EXISTS vault_conflicts (
+  id INTEGER PRIMARY KEY,
+  path TEXT NOT NULL,
+  detected_at TIMESTAMP NOT NULL,
+  system_hash TEXT,
+  disk_hash TEXT,
+  status TEXT NOT NULL CHECK (status IN ('open', 'resolved')),
+  resolution TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_vault_conflicts_open ON vault_conflicts(status) WHERE status = 'open';
+
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_summaries_conversation ON summaries(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_queue_undelivered ON notification_queue(delivered_at) WHERE delivered_at IS NULL;

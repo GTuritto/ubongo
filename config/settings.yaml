@@ -69,6 +69,12 @@ memory:
 vault:
   path: ./vault
   daily_notes_subdir: daily
+  # Phase 21: bidirectional sync. When enabled, a polling daemon ingests
+  # external edits you make to vault notes (re-embed for recall) and queues
+  # edit/write collisions for /conflicts. Off by default; no extra dependency.
+  sync:
+    enabled: false
+    poll_interval_s: 5
 
 # Governance decision-matrix rules live in config/governance.yaml (Phase 14).
 

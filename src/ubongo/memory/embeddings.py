@@ -121,6 +121,37 @@ def index_message(message_id: int, text: str) -> bool:
         return False
 
 
+def _vault_rowid(path: str) -> int:
+    """A stable integer rowid for a vault path (vec0 tables key by rowid).
+    60-bit path hash — collisions are negligible for a personal vault."""
+    return int(hashlib.sha256(path.encode("utf-8")).hexdigest()[:15], 16)
+
+
+def index_vault(path: str, text: str) -> bool:
+    """Embed a vault note's text into vec_vault (Phase 21 ingest). Best-effort,
+    no-op when unavailable; the watcher only calls it on change, so it re-embeds
+    unconditionally."""
+    if not text.strip() or not vec_available():
+        return False
+    vecs = embed([text])
+    if not vecs:
+        return False
+    try:
+        import sqlite_vec
+
+        conn = store.connection()
+        rid = _vault_rowid(path)
+        conn.execute("DELETE FROM vec_vault WHERE rowid = ?", (rid,))
+        conn.execute(
+            "INSERT INTO vec_vault(rowid, embedding) VALUES (?, ?)",
+            (rid, sqlite_vec.serialize_float32(vecs[0])),
+        )
+        return True
+    except Exception as exc:
+        logger.warning("index_vault_failed", extra={"path": path, "error": str(exc)[:160]})
+        return False
+
+
 def search_messages(
     query: str,
     k: int,
