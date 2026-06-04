@@ -42,9 +42,13 @@ def test_work_command_routes_to_operator() -> None:
     assert router.route(_cls(intent="work", task_type="command")) == "operator"
 
 
-def test_work_without_command_falls_through_to_default() -> None:
-    # work + non-command doesn't match any rule -> default_workflow (casual_reply -> casual)
-    assert router.route(_cls(intent="work", task_type="question")) == "casual"
+def test_work_without_command_routes_to_quick_action() -> None:
+    # Routing-gap fix: a `work` turn without task_type=command used to fall
+    # through to the default (casual). It now routes to quick_action (operator),
+    # so a misclassified-as-work question gets a terse actionable voice, not the
+    # casual persona with no evaluator.
+    assert router.route(_cls(intent="work", task_type="question")) == "operator"
+    assert router.route_workflow(_cls(intent="work", task_type="question")) == "quick_action"
 
 
 def test_frustrated_tone_routes_to_supportive_casual() -> None:

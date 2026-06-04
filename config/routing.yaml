@@ -3,6 +3,8 @@ rules:
     workflow: technical_deep
   - match: { intent: work, task_type: command }
     workflow: quick_action
+  - match: { intent: work }
+    workflow: quick_action
   - match: { intent: casual }
     workflow: casual_reply
   - match: { tone: frustrated }
