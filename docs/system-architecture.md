@@ -1,6 +1,6 @@
 # Ubongo System Architecture (Current Implementation)
 
-This document describes the current codebase state (through Phase 16 in `STATUS.md` — Tiers 1-4 complete, Tier 5 opened), focusing on runtime flow, subsystem boundaries, and persistent data model. For a layered C4 view see [docs/architecture/](architecture/README.md); this file is the single-page runtime reference.
+This document describes the current codebase state (**v0.1 complete — all 22 phases (0–21) merged**), focusing on runtime flow, subsystem boundaries, and persistent data model. For a layered C4 view see [docs/architecture/](architecture/README.md); this file is the single-page runtime reference. Beyond the synchronous turn loop below, two background daemon threads (the GP self-improvement loop and the vault-sync watcher) are started/stopped by the REPL; see sections 9–10.
 
 Diagram source file (editable in draw.io):
 - [system-architecture.drawio](./diagrams/system-architecture.drawio)
@@ -134,10 +134,11 @@ Core operational tables:
 - `conversations`, `messages`, `summaries`, `sessions`
 - `workflow_runs`, `agent_runs`, `governance_decisions` (carries `risk` / `confidence` / `reversibility` / `action` / `approval_response`), `repair_runs` (one row per Repair strategy attempt, Phase 13)
 - `notification_queue`, `vault_links`
-- `evolution_lineage` (populated by Phase 16's `/optimize`)
+- Evolution (Tier 5): `evolution_lineage`, `evolution_evaluations`, `evolution_runs`, `evolution_state`, `pending_promotions`, `active_evolutions`
+- Wiki memory (Tier 6): `embedding_meta`, `vault_state`, `vault_conflicts`, plus the lazily-created `vec_messages` / `vec_vault` sqlite-vec virtual tables
 
-Schema present, not yet populated (Phases 17/19/20):
-- `facts`, `evolution_evaluations`, `pending_promotions`, `active_evolutions`
+Schema present, reserved for v0.2+:
+- `facts`
 
 ```mermaid
 erDiagram
@@ -265,10 +266,11 @@ flowchart TD
 
 Implemented command families in `repl.py`:
 - Persona and mode: `/architect`, `/operator`, `/casual`, `/auto`, `/mode <workflow> | list` (Phase 12; pins the next turn's workflow/execution mode)
-- Skills/meta: `/skill <name>`, `/skills`, `/summary`, `/reload`
+- Skills/meta: `/skill <name>`, `/skills`, `/summary`, `/reload` (Phase 21: also hot-reloads settings + routing)
 - Observability: `/queue [N]`, `/decisions [N]`, `/agents`, `/trace [N]` (Phase 10), `/policy` (Phase 14; prints the live decision matrix)
 - Sandbox debug: `/exec <cmd>` (Phase 11; bypasses `master.handle`, no workflow_runs row)
-- Self-improvement: `/optimize <target> | (no arg lists targets)` (Phase 16; generates + persists prompt variants, a direct tool like `/exec`)
+- Self-improvement (Tier 5): `/optimize <target>` (generate variants), `/evaluate <target>` (fitness leaderboard), `/evolution <status|pause|resume|off>` (the background loop), `/improvements [approve|reject <id> | rollback <target>]` (promotions + live swap)
+- Wiki memory (Tier 6): `/recall [query]` (recency + semantic + vault-graph neighbors), `/audit [category] [N]` (unified audit tail), `/conflicts [resolve <id> <keep-mine|keep-theirs|merge>]` (vault edit collisions)
 - Control: `/exit`
 
 ## 8) Prompt and Configuration Hierarchy
@@ -301,7 +303,9 @@ Patterns introduced across the tiers that later phases inherit:
 - **Repair ladder (Phase 13; supersedes Phase 11's single retry).** `RepairAgent` lives in the registry but never runs as a workflow step. On `agent_failed` the runner consults `RepairAgent.plan_recovery`, which classifies the failure into one of seven `FailureKind`s and returns an ordered `RecoveryPlan` (variant prompt -> different model -> smaller model + shorter prompt -> peer replacement -> abort), capped at `agents.repair.max_attempts`. `sequential` drives the full ladder; fan-out modes use peer replacement only. Every attempt persists to `repair_runs`; `/trace` renders an indented `repair:` line, and a recovered turn sets `workflow_runs.outcome='repaired'`.
 - **Governance decision matrix (Phases 14-15; supersedes the Phase-10 reject stub).** `score_risk` / `score_confidence` / `score_reversibility` feed a 5-rule matrix in `governance.yaml` returning `auto` / `ask_clarification` / `require_approval` / `reject`. Non-`auto` actions swap the response via `_GATED_MESSAGES`; `require_approval` drives the REPL's interactive `y/n/why` gate, with the choice persisted to `governance_decisions.approval_response`. Gated turns are still committed to messages + vault for `/recall` coherence.
 - **Commit-on-success buffer (Phase 13).** `master.handle` wraps the turn body in a `workflow_buffer` (`memory/write_buffer.py`): the assistant-message commit is staged and either `commit()`ed on `result.ok` or `drop()`ped on failure, so a half-finished turn never leaves partial rows. Phase 16+ writers inherit the seam.
-- **Evolution lineage (Phase 16).** The `src/ubongo/evolution/` package (`targets`, `generator`, `lineage`) generates prompt variants on `/optimize` and persists them to `evolution_lineage`. `parent_id` resolves from `active_evolutions` (NULL until Phase 19 promotions exist); generations increment per target. This is the seam Phases 17-19 build evaluation, the autonomous loop, and promotions onto.
+- **GP self-improvement loop (Tier 5, Phases 16-19).** The `src/ubongo/evolution/` package closes a full loop: `generator` mutates an evolvable **target** (kind `prompt` for `persona:*`, kind `config` for `routing:default` / `toolchain:<wf>` / `retry:repair`) into a generation of variants in `evolution_lineage`; `sandbox` evaluates each to a cohort-normalized `fitness` (prompt/routing/tool-chain variants are judged by running them; retry uses a structural proxy); `selection` keeps top-K survivors that seed the next generation (cross-generation `parent_id`); the `EvolutionLoop` daemon runs cycles continuously but throttled, paced, and **paused by default**; `promotion` proposes a winner to `pending_promotions` only when it beats the active baseline, and the user approves via `/improvements`. Approval writes `active_evolutions` and performs a **live swap**: the runtime read paths (`context.build_system_prompt` for personas, `router.route_workflow` / `router.workflow_agents` for config) consult `active_evolutions`, guarded by `store.is_connected`.
+- **Semantic recall (Tier 6, Phase 20).** `store.recall(conversation_id, query)` embeds the query and KNN-searches `vec_messages` (`sqlite-vec`) for relevant turns outside the recency window, folded into the turn as a labelled context block. Messages are indexed idempotently on write (`embedding_meta` hash). Everything is best-effort behind a `vec_available()` guard — disabled/unavailable degrades to recency-only with no error, and an embedding never blocks a message commit.
+- **Bidirectional vault sync (Tier 6, Phase 21).** The `VaultWatcher` daemon (no dependency, mirroring `EvolutionLoop`) polls the vault and ingests external edits (re-embed into `vec_vault`), distinguishing its own writes from user edits via the `vault_state` hash. Collisions queue to `vault_conflicts` (`/conflicts`). Governance, evolution, and sync decisions unify into `vault/system/audit.md` (`/audit`); `/reload` hot-reloads settings (`config.reload()` before `personas.reload()`).
 
 ---
 

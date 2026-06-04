@@ -47,14 +47,20 @@ C4Component
   schema spans conversation state (`conversations`, `messages`, `summaries`,
   `sessions`, `facts`), execution tracing (`workflow_runs`, `agent_runs`,
   `governance_decisions`, `repair_runs`), delivery (`notification_queue`), the
-  vault graph (`vault_links`), and the evolution tables (`evolution_lineage`
-  populated by Phase 16's `/optimize`; `evolution_evaluations`,
-  `pending_promotions`, `active_evolutions` still empty until Phases 17/19).
+  vault graph (`vault_links`), the full evolution set (`evolution_lineage`,
+  `evolution_evaluations`, `evolution_runs`, `evolution_state`,
+  `pending_promotions`, `active_evolutions` — all populated by Tier 5), and the
+  Tier-6 memory tables (`embedding_meta`, `vault_state`, `vault_conflicts`,
+  plus the lazily-created `vec_messages` / `vec_vault` sqlite-vec tables).
 - **Compaction** keeps context bounded: long conversations are summarized into
   `summaries` rows, which the Workflow Runner reads back as `summary_text`.
-- **The vault is a projection.** The **Vault Projector** renders memory into
-  Obsidian-compatible Markdown daily notes and records `vault_links` for the
-  link graph. The projection is one-way in v0.1; bidirectional sync is Phase 21.
+- **Semantic recall.** `recall(query)` embeds the query and KNN-searches
+  `vec_messages` for relevant turns outside the recency window (best-effort,
+  recency-only when embeddings are off).
+- **The vault is bidirectional (Tier 6).** The **Vault Projector** renders
+  memory into Obsidian daily notes and records `vault_links`; the **VaultWatcher**
+  poller ingests external edits back in (re-embed into `vec_vault`), telling its
+  own writes from yours via `vault_state`, and queues `vault_conflicts`.
 
 ## Schema map
 
@@ -63,6 +69,8 @@ Conversation state   conversations, messages, summaries, sessions, facts
 Execution tracing    workflow_runs, agent_runs, governance_decisions, repair_runs
 Delivery             notification_queue
 Vault graph          vault_links
-Evolution            evolution_lineage (Phase 16, /optimize); evolution_evaluations,
-                     pending_promotions, active_evolutions (Phases 17/19, empty)
+Evolution            evolution_lineage, evolution_evaluations, evolution_runs,
+                     evolution_state, pending_promotions, active_evolutions
+Wiki memory          embedding_meta, vault_state, vault_conflicts,
+                     vec_messages + vec_vault (sqlite-vec, lazy)
 ```

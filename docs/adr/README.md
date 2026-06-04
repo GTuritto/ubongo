@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-Load-bearing decisions for Ubongo v0.1, in [Nygard format](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions). Each records the context, the decision, and its consequences. These were **backfilled** on 2026-06-04 from the build (`UBONGO_BUILD.md`), the per-phase plans in `Plans/`, the `STATUS.md` changelog, and the commit history; status reflects the state of `main` at that time.
+Load-bearing decisions for Ubongo v0.1, in [Nygard format](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions). Each records the context, the decision, and its consequences. ADRs 0001–0009 were **backfilled** on 2026-06-04 from the build (`UBONGO_BUILD.md`), the per-phase plans in `Plans/`, the `STATUS.md` changelog, and commit history; 0010–0011 cover the Tier-6 decisions. **v0.1 is complete** (all 22 phases, 0–21, merged); these records reflect the final `main`.
 
 | ADR | Title | Status |
 | --- | --- | --- |
@@ -13,5 +13,7 @@ Load-bearing decisions for Ubongo v0.1, in [Nygard format](https://cognitect.com
 | [0007](0007-evolvable-target-kinds-and-config-eval.md) | Evolvable target kinds (prompt vs config) + side-effect-free config evaluation | Accepted |
 | [0008](0008-live-swap-via-active-evolutions.md) | Live swap via `active_evolutions` in runtime read paths | Accepted |
 | [0009](0009-classifier-determinism-and-routing-completeness.md) | Classifier determinism + routing completeness | Accepted |
+| [0010](0010-semantic-recall-lazy-vec-guard.md) | Semantic recall behind a lazy sqlite-vec guard | Accepted |
+| [0011](0011-vault-sync-polling-and-conflict-queue.md) | Vault sync via polling + conflict queue + unified audit | Accepted |
 
 New decisions get the next number. Supersede rather than rewrite: set the old ADR's status to `Superseded by NNNN`.
