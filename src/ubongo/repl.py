@@ -22,7 +22,7 @@ _BANNER = "Ubongo REPL ready. /exit to quit."
 _AUTO_ENABLED = "Auto routing enabled."
 _LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 _HELP_COMMANDS = (
-    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /policy, /agents, /trace, /exec <cmd>, /mode <workflow>, /optimize <target>, /evaluate <target>, /evolution <status|pause|resume|off>, /improvements, /reload, /exit."
+    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /policy, /agents, /trace, /exec <cmd>, /mode <workflow>, /optimize <target>, /evaluate <target>, /evolution <status|pause|resume|off>, /improvements, /recall [query], /reload, /exit."
 )
 
 
@@ -520,6 +520,62 @@ def _render_improvements_action(action: str, arg) -> str:
     return "Usage: /improvements [approve <id> | reject <id> | rollback <target>]."
 
 
+def _parse_recall_command(line: str) -> str | None:
+    """Returns the query from `/recall [query]` ("" for no query), or None for
+    other commands."""
+    raw = line.strip().lstrip("/")
+    parts = raw.split(maxsplit=1)
+    if parts[0].lower() != "recall":
+        return None
+    return parts[1].strip() if len(parts) > 1 else ""
+
+
+def _render_recall(query: str) -> str:
+    """Phase 20f: show what recall would surface for the current conversation —
+    the recency window, semantic hits (when embeddings are on), and the vault
+    graph neighbors of today's daily note. A direct read tool (no master.handle)."""
+    from datetime import datetime, timezone
+
+    from ubongo.memory import embeddings, graph, store, vault
+
+    session = store.get_session()
+    conv_id = session.current_conversation_id if session else None
+    if conv_id is None:
+        return "No conversation yet."
+
+    # default query = the latest user message
+    if not query:
+        recent_user = [m for m in store.last_n_messages(conv_id, 20) if m.role == "user"]
+        query = recent_user[-1].content if recent_user else ""
+
+    ctx = store.recall(conv_id, query=query or None)
+    lines = [f"Recall for conversation {conv_id}" + (f' — query: "{query}"' if query else "")]
+
+    if ctx.summary_text:
+        lines.append(f"\nsummary: {ctx.summary_text[:200]}")
+
+    lines.append(f"\nrecency window (last {len(ctx.messages)}):")
+    for m in ctx.messages[-6:]:
+        lines.append(f"  {m.role}: {' '.join(m.content.split())[:80]}")
+
+    if not embeddings.enabled():
+        lines.append("\nsemantic: (embeddings disabled — recency only)")
+    elif not embeddings.vec_available():
+        lines.append("\nsemantic: (sqlite-vec unavailable — recency only)")
+    elif ctx.semantic_messages:
+        lines.append("\nsemantic hits (outside the recency window):")
+        for m in ctx.semantic_messages:
+            lines.append(f"  #{m.id} {m.role}: {' '.join(m.content.split())[:80]}")
+    else:
+        lines.append("\nsemantic: (no hits)")
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    note = f"{vault._daily_subdir()}/{today}.md"
+    nbrs = graph.neighbors(note)
+    lines.append(f"\nvault graph — neighbors of {note}: " + (", ".join(nbrs) if nbrs else "(none)"))
+    return "\n".join(lines)
+
+
 def _render_exec(cmd: str) -> str:
     """Phase 11e: debug-only direct sandbox path. Bypasses master.handle —
     no workflow_runs row, no governance, no enqueue, no vault."""
@@ -887,6 +943,10 @@ def _repl_loop(persona, auto_mode, pending_skill, pending_workflow) -> int:
                     print(_render_evolution_control(sub))
                 else:
                     print(f"Unknown subcommand: {sub}. Usage: /evolution status|pause|resume|off.")
+                continue
+            if head == "recall":
+                q = _parse_recall_command(stripped)
+                print(_render_recall(q or ""))
                 continue
             if head == "improvements":
                 parsed = _parse_improvements_command(stripped)
