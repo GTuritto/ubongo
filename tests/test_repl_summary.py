@@ -122,7 +122,8 @@ def test_reload_all_clears_caches() -> None:
     skills.body("summarize-conversation")
     context.build_system_prompt("operator")
     msg = repl._reload_all()
-    assert msg == "Reloaded UBONGO.md, personas, and skills."
+    # Phase 21e: hot-reload now also clears the config cache + routing.
+    assert msg == "Reloaded settings, UBONGO.md, personas, skills, and routing."
     # caches cleared — registry needs re-discover
     assert skills._registry is None
     assert skills._body_cache == {}
