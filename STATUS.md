@@ -57,32 +57,32 @@ Each phase is built on its own branch. Don't start Phase N+1 until Phase N's tes
 
 ## v0.1 Acceptance Criteria
 
-- [ ] CLI REPL responds; one-shot command runs and exits.
-- [ ] Manual `/architect`, `/operator`, `/casual` commands work and feel different.
-- [ ] In `/auto` mode, persona is selected automatically and feels mostly right.
-- [ ] You can correct auto-selection with a slash command.
-- [ ] `UBONGO.md` is loaded for every persona; editing it changes behavior across all personas after `/reload`.
-- [ ] Conversation context persists across CLI restarts within a session.
-- [ ] New session starts after 30 minutes of inactivity.
-- [ ] Compaction kicks in past the configured threshold; older history replaced by a summary in recall; summary persisted and not regenerated.
-- [ ] Daily notes write to the Obsidian vault and render correctly.
-- [ ] `summarize-conversation` skill works via `/summary`. Skill bodies not loaded until activation.
-- [ ] `/reload` picks up edits to `UBONGO.md`, personas, and skill metadata without restart.
-- [ ] Every outbound message goes through `notification_queue`.
-- [ ] Master Agent classifies, plans, dispatches, governs, composes per turn; `/decisions` and `/trace` populated.
-- [ ] All eight worker agents (Research, Coding, Evaluator, Repair, Memory, Critic, Execution, Persona) registered and dispatchable; `/agents` lists them.
-- [ ] All six execution modes (sequential, parallel, competitive, collaborative, debate, speculative) selectable via `/mode`.
-- [ ] Repair Agent recovers timeouts, parse errors, agent failures; rollbacks leave no partial state.
-- [ ] Decision matrix returns auto / ask_clarification / require_approval / reject per `governance.yaml`; `governance_decisions` populated.
-- [ ] `require_approval` flow prompts user; y/n/why all work; Execution Agent properly sandboxed.
-- [ ] `/optimize <target>` generates variants; `/evaluate` produces a fitness leaderboard.
-- [ ] GP loop runs autonomously when enabled; throttled; pauseable.
-- [ ] `/improvements` lists pending promotions with diffs; approve/reject/rollback work; live-target swap takes effect.
-- [ ] Semantic recall via `sqlite-vec` augments recency in `/recall`; vault-link graph queryable.
-- [ ] File watcher ingests vault edits; conflicts gated by approval flow.
-- [ ] Full `tests/manual/smoke_test.md` walkthrough passes end-to-end.
-- [ ] Total project size stays under ~15,000 lines of Python (excluding tests).
-- [ ] Each phase landed via its own branch and was merged to `main` only after user approval.
+- [x] CLI REPL responds; one-shot command runs and exits.
+- [x] Manual `/architect`, `/operator`, `/casual` commands work and feel different.
+- [x] In `/auto` mode, persona is selected automatically and feels mostly right.
+- [x] You can correct auto-selection with a slash command.
+- [x] `UBONGO.md` is loaded for every persona; editing it changes behavior across all personas after `/reload`.
+- [x] Conversation context persists across CLI restarts within a session.
+- [x] New session starts after 30 minutes of inactivity.
+- [x] Compaction kicks in past the configured threshold; older history replaced by a summary in recall; summary persisted and not regenerated.
+- [x] Daily notes write to the Obsidian vault and render correctly.
+- [x] `summarize-conversation` skill works via `/summary`. Skill bodies not loaded until activation.
+- [x] `/reload` picks up edits to `UBONGO.md`, personas, and skill metadata without restart.
+- [x] Every outbound message goes through `notification_queue`.
+- [x] Master Agent classifies, plans, dispatches, governs, composes per turn; `/decisions` and `/trace` populated.
+- [x] All eight worker agents (Research, Coding, Evaluator, Repair, Memory, Critic, Execution, Persona) registered and dispatchable; `/agents` lists them.
+- [x] All six execution modes (sequential, parallel, competitive, collaborative, debate, speculative) selectable via `/mode`.
+- [x] Repair Agent recovers timeouts, parse errors, agent failures; rollbacks leave no partial state.
+- [x] Decision matrix returns auto / ask_clarification / require_approval / reject per `governance.yaml`; `governance_decisions` populated.
+- [x] `require_approval` flow prompts user; y/n/why all work; Execution Agent properly sandboxed.
+- [x] `/optimize <target>` generates variants; `/evaluate` produces a fitness leaderboard.
+- [x] GP loop runs autonomously when enabled; throttled; pauseable.
+- [x] `/improvements` lists pending promotions with diffs; approve/reject/rollback work; live-target swap takes effect.
+- [x] Semantic recall via `sqlite-vec` augments recency in `/recall`; vault-link graph queryable.
+- [x] File watcher ingests vault edits; conflicts gated by approval flow.
+- [x] Full `tests/manual/smoke_test.md` walkthrough passes end-to-end.
+- [x] Total project size stays under ~15,000 lines of Python (excluding tests).
+- [x] Each phase landed via its own branch and was merged to `main` only after user approval.
 
 ## Notes
 
