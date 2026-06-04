@@ -22,7 +22,7 @@ _BANNER = "Ubongo REPL ready. /exit to quit."
 _AUTO_ENABLED = "Auto routing enabled."
 _LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 _HELP_COMMANDS = (
-    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /policy, /agents, /trace, /exec <cmd>, /mode <workflow>, /optimize <target>, /evaluate <target>, /evolution <status|pause|resume|off>, /improvements, /recall [query], /reload, /exit."
+    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /policy, /agents, /trace, /exec <cmd>, /mode <workflow>, /optimize <target>, /evaluate <target>, /evolution <status|pause|resume|off>, /improvements, /recall [query], /audit [category], /conflicts, /reload, /exit."
 )
 
 
@@ -576,6 +576,90 @@ def _render_recall(query: str) -> str:
     return "\n".join(lines)
 
 
+_AUDIT_CATEGORIES = ("governance", "evolution", "sync")
+
+
+def _parse_audit_command(line: str):
+    """Parse `/audit [category] [N]`. Returns (category|None, n) or None for
+    other commands."""
+    raw = line.strip().lstrip("/")
+    parts = raw.split()
+    if not parts or parts[0].lower() != "audit":
+        return None
+    category, n = None, 20
+    for tok in parts[1:]:
+        if tok.lower() in _AUDIT_CATEGORIES:
+            category = tok.lower()
+        else:
+            try:
+                n = int(tok)
+            except ValueError:
+                pass
+    return (category, n)
+
+
+def _render_audit(category, n: int) -> str:
+    """Phase 21d: tail the unified audit log, optionally filtered by category."""
+    from ubongo.memory import vault
+
+    rows = vault.audit_tail(category, n)
+    if not rows:
+        return f"No audit entries{f' for {category}' if category else ''}."
+    header = f"Audit log (last {len(rows)}{f', {category}' if category else ''}):"
+    return header + "\n" + "\n".join(f"  {r[2:]}" for r in rows)
+
+
+def _parse_conflicts_command(line: str):
+    """Parse `/conflicts` (list) or `/conflicts resolve <id> <keep-mine|keep-theirs|merge>`.
+    Returns ("list", None, None), ("resolve", id, resolution), ("usage", None, None),
+    or None for other commands."""
+    raw = line.strip().lstrip("/")
+    parts = raw.split()
+    if not parts or parts[0].lower() != "conflicts":
+        return None
+    if len(parts) == 1:
+        return ("list", None, None)
+    if parts[1].lower() == "resolve" and len(parts) >= 4:
+        try:
+            cid = int(parts[2])
+        except ValueError:
+            return ("usage", None, None)
+        res = parts[3].lower()
+        if res not in ("keep-mine", "keep-theirs", "merge"):
+            return ("usage", None, None)
+        return ("resolve", cid, res)
+    return ("usage", None, None)
+
+
+def _render_conflicts_list() -> str:
+    from ubongo.memory import store
+
+    rows = store.open_vault_conflicts()
+    if not rows:
+        return "No open vault conflicts."
+    lines = [f"Open vault conflicts ({len(rows)}):"]
+    for r in rows:
+        lines.append(f"  #{r['id']}  {r['path']}  (edited externally at {r['detected_at']})")
+    lines.append("Resolve with /conflicts resolve <id> <keep-mine|keep-theirs|merge>.")
+    return "\n".join(lines)
+
+
+def _render_conflicts_resolve(cid: int, resolution: str) -> str:
+    from ubongo.memory import store, vault
+
+    conflict = store.get_vault_conflict(cid)
+    if conflict is None or conflict["status"] != "open":
+        return f"No open conflict #{cid}."
+    ok = store.resolve_vault_conflict(cid, resolution)
+    if not ok:
+        return f"No open conflict #{cid}."
+    vault.append_audit_entry("sync", f"resolved conflict #{cid} on {conflict['path']} -> {resolution}")
+    note = ""
+    if resolution == "keep-mine":
+        note = " (note: daily notes are append-only; the system keeps appending and does not snapshot, so the on-disk edit remains)"
+    return f"Conflict #{cid} resolved: {resolution}{note}."
+
+
 def _render_exec(cmd: str) -> str:
     """Phase 11e: debug-only direct sandbox path. Bypasses master.handle —
     no workflow_runs row, no governance, no enqueue, no vault."""
@@ -711,10 +795,19 @@ def _render_skills_table() -> str:
 
 
 def _reload_all() -> str:
+    # Phase 21e: settings hot-reload. config.reload() clears the shared cache
+    # (settings.yaml + governance.yaml) and must run BEFORE personas.reload() so
+    # the next persona load reads any changed models.* on the next turn. router
+    # reload picks up routing.yaml / workflows.yaml edits.
+    from ubongo import config as _config
+    from ubongo import router as _router
+
+    _config.reload()
     context.reload()
     personas.reload()
     skills.reload()
-    return "Reloaded UBONGO.md, personas, and skills."
+    _router.reload()
+    return "Reloaded settings, UBONGO.md, personas, skills, and routing."
 
 
 def _render_transcript(messages) -> str:
@@ -847,10 +940,17 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
     _evolution_loop = EvolutionLoop()
     _evolution_loop.start()
 
+    # Phase 21: start the vault watcher when vault.sync.enabled. Ingests external
+    # edits you make in Obsidian; off by default. Stopped on every exit path.
+    from ubongo.memory.vault_watch import VaultWatcher
+    _vault_watcher = VaultWatcher()
+    _vault_watcher.start()
+
     try:
         return _repl_loop(persona, auto_mode, pending_skill, pending_workflow)
     finally:
         _evolution_loop.stop()
+        _vault_watcher.stop()
 
 
 def _repl_loop(persona, auto_mode, pending_skill, pending_workflow) -> int:
@@ -947,6 +1047,20 @@ def _repl_loop(persona, auto_mode, pending_skill, pending_workflow) -> int:
             if head == "recall":
                 q = _parse_recall_command(stripped)
                 print(_render_recall(q or ""))
+                continue
+            if head == "audit":
+                parsed = _parse_audit_command(stripped)
+                cat, n = parsed if parsed else (None, 20)
+                print(_render_audit(cat, n))
+                continue
+            if head == "conflicts":
+                parsed = _parse_conflicts_command(stripped)
+                if parsed is None or parsed[0] == "list":
+                    print(_render_conflicts_list())
+                elif parsed[0] == "usage":
+                    print("Usage: /conflicts [resolve <id> <keep-mine|keep-theirs|merge>].")
+                else:
+                    print(_render_conflicts_resolve(parsed[1], parsed[2]))
                 continue
             if head == "improvements":
                 parsed = _parse_improvements_command(stripped)

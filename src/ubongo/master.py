@@ -470,6 +470,16 @@ class MasterAgent:
                 latency_ms=0,
                 evaluator_confidence=result.evaluator_confidence,
             )
+            # Phase 21c: gated governance decisions land in the unified audit log.
+            try:
+                from ubongo.memory import vault
+                preview = " ".join(message.split())[:80]
+                vault.append_audit_entry(
+                    "governance",
+                    f"**{decision.action}** risk={decision.risk} rev={decision.reversibility} — \"{preview}\"",
+                )
+            except Exception:
+                pass
 
         assistant_msg_id = None
         if result.ok:

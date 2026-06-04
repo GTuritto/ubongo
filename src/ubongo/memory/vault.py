@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from dataclasses import dataclass
@@ -42,6 +43,34 @@ def set_vault_root(path: Path | None) -> None:
 
 def daily_note_path(d: date_type) -> Path:
     return _vault_root() / _daily_subdir() / f"{d.isoformat()}.md"
+
+
+# --- Phase 21: content hashing + system-write tracking ----------------------
+
+
+def file_hash(path: Path) -> str:
+    """Short stable hash of a file's bytes (empty for a missing file)."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+    except OSError:
+        return ""
+
+
+def vault_relpath(path: Path) -> str:
+    try:
+        return str(path.relative_to(_vault_root()))
+    except ValueError:
+        return path.name
+
+
+def _record_system_write(path: Path) -> None:
+    """Record the hash the system just wrote so the watcher can distinguish its
+    own writes from external user edits. Best-effort."""
+    try:
+        from ubongo.memory import store
+        store.record_vault_write(vault_relpath(path), file_hash(path))
+    except Exception as exc:
+        logger.warning("vault_state_record_failed", extra={"error": str(exc)[:160]})
 
 
 def _frontmatter(d: date_type) -> str:
@@ -117,6 +146,7 @@ def append_to_daily_note(
             f.write(_frontmatter(d))
         f.write(_entry(t, user_message, response, persona, auto_routed))
     _index_wikilinks(path, user_message, response)
+    _record_system_write(path)
     logger.info(
         "vault_note_written",
         extra={
@@ -130,24 +160,59 @@ def append_to_daily_note(
 
 
 def audit_log_path() -> Path:
-    return _vault_root() / "system" / "evolution-audit.md"
+    """The unified audit log (Phase 21c). Phase 19's evolution-only audit
+    redirects here, so governance, evolution, and sync decisions share one
+    Obsidian-readable file."""
+    return _vault_root() / "system" / "audit.md"
 
 
-def append_audit(timestamp: str, line: str) -> Path:
-    """Append one promotion-decision row to vault/system/evolution-audit.md
-    (Phase 19g). Created with a header on first decision. `line` is a
-    pre-formatted markdown list item; the timestamp is prefixed."""
+_AUDIT_CATEGORIES = ("governance", "evolution", "sync")
+
+
+def append_audit_entry(category: str, line: str, *, timestamp: str | None = None) -> Path:
+    """Append one categorized row to vault/system/audit.md (Phase 21c). Each row
+    is `- <ts> [<category>] <line>` so `/audit` can filter by category. Best-
+    effort header on first write. The category is validated loosely (unknown
+    categories are still written, just logged)."""
+    from ubongo.memory import store
+
+    if category not in _AUDIT_CATEGORIES:
+        logger.warning("audit_unknown_category", extra={"category": category})
+    ts = timestamp or store.now_iso()
     path = audit_log_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     is_new = not path.exists()
     with path.open("a", encoding="utf-8") as f:
         if is_new:
-            f.write("---\ntags: [ubongo, evolution, audit]\n---\n\n"
-                    "# Evolution Promotion Audit\n\n"
-                    "One row per promotion decision (approve / reject / rollback).\n\n")
-        f.write(f"- {timestamp} — {line}\n")
-    logger.info("evolution_audit_written", extra={"path": str(path), "new_file": is_new})
+            f.write("---\ntags: [ubongo, audit]\n---\n\n"
+                    "# Audit Log\n\n"
+                    "Unified governance + evolution + sync audit. "
+                    "One row per decision/event: `- <ts> [<category>] <detail>`.\n\n")
+        f.write(f"- {ts} [{category}] {line}\n")
+    _record_system_write(path)
+    logger.info("audit_written", extra={"category": category, "new_file": is_new})
     return path
+
+
+def append_audit(timestamp: str, line: str) -> Path:
+    """Phase 19 back-compat shim: route promotion-decision rows into the unified
+    audit log under the `evolution` category."""
+    return append_audit_entry("evolution", line, timestamp=timestamp)
+
+
+def audit_tail(category: str | None = None, limit: int = 20) -> list[str]:
+    """Return the last `limit` audit rows (entry lines starting with '- '),
+    optionally filtered to a `[category]`. Newest last."""
+    path = audit_log_path()
+    if not path.exists():
+        return []
+    try:
+        rows = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.startswith("- ")]
+    except OSError:
+        return []
+    if category:
+        rows = [ln for ln in rows if f"[{category}]" in ln]
+    return rows[-limit:] if limit > 0 else rows
 
 
 @dataclass(frozen=True)

@@ -5,3 +5,6 @@ import os
 # path a no-op so no test makes an embedding network call. Embedding-specific
 # tests re-enable explicitly (monkeypatch embeddings.enabled / embeddings._cfg).
 os.environ.setdefault("UBONGO_DISABLE_EMBEDDINGS", "1")
+
+# Phase 21: never start the vault watcher daemon during the suite.
+os.environ.setdefault("UBONGO_DISABLE_VAULT_WATCH", "1")

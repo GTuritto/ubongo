@@ -398,4 +398,17 @@ Start of Tier 6. Recall stops being recency-only: `store.recall(conversation_id,
 
 ## Phase 21 — Bidirectional Vault Sync + Audit
 
-*(Populated when Phase 21 is implemented.)*
+The final v0.1 phase. The one-way vault projection becomes bidirectional: when `vault.sync.enabled: true`, a no-dependency polling daemon (`VaultWatcher`, mirroring the GP loop) scans `vault/daily/*.md` every `poll_interval_s` and ingests **external** edits you make in Obsidian — re-embedding them into `vec_vault`. It tells its own writes from your edits via `vault_state` (the hash the system last wrote): disk hash matches → system write (skip, no echo); differs → external edit → ingest, and on a system-managed note, queue a conflict. `/conflicts` lists and resolves collisions (keep-mine / keep-theirs / merge); for append-only daily notes the practical resolution is "coexist" (honest: the keep-mine/merge paths exist for correctness, not heavy use). Governance + evolution + sync decisions unify into `vault/system/audit.md`, tailed by `/audit [category] [N]`. `/reload` now also hot-reloads settings (`config.reload()` before personas, so a `models.*` edit applies next turn). The watcher is off by default and started/stopped by the REPL alongside the GP loop. Additive tables only (`vault_state`, `vault_conflicts`); `vec_vault` already existed — no destructive migration, no new dependency.
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| 21.1 | Vault edit ingestion | set `vault.sync.enabled: true`; launch REPL; edit a daily note in a text editor; wait ~poll_interval_s | logs show `index_vault` / a `[sync]` audit row; the edit is re-embedded (no crash). |
+| 21.2 | No echo on own writes | send a normal turn (system appends to the daily note); watch the watcher | the system's own append is NOT re-ingested (`vault_state` hash matches). |
+| 21.3 | Conflict queued | edit a daily note the system manages, externally; `/conflicts` | one open conflict listed with the note path. |
+| 21.4 | Conflict resolve | `/conflicts resolve <id> keep-theirs` | "resolved"; queue shrinks; a `[sync]` audit row appended. |
+| 21.5 | Unified audit | after a gated turn (`delete the entire vault`) and a promotion; `/audit` | rows under `[governance]` and `[evolution]`; `/audit governance` filters. |
+| 21.6 | Settings hot-reload | edit `models.casual` in settings.yaml; `/reload`; then a casual turn | "Reloaded settings, …"; the next casual turn uses the new model. |
+| 21.7 | Sync off (default) | `vault.sync.enabled: false`; launch | the watcher does not start; turns work normally; no ingestion. |
+| 21.8 | Help | `/help` or unknown command | usage includes `/audit [category]` and `/conflicts`. |
+| 21.9 | Pytest passes | `uv run pytest tests/` | All green (723 expected after Phase 21: Phase-20's 701 + 22 sync/audit/reload tests). |
+| 21.10 | Full cumulative smoke | walk the entire playbook (Phases 0–21) | passes end-to-end without manual fixup — **v0.1 certification**. |
