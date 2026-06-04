@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -59,6 +59,9 @@ class Session:
 class RecallContext:
     summary_text: str | None
     messages: list[Message]
+    # Phase 20: messages retrieved by semantic similarity to the current query,
+    # outside the recency window. Empty when no query / embeddings unavailable.
+    semantic_messages: list[Message] = field(default_factory=list)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _DB_PATH = _REPO_ROOT / "data" / "ubongo.db"
@@ -80,6 +83,13 @@ def set_db_path(path: Path) -> None:
         _connection.close()
     _connection = None
     _bootstrapped = False
+    # Phase 20: the embeddings layer caches sqlite-vec readiness per connection;
+    # forget it when the DB changes. Lazy import avoids a load-time cycle.
+    try:
+        from ubongo.memory import embeddings
+        embeddings.reset()
+    except Exception:
+        pass
 
 
 def _now() -> datetime:
@@ -241,7 +251,19 @@ def append_message(
         """,
         (conversation_id, role, content, now_iso(), persona, model, tokens_in, tokens_out),
     )
-    return int(cursor.lastrowid)
+    message_id = int(cursor.lastrowid)
+    # Phase 20: index the message for semantic recall (best-effort, idempotent).
+    # This is the single place every user/assistant turn is born, so it covers
+    # both master's user-message write and the Memory Agent's assistant write.
+    # A no-op when embeddings are disabled / sqlite-vec is unavailable; never
+    # raises, so the message write (and the turn) never depend on the embedding
+    # endpoint. Lazy import avoids a load-time cycle.
+    try:
+        from ubongo.memory import embeddings
+        embeddings.index_message(message_id, content)
+    except Exception:
+        pass
+    return message_id
 
 
 def _row_to_message(row: sqlite3.Row) -> Message:
@@ -518,9 +540,10 @@ def current_or_new_conversation(persona: str, user_id: int = 1) -> int:
 # --- recall ---
 
 
-def recall(conversation_id: int) -> RecallContext:
+def recall(conversation_id: int, query: str | None = None) -> RecallContext:
     config = load_config()
-    recall_turns = int(config.get("memory", {}).get("recall_turns", 10))
+    mem_cfg = config.get("memory", {})
+    recall_turns = int(mem_cfg.get("recall_turns", 10))
 
     summary = latest_summary(conversation_id)
     inherited = False
@@ -532,6 +555,23 @@ def recall(conversation_id: int) -> RecallContext:
 
     messages = last_n_messages(conversation_id, recall_turns)
 
+    # Phase 20: semantic recall. When a query is given and embeddings are
+    # available, retrieve the most similar prior messages in this conversation
+    # that are NOT already in the recency window. Best-effort: any failure or a
+    # disabled/unavailable embeddings layer leaves this empty (recency-only).
+    semantic: list[Message] = []
+    if query:
+        try:
+            from ubongo.memory import embeddings
+            top_k = int((mem_cfg.get("embeddings", {}) or {}).get("recall_top_k", 5))
+            recency_ids = {m.id for m in messages}
+            hits = embeddings.search_messages(
+                query, top_k, exclude_ids=recency_ids, conversation_id=conversation_id
+            )
+            semantic = messages_by_ids([mid for mid, _ in hits])
+        except Exception:
+            semantic = []
+
     events.dispatch(
         "after_recall",
         {
@@ -539,12 +579,14 @@ def recall(conversation_id: int) -> RecallContext:
             "messages_since_summary": count_messages_since_summary(conversation_id),
             "recall_turns": recall_turns,
             "summary_inherited": inherited,
+            "semantic_hits": len(semantic),
         },
     )
 
     return RecallContext(
         summary_text=summary.content if summary else None,
         messages=messages,
+        semantic_messages=semantic,
     )
 
 
@@ -1498,3 +1540,80 @@ def active_evolution(target: str) -> dict | None:
         return None
     return {"lineage_id": r["lineage_id"], "promoted_at": r["promoted_at"],
             "variant_text": r["variant_text"], "generation": r["generation"]}
+
+
+# --- Embedding meta + vault links (Phase 20) --------------------------------
+# embedding_meta is the idempotency sidecar for message vectors (the vectors
+# live in vec_messages, created lazily by memory/embeddings.py). vault_links is
+# the [[wikilink]] graph populated from daily notes.
+
+
+def embedding_meta_hash(message_id: int) -> str | None:
+    """The stored text hash for a message's embedding, or None if not indexed."""
+    conn = connection()
+    row = conn.execute(
+        "SELECT text_hash FROM embedding_meta WHERE message_id = ?", (message_id,)
+    ).fetchone()
+    return row["text_hash"] if row else None
+
+
+def upsert_embedding_meta(message_id: int, text_hash: str) -> None:
+    conn = connection()
+    conn.execute(
+        """
+        INSERT INTO embedding_meta (message_id, text_hash, embedded_at) VALUES (?, ?, ?)
+        ON CONFLICT(message_id) DO UPDATE SET text_hash = excluded.text_hash,
+                                              embedded_at = excluded.embedded_at
+        """,
+        (message_id, text_hash, now_iso()),
+    )
+
+
+def messages_by_ids(ids: list[int]) -> list["Message"]:
+    """Fetch messages by id, returned in ascending id order. Used to hydrate
+    semantic-recall hits into Message rows."""
+    if not ids:
+        return []
+    placeholders = ",".join("?" for _ in ids)
+    conn = connection()
+    rows = conn.execute(
+        f"""
+        SELECT id, conversation_id, role, content, timestamp, persona, model, tokens_in, tokens_out
+        FROM messages WHERE id IN ({placeholders}) ORDER BY id ASC
+        """,
+        ids,
+    ).fetchall()
+    return [_row_to_message(r) for r in rows]
+
+
+def upsert_vault_link(source_path: str, target_path: str, *, link_type: str = "wikilink") -> None:
+    """Idempotent insert of a vault link (composite PK absorbs duplicates)."""
+    conn = connection()
+    conn.execute(
+        """
+        INSERT INTO vault_links (source_path, target_path, link_type, created_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(source_path, target_path, link_type) DO NOTHING
+        """,
+        (source_path, target_path, link_type, now_iso()),
+    )
+
+
+def vault_links_from(source_path: str) -> list[str]:
+    """Outbound link targets from a note."""
+    conn = connection()
+    rows = conn.execute(
+        "SELECT target_path FROM vault_links WHERE source_path = ? ORDER BY target_path",
+        (source_path,),
+    ).fetchall()
+    return [r["target_path"] for r in rows]
+
+
+def vault_links_to(target_path: str) -> list[str]:
+    """Inbound sources linking to a note (backlinks)."""
+    conn = connection()
+    rows = conn.execute(
+        "SELECT source_path FROM vault_links WHERE target_path = ? ORDER BY source_path",
+        (target_path,),
+    ).fetchall()
+    return [r["source_path"] for r in rows]
