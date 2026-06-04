@@ -171,6 +171,16 @@ CREATE TABLE IF NOT EXISTS vault_links (
   PRIMARY KEY (source_path, target_path, link_type)
 );
 
+-- Phase 20: idempotency sidecar for message embeddings. The vec0 vectors live
+-- in vec_messages (created lazily by memory/embeddings.py when sqlite-vec is
+-- available); this plain table records the text hash so re-indexing unchanged
+-- text makes no embedding call.
+CREATE TABLE IF NOT EXISTS embedding_meta (
+  message_id INTEGER PRIMARY KEY,
+  text_hash TEXT NOT NULL,
+  embedded_at TIMESTAMP NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_summaries_conversation ON summaries(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_queue_undelivered ON notification_queue(delivered_at) WHERE delivered_at IS NULL;

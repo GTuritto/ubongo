@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date as date_type
 from datetime import datetime
@@ -68,6 +69,37 @@ def _entry(
     )
 
 
+_WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]")
+
+
+def parse_wikilinks(text: str) -> list[str]:
+    """Return the `[[target]]` link targets in `text`, de-duplicated in order.
+    Handles `[[target|alias]]` and `[[target#heading]]` (target only)."""
+    seen: list[str] = []
+    for m in _WIKILINK_RE.finditer(text or ""):
+        target = m.group(1).strip()
+        if target and target not in seen:
+            seen.append(target)
+    return seen
+
+
+def _index_wikilinks(note_path: Path, *texts: str) -> None:
+    """Phase 20: upsert vault_links for every `[[wikilink]]` found in the given
+    texts, sourced from `note_path`. Best-effort — never blocks the note write."""
+    try:
+        from ubongo.memory import store
+
+        try:
+            source = str(note_path.relative_to(_vault_root()))
+        except ValueError:
+            source = note_path.name
+        for text in texts:
+            for target in parse_wikilinks(text):
+                store.upsert_vault_link(source, target, link_type="wikilink")
+    except Exception as exc:
+        logger.warning("vault_link_index_failed", extra={"error": str(exc)[:160]})
+
+
 def append_to_daily_note(
     d: date_type,
     t: time_type,
@@ -84,6 +116,7 @@ def append_to_daily_note(
         if is_new:
             f.write(_frontmatter(d))
         f.write(_entry(t, user_message, response, persona, auto_routed))
+    _index_wikilinks(path, user_message, response)
     logger.info(
         "vault_note_written",
         extra={

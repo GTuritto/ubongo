@@ -383,7 +383,18 @@ End of Tier 5. The self-improvement loop closes: the loop proposes a promotion w
 
 ## Phase 20 — Embeddings + Graph
 
-*(Populated when Phase 20 is implemented.)*
+Start of Tier 6. Recall stops being recency-only: `store.recall(conversation_id, query)` embeds the current query and retrieves the most similar prior messages **outside** the recency window via `sqlite-vec`, returned on `RecallContext.semantic_messages` and folded into the turn context by the runner as a labelled "[Relevant earlier context]" block. The Memory Agent's message write (`store.append_message`, the one place every user/assistant turn is born) indexes the message idempotently — a text-hash sidecar (`embedding_meta`) means re-indexing unchanged text makes no embed call. Daily-note `[[wikilinks]]` populate `vault_links`, queryable via `memory/graph.py` (`neighbors` / `backlinks` / bounded `traverse`). A new `/recall [query]` command surfaces all of it. **Graceful degradation is first-class**: with `memory.embeddings.enabled: false`, a blocked extension, or a down endpoint, everything collapses to recency-only with no errors, and an embedding never blocks a message commit. Vec tables (`vec_messages`, `vec_vault`) are created lazily behind a `vec_available()` guard, so embeddings-off runs never load the extension. No destructive migration (one additive `embedding_meta` table).
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| 20.1 | Semantic recall surfaces old context | `rm -f data/ubongo.db`; seed a caching discussion, then drive 12+ unrelated turns; `ubongo send "remember our caching discussion"` | the reply reflects the old caching turns even though they are outside the last-N window. |
+| 20.2 | `/recall` shows recency + semantic | after 20.1, REPL `/recall caching` | prints the recency window, a "semantic hits" block with the old caching turn (`#id`), and vault-graph neighbors of today's note. |
+| 20.3 | Embedding idempotency | re-run `ubongo send` on an unchanged conversation; watch logs | no new embed calls for unchanged messages (`embedding_meta.text_hash` unchanged); `sqlite3 data/ubongo.db "SELECT COUNT(*) FROM embedding_meta"` stable. |
+| 20.4 | Vault graph from `[[wikilink]]` | send a turn containing `[[caching-notes]]`; `sqlite3 data/ubongo.db "SELECT source_path, target_path FROM vault_links"` | a `wikilink` row appears with today's note → `caching-notes`; `/recall` neighbors include it. |
+| 20.5 | Without embeddings (graceful) | set `memory.embeddings.enabled: false` (or `UBONGO_DISABLE_EMBEDDINGS=1`); restart; `/recall caching` | recency-only; "(embeddings disabled — recency only)"; no errors; turns still work. |
+| 20.6 | Extension-blocked (graceful) | (if a platform blocks `enable_load_extension`) launch normally | `vec_available()` False; recency-only; warning logged once, no crash. |
+| 20.7 | Help | `/help` or unknown command | usage line includes `/recall [query]`. |
+| 20.8 | Pytest passes | `uv run pytest tests/` | All green (701 expected after Phase 20: Phase-19's 676 + 25 embeddings/recall/graph/recall tests). |
 
 ## Phase 21 — Bidirectional Vault Sync + Audit
 

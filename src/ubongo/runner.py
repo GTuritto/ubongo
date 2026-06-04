@@ -57,8 +57,19 @@ def build_message_history(conv_id: int | None, current_message: str) -> tuple[st
     history: list[dict] = []
     summary_text: str | None = None
     if conv_id is not None:
-        ctx = store.recall(conv_id)
+        ctx = store.recall(conv_id, query=current_message)
         summary_text = ctx.summary_text
+        # Phase 20: semantically-recalled older turns (outside the recency
+        # window) are prepended as a clearly-labelled context block so the model
+        # can use them without confusing them for the live conversation flow.
+        if ctx.semantic_messages:
+            recalled = "\n".join(
+                f"- {m.role}: {m.content}" for m in ctx.semantic_messages
+            )
+            history.append({
+                "role": "user",
+                "content": f"[Relevant earlier context, retrieved by similarity:]\n{recalled}",
+            })
         for msg in ctx.messages:
             if msg.role in ("user", "assistant"):
                 history.append({"role": msg.role, "content": msg.content})
