@@ -26,10 +26,12 @@ C4Container
     Container(bus, "Event Bus", "Python", "Synchronous pub/sub for before_*/after_* lifecycle hooks")
     Container(llmgw, "LLM Gateway", "Python, LiteLLM", "Single egress for model calls; retry + token accounting")
     Container(queue, "Notification Queue", "Python", "Every outbound message is enqueued here before delivery")
-    Container(memstore, "Memory Store", "Python", "Only writer to durable memory; WriteBuffer commit-or-drop semantics")
+    Container(memstore, "Memory Store", "Python", "Only writer to durable memory; WriteBuffer commit-or-drop; sqlite-vec recall")
     Container(vault, "Vault Projector", "Python", "Projects conversations + memory into Markdown daily notes")
-    ContainerDb(db, "SQLite Database", "SQLite", "Canonical store: conversations, runs, governance, repair, queue, evolution")
-    ContainerDb(vaultfs, "Markdown Vault", "Filesystem", "Obsidian-compatible projection of memory")
+    Container(evoloop, "GP Self-Improvement Loop", "Python thread", "Tier 5 daemon: generate -> evaluate -> rank -> propose; paused by default")
+    Container(vaultwatch, "Vault Watcher", "Python thread", "Tier 6 daemon: polls vault, ingests external edits, queues conflicts")
+    ContainerDb(db, "SQLite Database", "SQLite", "Canonical store: conversations, runs, governance, repair, queue, evolution, vec")
+    ContainerDb(vaultfs, "Markdown Vault", "Filesystem", "Obsidian-compatible projection + audit log")
     ContainerDb(config, "Config", "YAML files", "routing, workflows, skills, personas, settings (secrets in .env only)")
   }
 
@@ -52,6 +54,12 @@ C4Container
   Rel(memstore, vault, "Trigger projection")
   Rel(vault, vaultfs, "Writes Markdown")
   Rel(router, config, "Reads routing rules")
+  Rel(evoloop, llmgw, "Generate + judge variants")
+  Rel(evoloop, db, "Lineage, fitness, pending_promotions", "sqlite3")
+  Rel(evoloop, config, "Reads targets; live swap via active_evolutions")
+  Rel(cli, evoloop, "/improvements approve / reject; /evolve")
+  Rel(vaultwatch, vaultfs, "Polls for external edits")
+  Rel(vaultwatch, memstore, "Ingest edits, queue conflicts")
 
   UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
 ```
