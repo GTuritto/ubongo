@@ -17,6 +17,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "mutmut>=3.0",
 ]
 
 [build-system]
@@ -25,3 +26,15 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ubongo"]
+
+# Mutation testing (mutmut 3.x). Coverage-guided: mutmut runs the suite once to
+# map which tests cover each line, then runs only the covering tests per mutant.
+# Scoped to the architecture-review refactor targets (candidates 01 & 03) so the
+# first pass is a tractable safety net rather than a whole-codebase sweep. Widen
+# `source_paths` as more modules are hardened. See docs/mutation-testing.md.
+[tool.mutmut]
+source_paths = [
+    "src/ubongo/agents/repair.py",
+    "src/ubongo/runner.py",
+]
+pytest_add_cli_args_test_selection = ["tests/"]
