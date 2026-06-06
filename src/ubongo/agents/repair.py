@@ -18,6 +18,7 @@ consulted synchronously by the WorkflowRunner.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -77,6 +78,60 @@ class RecoveryPlan:
     max_tokens_cap: int | None = None
     peer_agent: str | None = None
     reason: str | None = None
+
+
+class RecoveryScope(Enum):
+    """Which strategies `recover()` is permitted to use.
+
+    The per-mode asymmetry ADR-0003 settles, expressed as one argument:
+      - LADDER    : sequential mode walks the full per-kind strategy ladder.
+      - PEER_ONLY : the five fan-out modes take a single peer hop (no retry
+                    loop — multi-strategy cancel-and-retry inside
+                    asyncio.gather is ambiguous; one peer substitution is a
+                    clean one-hop replacement).
+    """
+
+    LADDER = "ladder"
+    PEER_ONLY = "peer_only"
+
+
+@dataclass(frozen=True)
+class RepairAttempt:
+    """One recovery attempt's audit record. `recover()` hands these to the
+    runner-supplied `persist` callback, which writes the repair_runs row — so
+    the durable write still originates in the runner (ADR-0002 single-writer).
+    Fields mirror runner._persist_repair_run's parameters."""
+
+    failure_kind: str
+    original_error: str | None
+    strategy_attempted: str
+    peer_agent: str | None
+    override_model: str | None
+    attempt_index: int
+    outcome: str  # "recovered" | "failed" | "aborted"
+    started_at: str
+    ended_at: str | None
+
+
+@dataclass(frozen=True)
+class RecoveryOutcome:
+    """Result of a `recover()` call.
+
+    `peer_agent` is set only when a peer dispatched into the failing slot;
+    fan-out callers use it to relabel that slot to the peer's identity.
+    Sequential callers ignore it and read `result`.
+    """
+
+    result: AgentResult
+    peer_agent: str | None = None
+
+
+# Callback types for recover(): the runner supplies how to *run* one attempt
+# and how to *persist* one attempt, so Repair owns the loop without importing
+# the runner, the registry, or the store.
+DispatchFn = Callable[[RecoveryPlan], Awaitable["AgentResult | None"]]
+PersistFn = Callable[[RepairAttempt], None]
+ClockFn = Callable[[], str]
 
 
 # Map agent error codes (the strings each agent sets on AgentResult.error)
@@ -340,6 +395,215 @@ class RepairAgent:
             return RecoveryPlan(strategy=strategy, peer_agent=peer)
 
         return None
+
+    # ---------- recovery ladder (candidate 01: Repair owns the loop) ----------
+
+    async def recover(
+        self,
+        *,
+        agent_name: str,
+        original: AgentResult,
+        allow: RecoveryScope,
+        dispatch: DispatchFn,
+        persist: PersistFn,
+        clock: ClockFn,
+    ) -> RecoveryOutcome:
+        """Drive the recovery ladder and return the final outcome.
+
+        Repair owns the whole loop: classify the failure, walk
+        `plan_recovery()`, branch on the `Strategy` enum, index attempts, and
+        emit the abort / peer-not-registered audit rows. The runner stays
+        ignorant of the taxonomy and supplies only two callbacks:
+
+          - `dispatch(plan)`: run one attempt. Returns the AgentResult, or
+            `None` when the plan can't be executed (a peer named but not
+            registered). On `None`, recover() records a `failed` row and stops.
+          - `persist(attempt)`: write one repair_runs row (runs in the runner,
+            so the store write stays runner-owned — ADR-0002).
+
+        `clock()` supplies timestamps (the runner passes store.now_iso) so this
+        module needs no store import. `allow` selects the scope: LADDER walks
+        the full per-kind ladder (sequential); PEER_ONLY takes a single peer
+        hop (fan-out).
+        """
+        failure_kind = _classify_failure(agent_name, original.error).value
+        original_error = original.error
+
+        if allow is RecoveryScope.PEER_ONLY:
+            return await self._recover_peer_only(
+                agent_name=agent_name,
+                original=original,
+                failure_kind=failure_kind,
+                original_error=original_error,
+                dispatch=dispatch,
+                persist=persist,
+                clock=clock,
+            )
+
+        # LADDER: walk the full per-kind ladder, one dispatch per rung.
+        attempts: list[Strategy] = []
+        result = original
+        while True:
+            plan = self.plan_recovery(
+                failed_agent=agent_name,
+                original=result,
+                attempts_so_far=tuple(attempts),
+            )
+
+            if plan.strategy is Strategy.ABORT:
+                logger.info(
+                    "repair_abort",
+                    extra={
+                        "agent": agent_name,
+                        "attempts": len(attempts),
+                        "reason": plan.reason,
+                    },
+                )
+                ts = clock()
+                persist(RepairAttempt(
+                    failure_kind=failure_kind,
+                    original_error=original_error,
+                    strategy_attempted=plan.strategy.value,
+                    peer_agent=None,
+                    override_model=None,
+                    attempt_index=len(attempts),
+                    outcome="aborted",
+                    started_at=ts,
+                    ended_at=ts,
+                ))
+                return RecoveryOutcome(result=result)
+
+            if plan.strategy is Strategy.REPLACE_WITH_PEER:
+                attempts.append(plan.strategy)
+                logger.info(
+                    "agent_replace_with_peer",
+                    extra={
+                        "agent": agent_name,
+                        "peer": plan.peer_agent,
+                        "attempt_index": len(attempts) - 1,
+                    },
+                )
+                started = clock()
+                peer_result = await dispatch(plan)
+                ended = clock()
+                if peer_result is None:
+                    # Peer named but not registered: audit the
+                    # tried-but-couldn't-execute case, then give up.
+                    persist(RepairAttempt(
+                        failure_kind=failure_kind,
+                        original_error=original_error,
+                        strategy_attempted=plan.strategy.value,
+                        peer_agent=plan.peer_agent,
+                        override_model=None,
+                        attempt_index=len(attempts) - 1,
+                        outcome="failed",
+                        started_at=started,
+                        ended_at=ended,
+                    ))
+                    return RecoveryOutcome(result=result)
+                persist(RepairAttempt(
+                    failure_kind=failure_kind,
+                    original_error=original_error,
+                    strategy_attempted=plan.strategy.value,
+                    peer_agent=plan.peer_agent,
+                    override_model=None,
+                    attempt_index=len(attempts) - 1,
+                    outcome="recovered" if peer_result.ok else "failed",
+                    started_at=started,
+                    ended_at=ended,
+                ))
+                if peer_result.ok:
+                    return RecoveryOutcome(
+                        result=peer_result, peer_agent=plan.peer_agent
+                    )
+                # Peer also failed; loop. Keep `result` on the ORIGINAL failure
+                # so plan_recovery classifies against the original error kind.
+                continue
+
+            # Retry strategies: re-dispatch the same agent with the overrides.
+            attempts.append(plan.strategy)
+            logger.info(
+                "agent_retry",
+                extra={
+                    "agent": agent_name,
+                    "strategy": plan.strategy.value,
+                    "model": plan.override_model,
+                    "attempt_index": len(attempts) - 1,
+                },
+            )
+            started = clock()
+            retried = await dispatch(plan)
+            ended = clock()
+            # A retry plan always targets the original agent, so dispatch never
+            # returns None here; guard defensively rather than crash.
+            result = retried if retried is not None else result
+            persist(RepairAttempt(
+                failure_kind=failure_kind,
+                original_error=original_error,
+                strategy_attempted=plan.strategy.value,
+                peer_agent=None,
+                override_model=plan.override_model,
+                attempt_index=len(attempts) - 1,
+                outcome="recovered" if result.ok else "failed",
+                started_at=started,
+                ended_at=ended,
+            ))
+            if result.ok:
+                return RecoveryOutcome(result=result)
+
+    async def _recover_peer_only(
+        self,
+        *,
+        agent_name: str,
+        original: AgentResult,
+        failure_kind: str,
+        original_error: str | None,
+        dispatch: DispatchFn,
+        persist: PersistFn,
+        clock: ClockFn,
+    ) -> RecoveryOutcome:
+        """Single peer hop for fan-out modes: ask for the first plan only and
+        act only if it is REPLACE_WITH_PEER. No retry loop."""
+        plan = self.plan_recovery(
+            failed_agent=agent_name,
+            original=original,
+            attempts_so_far=(),
+        )
+        if plan.strategy is not Strategy.REPLACE_WITH_PEER or not plan.peer_agent:
+            return RecoveryOutcome(result=original)
+
+        logger.info(
+            "agent_replace_with_peer_fanout",
+            extra={"agent": agent_name, "peer": plan.peer_agent},
+        )
+        started = clock()
+        peer_result = await dispatch(plan)
+        ended = clock()
+        if peer_result is None:
+            persist(RepairAttempt(
+                failure_kind=failure_kind,
+                original_error=original_error,
+                strategy_attempted=plan.strategy.value,
+                peer_agent=plan.peer_agent,
+                override_model=None,
+                attempt_index=0,
+                outcome="failed",
+                started_at=started,
+                ended_at=ended,
+            ))
+            return RecoveryOutcome(result=original)
+        persist(RepairAttempt(
+            failure_kind=failure_kind,
+            original_error=original_error,
+            strategy_attempted=plan.strategy.value,
+            peer_agent=plan.peer_agent,
+            override_model=None,
+            attempt_index=0,
+            outcome="recovered" if peer_result.ok else "failed",
+            started_at=started,
+            ended_at=ended,
+        ))
+        return RecoveryOutcome(result=peer_result, peer_agent=plan.peer_agent)
 
     # ---------- Phase 11 back-compat shim ----------
 

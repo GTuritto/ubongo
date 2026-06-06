@@ -11,6 +11,7 @@ from ubongo import context, events, skills  # noqa: E402
 from ubongo.agents.base import AgentInput, AgentResult  # noqa: E402
 from ubongo.master import Context, Workflow  # noqa: E402
 from ubongo.memory import store, vault  # noqa: E402
+from ubongo.agents.repair import RepairAgent  # noqa: E402
 from ubongo.runner import WorkflowRunner  # noqa: E402
 
 
@@ -209,8 +210,9 @@ def test_history_no_conv_id_still_includes_message():
 # --- Phase 11d: Repair single-retry ---
 
 
-class StubRepair:
-    """Mimics RepairAgent.plan_recovery for runner tests.
+class StubRepair(RepairAgent):
+    """Scripts RepairAgent.plan_recovery for runner tests, inheriting the real
+    recover() loop so the runner is exercised against production recovery logic.
 
     Configure with an ordered list of RecoveryPlans. Each plan_recovery()
     call pops the next plan; when the list is empty, returns ABORT.
@@ -225,6 +227,9 @@ class StubRepair:
     max_attempts = 3
 
     def __init__(self, plans: list | None = None, plan: dict | None = None):
+        # Skip RepairAgent.__init__ (config load + model maps): the scripted
+        # plan_recovery bypasses _materialize_plan, so recover() needs only
+        # max_attempts (class attr) and the scripted plans below.
         # Two construction styles supported:
         #  - plans=[RecoveryPlan(...), ...] for the Phase-13 path
         #  - plan={"model": "..."} for the Phase-11 plan_retry shim (used
