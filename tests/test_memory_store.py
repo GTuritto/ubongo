@@ -345,8 +345,29 @@ def test_repair_runs_for_workflow_orders_by_id(db) -> None:
     assert rows[2]["peer_agent"] == "research"
 
 
-def test_last_n_workflow_runs_includes_repair_runs(db) -> None:
+def _seed_agent_run(wf_id: int, agent: str, outcome: str) -> int:
+    return store.append_agent_run(
+        wf_id,
+        agent=agent,
+        model="m",
+        input={},
+        output={"error": "critic_no_candidate"} if outcome == "failure" else {},
+        confidence=None,
+        tokens_in=0,
+        tokens_out=0,
+        latency_ms=1,
+        outcome=outcome,
+        started_at=store.now_iso(),
+        ended_at=store.now_iso(),
+    )
+
+
+def test_last_n_workflow_runs_attaches_repair_to_failing_agent(db) -> None:
+    # The repair attempt is grouped under the FAILING critic row, not the
+    # peer's later success row (the grouping the /trace renderer used to do).
     wf_id = _seed_workflow(db)
+    _seed_agent_run(wf_id, "critic", "failure")
+    _seed_agent_run(wf_id, "architect", "success")  # the peer that replaced it
     store.append_repair_run(
         workflow_run_id=wf_id,
         agent="critic",
@@ -362,6 +383,9 @@ def test_last_n_workflow_runs_includes_repair_runs(db) -> None:
     )
     rows = store.last_n_workflow_runs(1)
     assert len(rows) == 1
-    assert "repair_runs" in rows[0]
-    assert len(rows[0]["repair_runs"]) == 1
-    assert rows[0]["repair_runs"][0]["peer_agent"] == "architect"
+    by_agent = {ar.agent: ar for ar in rows[0].agent_runs}
+    # Repair attached to the failing critic row...
+    assert len(by_agent["critic"].repair_runs) == 1
+    assert by_agent["critic"].repair_runs[0].peer_agent == "architect"
+    # ...and not to the peer's success row.
+    assert by_agent["architect"].repair_runs == ()

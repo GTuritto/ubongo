@@ -680,90 +680,70 @@ def _render_exec(cmd: str) -> str:
 
 
 def _render_trace(n: int = 1) -> str:
-    rows = store.last_n_workflow_runs(n)
-    if not rows:
+    traces = store.last_n_workflow_runs(n)
+    if not traces:
         return "No traces yet."
     blocks: list[str] = [f"Recent traces (last {n}):"]
-    for r in rows:
-        cls = r["classification"] or {}
-        wf = r["workflow"] or {}
-        agents = wf.get("agents") or []
-        gov = r["governance"]
+    for t in traces:
+        gov = t.governance
         header = (
-            f"--- workflow_run #{r['id']} "
-            f"(conv {r['conversation_id']}, msg {r['message_id']}) ---"
+            f"--- workflow_run #{t.id} "
+            f"(conv {t.conversation_id}, msg {t.message_id}) ---"
         )
         timing = (
-            f"started: {_format_time(r['started_at'])}  "
-            f"ended: {_format_time(r['ended_at'])}  "
-            f"outcome: {r['outcome']}"
+            f"started: {_format_time(t.started_at)}  "
+            f"ended: {_format_time(t.ended_at)}  "
+            f"outcome: {t.outcome}"
         )
         cls_line = (
             "classification: "
-            f"intent={cls.get('intent', '—')} "
-            f"tone={cls.get('tone', '—')} "
-            f"task_type={cls.get('task_type', '—')} "
-            f"risk={cls.get('risk', '—')} "
-            f"confidence={cls.get('confidence', '—')}"
+            f"intent={t.intent or '—'} "
+            f"tone={t.tone or '—'} "
+            f"task_type={t.task_type or '—'} "
+            f"risk={t.risk or '—'} "
+            f"confidence={t.cls_confidence if t.cls_confidence is not None else '—'}"
         )
         wf_line = (
             "workflow: "
-            f"persona={wf.get('persona', '—')} "
-            f"mode={r['execution_mode']} "
-            f"agents=[{','.join(agents)}]"
+            f"persona={t.persona or '—'} "
+            f"mode={t.execution_mode} "
+            f"agents=[{','.join(t.agents)}]"
         )
-        # Phase 13e: group repair_runs by the agent they apply to so each
-        # affected agent_run row gets indented repair lines beneath it.
-        repair_runs_by_agent: dict[str, list[dict]] = {}
-        for rr in r.get("repair_runs", []) or []:
-            repair_runs_by_agent.setdefault(rr["agent"], []).append(rr)
-
+        # The store has already grouped repair attempts under the failing
+        # agent_run they apply to; we just render each row and its repairs.
         agent_lines = ["agents:"]
-        if not r["agent_runs"]:
+        if not t.agent_runs:
             agent_lines.append("  (no agent runs)")
-        # Track which agent names have had their repair lines printed so we
-        # only attach them under the FAILING agent_runs row (the original
-        # failure), not under the peer's success row.
-        printed_repairs: set[str] = set()
-        for ar in r["agent_runs"]:
-            name = (ar["agent"] or "—")[:14]
-            model = (ar["model"] or "—")[:30]
-            outcome = ar["outcome"]
-            tin = ar["tokens_in"] or 0
-            tout = ar["tokens_out"] or 0
-            latency = ar["latency_ms"] if ar["latency_ms"] is not None else 0
-            conf = "—" if ar["confidence"] is None else f"{ar['confidence']:.2f}"
-            err_suffix = f"  err={ar['error']}" if ar.get("error") else ""
-            retry_suffix = "  (retried)" if ar.get("retried") else ""
+        for ar in t.agent_runs:
+            name = (ar.agent or "—")[:14]
+            model = (ar.model or "—")[:30]
+            tin = ar.tokens_in or 0
+            tout = ar.tokens_out or 0
+            latency = ar.latency_ms if ar.latency_ms is not None else 0
+            conf = "—" if ar.confidence is None else f"{ar.confidence:.2f}"
+            err_suffix = f"  err={ar.error}" if ar.error else ""
+            retry_suffix = "  (retried)" if ar.retried else ""
             agent_lines.append(
-                f"  {name:<14}  {model:<30}  {outcome:<8}  "
+                f"  {name:<14}  {model:<30}  {ar.outcome:<8}  "
                 f"{latency:>5}ms  in={tin}/out={tout}  conf={conf}{err_suffix}{retry_suffix}"
             )
-            # Inline repair_runs under the FAILED row for this agent.
-            agent_real_name = ar["agent"]
-            if (
-                outcome == "failure"
-                and agent_real_name in repair_runs_by_agent
-                and agent_real_name not in printed_repairs
-            ):
-                for rr in repair_runs_by_agent[agent_real_name]:
-                    repair_line = (
-                        f"    repair: kind={rr['failure_kind']}  "
-                        f"strategy={rr['strategy_attempted']}  "
-                        f"outcome={rr['outcome']}"
-                    )
-                    if rr.get("peer_agent"):
-                        repair_line += f"  peer={rr['peer_agent']}"
-                    if rr.get("override_model"):
-                        repair_line += f"  model={rr['override_model'][:24]}"
-                    agent_lines.append(repair_line)
-                printed_repairs.add(agent_real_name)
+            for rr in ar.repair_runs:
+                repair_line = (
+                    f"    repair: kind={rr.failure_kind}  "
+                    f"strategy={rr.strategy_attempted}  "
+                    f"outcome={rr.outcome}"
+                )
+                if rr.peer_agent:
+                    repair_line += f"  peer={rr.peer_agent}"
+                if rr.override_model:
+                    repair_line += f"  model={rr.override_model[:24]}"
+                agent_lines.append(repair_line)
         if gov:
-            conf = "—" if gov["confidence"] is None else f"{gov['confidence']:.2f}"
+            conf = "—" if gov.confidence is None else f"{gov.confidence:.2f}"
             gov_line = (
-                f"governance: action={gov['action']}  conf={conf}  "
-                f"intent={gov.get('intent') or '—'}  risk={gov.get('risk') or '—'}  "
-                f"rev={gov.get('reversibility') or '—'}"
+                f"governance: action={gov.action}  conf={conf}  "
+                f"intent={gov.intent or '—'}  risk={gov.risk or '—'}  "
+                f"rev={gov.reversibility or '—'}"
             )
         else:
             gov_line = "governance: (no decision)"

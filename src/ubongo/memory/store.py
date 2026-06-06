@@ -868,18 +868,24 @@ def last_n_governance_decisions(n: int = 10) -> list[dict]:
     return out
 
 
-def last_n_workflow_runs(n: int = 1) -> list[dict]:
-    """Return the last N workflow_runs joined with their agent_runs and the
-    governance_decision for each. Used by the /trace REPL command (Phase 10).
+def last_n_workflow_runs(n: int = 1) -> list["WorkflowTrace"]:
+    """Return the last N workflow runs as typed, render-ready WorkflowTrace
+    views. Used by the /trace REPL command.
 
-    Each dict carries:
-      id, conversation_id, message_id, classification (parsed JSON),
-      workflow (parsed JSON), execution_mode, outcome, started_at, ended_at,
-      agent_runs: list of {agent, model, confidence, tokens_in, tokens_out,
-                            latency_ms, outcome, started_at, ended_at, error},
-      governance: {id, action, reason, confidence, intent, risk} | None
+    The store owns the join (workflow_runs + agent_runs + governance_decisions +
+    repair_runs) *and* the grouping: each repair attempt is attached to the
+    failing agent_run it applies to (the first failure row for that agent), so
+    the renderer reads fields instead of regrouping repair_runs by hand
+    (candidate 03 of the 2026-06-05 architecture review). See memory/trace.py.
     """
     import json as _json
+
+    from ubongo.memory.trace import (
+        AgentRunView,
+        GovernanceView,
+        RepairRunView,
+        WorkflowTrace,
+    )
 
     if n <= 0:
         return []
@@ -930,56 +936,44 @@ def last_n_workflow_runs(n: int = 1) -> list[dict]:
         wf_ids,
     ).fetchall()
 
-    ar_by_wf: dict[int, list[dict]] = {wf_id: [] for wf_id in wf_ids}
+    # Raw agent_runs per workflow (order preserved by the query's ORDER BY id);
+    # turned into AgentRunViews in the build loop below.
+    ar_by_wf: dict[int, list] = {wf_id: [] for wf_id in wf_ids}
     for row in ar_rows:
-        err = None
-        try:
-            out_json = _json.loads(row["output"]) if row["output"] else {}
-            err = out_json.get("error")
-        except Exception:
-            err = None
-        ar_by_wf.setdefault(row["workflow_run_id"], []).append({
-            "agent": row["agent"],
-            "model": row["model"],
-            "confidence": row["confidence"],
-            "tokens_in": row["tokens_in"],
-            "tokens_out": row["tokens_out"],
-            "latency_ms": row["latency_ms"],
-            "outcome": row["outcome"],
-            "started_at": row["started_at"],
-            "ended_at": row["ended_at"],
-            "error": err,
-            "retried": bool(row["retried"]),
-        })
+        ar_by_wf.setdefault(row["workflow_run_id"], []).append(row)
 
-    gd_by_wf: dict[int, dict] = {}
+    gd_by_wf: dict[int, GovernanceView] = {}
     for row in gd_rows:
-        gd_by_wf[row["workflow_run_id"]] = {
-            "id": row["id"],
-            "action": row["action"],
-            "confidence": row["confidence"],
-            "intent": row["intent"],
-            "risk": row["risk"],
-            "reversibility": row["reversibility"],
-        }
+        gd_by_wf[row["workflow_run_id"]] = GovernanceView(
+            id=row["id"],
+            action=row["action"],
+            confidence=row["confidence"],
+            intent=row["intent"],
+            risk=row["risk"],
+            reversibility=row["reversibility"],
+        )
 
-    rr_by_wf: dict[int, list[dict]] = {wf_id: [] for wf_id in wf_ids}
+    # Repair attempts grouped by (workflow, agent) so each can be attached to
+    # the failing agent_run it applies to.
+    rr_by_wf_agent: dict[int, dict[str, list[RepairRunView]]] = {}
     for row in rr_rows:
-        rr_by_wf.setdefault(row["workflow_run_id"], []).append({
-            "id": row["id"],
-            "agent": row["agent"],
-            "failure_kind": row["failure_kind"],
-            "original_error": row["original_error"],
-            "strategy_attempted": row["strategy_attempted"],
-            "peer_agent": row["peer_agent"],
-            "override_model": row["override_model"],
-            "attempt_index": row["attempt_index"],
-            "outcome": row["outcome"],
-            "started_at": row["started_at"],
-            "ended_at": row["ended_at"],
-        })
+        rv = RepairRunView(
+            agent=row["agent"],
+            failure_kind=row["failure_kind"],
+            original_error=row["original_error"],
+            strategy_attempted=row["strategy_attempted"],
+            peer_agent=row["peer_agent"],
+            override_model=row["override_model"],
+            attempt_index=row["attempt_index"],
+            outcome=row["outcome"],
+            started_at=row["started_at"],
+            ended_at=row["ended_at"],
+        )
+        rr_by_wf_agent.setdefault(row["workflow_run_id"], {}).setdefault(
+            row["agent"], []
+        ).append(rv)
 
-    out: list[dict] = []
+    out: list[WorkflowTrace] = []
     for row in wf_rows:
         try:
             cls = _json.loads(row["classification"]) if row["classification"] else {}
@@ -989,20 +983,57 @@ def last_n_workflow_runs(n: int = 1) -> list[dict]:
             wf = _json.loads(row["workflow"]) if row["workflow"] else {}
         except Exception:
             wf = {}
-        out.append({
-            "id": row["id"],
-            "conversation_id": row["conversation_id"],
-            "message_id": row["message_id"],
-            "classification": cls,
-            "workflow": wf,
-            "execution_mode": row["execution_mode"],
-            "outcome": row["outcome"],
-            "started_at": row["started_at"],
-            "ended_at": row["ended_at"],
-            "agent_runs": ar_by_wf.get(row["id"], []),
-            "governance": gd_by_wf.get(row["id"]),
-            "repair_runs": rr_by_wf.get(row["id"], []),
-        })
+
+        repairs_for_agent = rr_by_wf_agent.get(row["id"], {})
+        attached: set[str] = set()
+        agent_views: list[AgentRunView] = []
+        for ar in ar_by_wf.get(row["id"], []):
+            err = None
+            try:
+                out_json = _json.loads(ar["output"]) if ar["output"] else {}
+                err = out_json.get("error")
+            except Exception:
+                err = None
+            # Attach this agent's repair attempts under its FIRST failure row,
+            # not under a peer's later success row (the grouping the /trace
+            # renderer used to do inline).
+            agent_name = ar["agent"]
+            repair_runs: tuple[RepairRunView, ...] = ()
+            if (
+                ar["outcome"] == "failure"
+                and agent_name in repairs_for_agent
+                and agent_name not in attached
+            ):
+                repair_runs = tuple(repairs_for_agent[agent_name])
+                attached.add(agent_name)
+            agent_views.append(AgentRunView(
+                agent=agent_name,
+                model=ar["model"],
+                confidence=ar["confidence"],
+                tokens_in=ar["tokens_in"],
+                tokens_out=ar["tokens_out"],
+                latency_ms=ar["latency_ms"],
+                outcome=ar["outcome"],
+                started_at=ar["started_at"],
+                ended_at=ar["ended_at"],
+                error=err,
+                retried=bool(ar["retried"]),
+                repair_runs=repair_runs,
+            ))
+
+        out.append(WorkflowTrace(
+            id=row["id"],
+            conversation_id=row["conversation_id"],
+            message_id=row["message_id"],
+            classification=cls,
+            workflow=wf,
+            execution_mode=row["execution_mode"],
+            outcome=row["outcome"],
+            started_at=row["started_at"],
+            ended_at=row["ended_at"],
+            agent_runs=tuple(agent_views),
+            governance=gd_by_wf.get(row["id"]),
+        ))
     return out
 
 
