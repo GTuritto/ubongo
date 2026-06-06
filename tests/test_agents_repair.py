@@ -343,3 +343,180 @@ def test_run_is_a_no_op_returning_ok():
     result = agent.run(_input(), context=None)
     assert result.ok is True
     assert result.text == ""
+
+
+# ---------- recover(): the candidate-01 recovery loop driven directly ----------
+#
+# These exercise RepairAgent.recover() with fake dispatch / persist / clock —
+# no WorkflowRunner fixture. That standalone testability is the candidate-01
+# win: the recovery ladder lives in repair.py and is tested past one interface.
+
+import asyncio  # noqa: E402
+
+from ubongo.agents.repair import (  # noqa: E402
+    RecoveryOutcome,
+    RecoveryScope,
+    RepairAttempt,
+)
+
+
+class _Scripted(RepairAgent):
+    """RepairAgent whose plan_recovery is scripted, so recover()'s loop runs
+    against a deterministic ladder. Skips config-driven _materialize_plan."""
+
+    def __init__(self, plans, max_attempts=3):
+        self.max_attempts = max_attempts
+        self._plans = list(plans)
+        # Each entry: (attempts_so_far_len, original_error_seen)
+        self.plan_calls: list[tuple[int, str | None]] = []
+
+    def plan_recovery(self, *, failed_agent, original, attempts_so_far):
+        self.plan_calls.append((len(attempts_so_far), original.error))
+        if self._plans:
+            return self._plans.pop(0)
+        return RecoveryPlan(strategy=Strategy.ABORT, reason="exhausted")
+
+
+class _Dispatch:
+    """Fake dispatch: returns the next scripted value per call (an AgentResult
+    or None for 'could not execute'), recording the plan it received."""
+
+    def __init__(self, returns):
+        self._returns = list(returns)
+        self.plans: list[RecoveryPlan] = []
+
+    async def __call__(self, plan):
+        self.plans.append(plan)
+        return self._returns.pop(0)
+
+
+def _ok(text="ok"):
+    return AgentResult(text=text, ok=True, model="m", tokens_in=1, tokens_out=1, latency_ms=1)
+
+
+def _run_recover(agent, *, original, allow, dispatch):
+    """Drive the async recover() synchronously, collecting persisted attempts."""
+    rows: list[RepairAttempt] = []
+    ticks = iter(f"t{i}" for i in range(100))
+    outcome = asyncio.run(agent.recover(
+        agent_name="architect",
+        original=original,
+        allow=allow,
+        dispatch=dispatch,
+        persist=rows.append,
+        clock=lambda: next(ticks),
+    ))
+    return outcome, rows
+
+
+def test_recover_ladder_retries_until_recovered():
+    agent = _Scripted(plans=[
+        RecoveryPlan(strategy=Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT, override_model="fb"),
+        RecoveryPlan(strategy=Strategy.RETRY_SMALLER_MODEL_SHORTER_PROMPT, override_model="sm"),
+    ])
+    dispatch = _Dispatch(returns=[_failed_result("persona_llm_error"), _ok("recovered")])
+    outcome, rows = _run_recover(
+        agent, original=_failed_result("persona_llm_error"),
+        allow=RecoveryScope.LADDER, dispatch=dispatch,
+    )
+    assert isinstance(outcome, RecoveryOutcome)
+    assert outcome.result.ok and outcome.result.text == "recovered"
+    assert outcome.peer_agent is None
+    assert [r.outcome for r in rows] == ["failed", "recovered"]
+    assert [r.attempt_index for r in rows] == [0, 1]
+    assert [r.override_model for r in rows] == ["fb", "sm"]
+    # Two dispatched attempts, both against the original agent (override only).
+    assert [p.override_model for p in dispatch.plans] == ["fb", "sm"]
+
+
+def test_recover_ladder_exhaustion_persists_single_abort_row():
+    agent = _Scripted(plans=[])  # plan_recovery returns ABORT immediately
+    dispatch = _Dispatch(returns=[])  # never called
+    outcome, rows = _run_recover(
+        agent, original=_failed_result("persona_llm_error"),
+        allow=RecoveryScope.LADDER, dispatch=dispatch,
+    )
+    assert outcome.result.error == "persona_llm_error"  # original returned
+    assert outcome.peer_agent is None
+    assert dispatch.plans == []  # no attempt dispatched
+    assert len(rows) == 1
+    assert rows[0].outcome == "aborted" and rows[0].attempt_index == 0
+
+
+def test_recover_ladder_peer_hop_recovers():
+    agent = _Scripted(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="research"),
+    ])
+    dispatch = _Dispatch(returns=[_ok("peer answer")])
+    outcome, rows = _run_recover(
+        agent, original=_failed_result("evaluator_parse_error"),
+        allow=RecoveryScope.LADDER, dispatch=dispatch,
+    )
+    assert outcome.result.text == "peer answer"
+    assert outcome.peer_agent == "research"
+    assert rows[0].outcome == "recovered" and rows[0].peer_agent == "research"
+    assert dispatch.plans[0].peer_agent == "research"
+
+
+def test_recover_peer_not_registered_persists_failed_and_stops():
+    agent = _Scripted(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="ghost"),
+        # A trailing rung that must NOT be reached once dispatch signals None.
+        RecoveryPlan(strategy=Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT, override_model="fb"),
+    ])
+    dispatch = _Dispatch(returns=[None])  # peer named but not registered
+    outcome, rows = _run_recover(
+        agent, original=_failed_result("evaluator_parse_error"),
+        allow=RecoveryScope.LADDER, dispatch=dispatch,
+    )
+    assert outcome.peer_agent is None
+    assert outcome.result.error == "evaluator_parse_error"  # original
+    assert len(rows) == 1
+    assert rows[0].outcome == "failed" and rows[0].peer_agent == "ghost"
+    assert len(dispatch.plans) == 1  # stopped; second rung never dispatched
+
+
+def test_recover_classifies_against_original_after_peer_failure():
+    # Peer fails, then a same-agent retry recovers. plan_recovery must keep
+    # seeing the ORIGINAL error both times (not the peer's).
+    agent = _Scripted(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="research"),
+        RecoveryPlan(strategy=Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT, override_model="fb"),
+    ])
+    dispatch = _Dispatch(returns=[_failed_result("research_llm_error"), _ok("retry win")])
+    outcome, rows = _run_recover(
+        agent, original=_failed_result("evaluator_parse_error"),
+        allow=RecoveryScope.LADDER, dispatch=dispatch,
+    )
+    assert outcome.result.text == "retry win"
+    # Both plan_recovery calls saw the original error, not "research_llm_error".
+    assert [err for _, err in agent.plan_calls] == ["evaluator_parse_error", "evaluator_parse_error"]
+    assert [r.outcome for r in rows] == ["failed", "recovered"]
+
+
+def test_recover_peer_only_single_hop():
+    agent = _Scripted(plans=[
+        RecoveryPlan(strategy=Strategy.REPLACE_WITH_PEER, peer_agent="research"),
+    ])
+    dispatch = _Dispatch(returns=[_ok("peer answer")])
+    outcome, rows = _run_recover(
+        agent, original=_failed_result("critic_no_candidate"),
+        allow=RecoveryScope.PEER_ONLY, dispatch=dispatch,
+    )
+    assert outcome.peer_agent == "research" and outcome.result.text == "peer answer"
+    assert agent.plan_calls == [(0, "critic_no_candidate")]  # asked once, attempts=()
+    assert len(rows) == 1 and rows[0].attempt_index == 0
+
+
+def test_recover_peer_only_noop_when_first_plan_is_not_peer():
+    agent = _Scripted(plans=[
+        RecoveryPlan(strategy=Strategy.RETRY_DIFFERENT_MODEL_SAME_PROMPT, override_model="fb"),
+    ])
+    dispatch = _Dispatch(returns=[])  # must not be called
+    outcome, rows = _run_recover(
+        agent, original=_failed_result("persona_llm_error"),
+        allow=RecoveryScope.PEER_ONLY, dispatch=dispatch,
+    )
+    assert outcome.peer_agent is None
+    assert outcome.result.error == "persona_llm_error"
+    assert dispatch.plans == [] and rows == []  # no dispatch, no audit row
