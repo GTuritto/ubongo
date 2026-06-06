@@ -182,6 +182,6 @@ def test_last_n_workflow_runs_orders_desc_and_joins_agent_runs():
     first = _seed_trace_row()
     second = _seed_trace_row()
     rows = store.last_n_workflow_runs(2)
-    assert [r["id"] for r in rows] == [second, first]
-    assert len(rows[0]["agent_runs"]) == 2
-    assert rows[0]["governance"]["action"] == "auto"
+    assert [r.id for r in rows] == [second, first]
+    assert len(rows[0].agent_runs) == 2
+    assert rows[0].governance.action == "auto"
