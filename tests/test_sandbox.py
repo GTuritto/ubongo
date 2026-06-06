@@ -65,6 +65,14 @@ def test_etc_path_is_refused():
         run_constrained("cat /etc/passwd")
 
 
+def test_absolute_path_after_equals_is_refused():
+    # An absolute path on the right of '=' (e.g. --output=/abs) must be caught,
+    # not just a bare absolute-path token. /tmp is outside the repo sandbox and
+    # not in the fragment blacklist, so this exercises the '=' split path.
+    with pytest.raises(SandboxRefused, match="resolves outside the repo sandbox"):
+        run_constrained("echo --output=/tmp/evil.txt")
+
+
 def test_home_tilde_is_refused():
     with pytest.raises(SandboxRefused, match="home-dir"):
         run_constrained("ls ~")
