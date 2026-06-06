@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING
 
 from ubongo import events
 from ubongo.agents.base import Agent, AgentInput, AgentResult
-from ubongo.agents.repair import RecoveryScope
 from ubongo.memory import store
 
 if TYPE_CHECKING:
@@ -314,7 +313,7 @@ class WorkflowRunner:
         agent=None,
         agent_name: str,
         original_result: AgentResult,
-        scope: RecoveryScope,
+        scope: str,
         message: str,
         history: list,
         summary_text: str | None,
@@ -328,10 +327,19 @@ class WorkflowRunner:
         Carries no recovery taxonomy: it only knows how to run one attempt
         (dispatch a peer, or re-dispatch the original agent with the plan's
         overrides) and how to persist one repair_runs row. Repair owns the
-        ladder, the Strategy enum, and the give-up decision. `scope` selects
-        LADDER (sequential full ladder) or PEER_ONLY (single fan-out hop).
+        ladder, the Strategy enum, and the give-up decision. `scope` is a plain
+        string — "ladder" (sequential full ladder) or "peer_only" (single
+        fan-out hop) — kept stringly so the runner module never imports the
+        repair taxonomy at load time (that would eagerly build the repair
+        singleton and validate config before __main__'s error guard runs).
         """
-        from ubongo.agents.repair import RecoveryOutcome, RepairAttempt
+        from ubongo.agents.repair import (
+            RecoveryOutcome,
+            RecoveryScope,
+            RepairAttempt,
+        )
+
+        allow = RecoveryScope.LADDER if scope == "ladder" else RecoveryScope.PEER_ONLY
 
         repair = self.registry.get("repair")
         if repair is None or not hasattr(repair, "recover"):
@@ -397,7 +405,7 @@ class WorkflowRunner:
         return await repair.recover(
             agent_name=agent_name,
             original=original_result,
-            allow=scope,
+            allow=allow,
             dispatch=dispatch,
             persist=persist,
             clock=store.now_iso,
@@ -454,7 +462,7 @@ class WorkflowRunner:
                     agent=agent,
                     agent_name=agent_name,
                     original_result=result,
-                    scope=RecoveryScope.LADDER,
+                    scope="ladder",
                     message=message,
                     history=history,
                     summary_text=summary_text,
@@ -541,7 +549,7 @@ class WorkflowRunner:
             outcome = await self._run_recovery(
                 agent_name=name,
                 original_result=result,
-                scope=RecoveryScope.PEER_ONLY,
+                scope="peer_only",
                 message=message,
                 history=history,
                 summary_text=summary_text,
@@ -651,7 +659,7 @@ class WorkflowRunner:
             outcome = await self._run_recovery(
                 agent_name=name,
                 original_result=result,
-                scope=RecoveryScope.PEER_ONLY,
+                scope="peer_only",
                 message=message,
                 history=history,
                 summary_text=summary_text,
@@ -798,7 +806,7 @@ class WorkflowRunner:
             outcome = await self._run_recovery(
                 agent_name=name,
                 original_result=result,
-                scope=RecoveryScope.PEER_ONLY,
+                scope="peer_only",
                 message=message,
                 history=history,
                 summary_text=summary_text,
@@ -939,7 +947,7 @@ class WorkflowRunner:
                     outcome = await self._run_recovery(
                         agent_name=actual,
                         original_result=result,
-                        scope=RecoveryScope.PEER_ONLY,
+                        scope="peer_only",
                         message=message,
                         history=history,
                         summary_text=summary_text,
@@ -1074,7 +1082,7 @@ class WorkflowRunner:
             outcome = await self._run_recovery(
                 agent_name=cheap_name,
                 original_result=cheap_result,
-                scope=RecoveryScope.PEER_ONLY,
+                scope="peer_only",
                 message=message,
                 history=history,
                 summary_text=summary_text,
