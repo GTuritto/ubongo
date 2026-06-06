@@ -346,31 +346,25 @@ def _run_workflow_isolated(agent_names, message: str, *, persona: str) -> tuple[
     config evaluator judges."""
     from ubongo import runner
     from ubongo.agents.base import AgentInput
+    from ubongo.invoke import SequentialHarvest, resolve_agents
     from ubongo.master import Context
 
     registry = runner.default_registry()
     ctx = Context(conversation_id=None, persona=persona, auto_mode=False, pending_skill=None)
-    prior: list[str] = []
-    composer_text = ""
-    tokens = 0
-    for name in agent_names:
-        if name == "repair":
-            continue
-        agent = registry.get(name)
-        if agent is None:
-            continue
+    # The same prior-threading + composer-pick harvest the runner's sequential
+    # mode uses, so this isolated executor cannot drift from it. Dispatch is the
+    # only difference: bare agent.run here vs the side-effectful runner path.
+    harvest = SequentialHarvest()
+    for _name, agent in resolve_agents(registry, agent_names):
         inp = AgentInput(message=message, history=(), summary_text=None,
-                         prior_findings=tuple(prior), metadata={})
+                         prior_findings=harvest.prior, metadata={})
         try:
             res = agent.run(inp, ctx)
         except Exception:  # an agent crash must not abort the eval
             continue
-        tokens += (res.tokens_in or 0) + (res.tokens_out or 0)
-        if res.ok and res.text:
-            prior.append(res.text)
-            if getattr(agent, "composer", False):
-                composer_text = res.text
-    return (composer_text or (prior[-1] if prior else "")), tokens
+        harvest.observe(agent, res)
+    out = harvest.outcome()
+    return out.composer_text, out.total_tokens
 
 
 def _score_config_sample(target: str, parsed: dict, sample: dict, *, judge_model: str) -> _SampleScore | None:
