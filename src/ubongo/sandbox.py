@@ -95,11 +95,17 @@ def _check_paths(argv: list[str]) -> None:
         # Phase 15c filesystem allowlist: an absolute-path argument must
         # resolve inside the repo tree. This catches absolute paths the
         # fragment blacklist does not know about (anything outside /etc, /var).
-        if token.startswith("/"):
-            resolved = Path(token).resolve()
+        # We also check the right side of an '=' to catch --arg=/path.
+        path_str = token
+        if "=" in token:
+            _, right = token.split("=", 1)
+            if right.startswith("/"):
+                path_str = right
+        if path_str.startswith("/"):
+            resolved = Path(path_str).resolve()
             if resolved != _REPO_ROOT and _REPO_ROOT not in resolved.parents:
                 raise SandboxRefused(
-                    f"absolute path {token!r} resolves outside the repo sandbox"
+                    f"absolute path {path_str!r} resolves outside the repo sandbox"
                 )
 
 
