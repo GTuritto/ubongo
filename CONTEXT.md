@@ -28,6 +28,12 @@ _Avoid_: strategy (bare), pipeline.
 The gate the Master Agent applies before composing: a matrix over `risk` / `confidence` / `reversibility` returning `auto` | `ask_clarification` | `require_approval` | `reject` (config in `governance.yaml`). `require_approval` becomes an interactive `y/n/why` prompt.
 _Avoid_: policy check, guardrail (bare).
 
+## CLI
+
+**Slash command / Command registry**:
+A **Slash command** is a REPL control or diagnostic input (`/trace`, `/mode`, `/evolution`, `/improvements`, …) — distinct from a **turn**, which is ordinary user text routed through the Master pipeline. Slash commands are dispatched over the **Command registry** seam (`ubongo.commands`: a `name → Command(handler, usage)` map; the loop looks up and runs the handler, instead of an inline branch per command). Handlers are pure — they take the command line plus the mutable `ReplState` and return text; the loop owns I/O. The help banner is derived from the registry. Persona switches (`/architect|operator|casual`), `/auto`, and `/exit` stay in `handle_slash` (their tuple contract is tested directly); the loop falls back to it for unregistered heads. Command output is delivered through `notification_queue` like any outbound message (ADR-0002), tagged `source="command"`.
+_Avoid_: command handler (bare), dispatcher (bare), REPL command (use "slash command").
+
 ## Self-improvement (genetic programming)
 
 **Evolvable Target** (and its **kind**):

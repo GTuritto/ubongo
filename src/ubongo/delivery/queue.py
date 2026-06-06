@@ -213,18 +213,36 @@ def flush_delivered(token: DeliveryToken) -> None:
         )
 
 
-def last_n(n: int = 10) -> list[QueueRow]:
+def last_n(n: int = 10, *, exclude_sources: tuple[str, ...] | None = None) -> list[QueueRow]:
+    """The most recent N queue rows, newest first. When `exclude_sources` is
+    given, rows with those sources don't count toward N — so /queue can hide
+    command-output rows (source="command") while still showing every assistant
+    turn, including rows with a NULL source. NULL-safe via COALESCE."""
     if n <= 0:
         return []
     conn = store.connection()
-    rows = conn.execute(
-        """
-        SELECT id, content, urgency, source, created_at,
-               deliver_after, delivered_at, expires_at, metadata
-        FROM notification_queue
-        ORDER BY created_at DESC, id DESC
-        LIMIT ?
-        """,
-        (n,),
-    ).fetchall()
+    if exclude_sources:
+        placeholders = ",".join("?" for _ in exclude_sources)
+        rows = conn.execute(
+            f"""
+            SELECT id, content, urgency, source, created_at,
+                   deliver_after, delivered_at, expires_at, metadata
+            FROM notification_queue
+            WHERE COALESCE(source, '') NOT IN ({placeholders})
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (*exclude_sources, n),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT id, content, urgency, source, created_at,
+                   deliver_after, delivered_at, expires_at, metadata
+            FROM notification_queue
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (n,),
+        ).fetchall()
     return [_row_to_queue(r) for r in rows]

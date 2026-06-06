@@ -11,6 +11,7 @@ Many agents run per turn and several could plausibly write durable state (messag
 
 - **The Memory Agent is the only writer** to durable memory. Other agents return Findings; the Memory Agent commits. Raw SQL lives in `memory/store.py`; audit/infra rows (workflow_runs, agent_runs, governance_decisions, repair_runs, evolution_*) are written directly through `store` by the runner/master, but user-facing durable memory goes through the Memory Agent.
 - **Every outbound message passes through `notification_queue`**, even synchronous CLI responses — enqueue, fire `before_send`, return a token; the caller prints, then `flush_delivered` fires `after_send` (vault projection) and marks delivered.
+  - **Scope (clarified 2026-06-06, candidate A):** this holds for assistant turns *and* slash-command output. Command output is enqueued via `repl.emit` with `source="command"` and `after_send_payload=None` (it crosses the seam so v0.2 transports inherit it, but does not trigger vault projection — only assistant turns project). `/queue` hides `source="command"` rows so its view stays the assistant-turn history. **Carve-out:** interactive prompts (the approval `y/n/why` prompt, the repair-retry `y/n` prompt) are synchronous request/response I/O on the turn path, not deliverable notifications, so they stay direct `input()`/`print()` and are exempt.
 - Commit-on-success: `master.handle` stages the assistant-message commit in a `workflow_buffer` and commits on `result.ok` or drops on failure, so a half-finished turn leaves no partial rows.
 
 ## Consequences

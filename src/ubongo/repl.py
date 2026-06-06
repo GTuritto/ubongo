@@ -3,8 +3,9 @@ from __future__ import annotations
 import logging
 import sys
 
-from ubongo import context, events, master, memory, runner, skills  # noqa: F401  -- memory registers handlers
+from ubongo import commands, context, events, master, memory, runner, skills  # noqa: F401  -- memory registers handlers
 from ubongo.agents import personas
+from ubongo.commands import Command, ReplState
 from ubongo.config import load_config
 from ubongo.context import build_system_prompt
 from ubongo.delivery import queue
@@ -21,54 +22,41 @@ SUMMARY_SKILL = "summarize-conversation"
 _BANNER = "Ubongo REPL ready. /exit to quit."
 _AUTO_ENABLED = "Auto routing enabled."
 _LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
-_HELP_COMMANDS = (
-    "Try /architect, /operator, /casual, /auto, /skill <name>, /skills, /summary, /queue, /decisions, /policy, /agents, /trace, /exec <cmd>, /mode <workflow>, /optimize <target>, /evaluate <target>, /evolution <status|pause|resume|off>, /improvements, /recall [query], /audit [category], /conflicts, /reload, /exit."
-)
+# _HELP_COMMANDS is derived from the COMMANDS registry near the bottom of this
+# module (single source of truth for which commands exist), once the registry and
+# the persona/exit fallbacks are both known.
+
+
+def _parse_int_arg(line: str, command: str, default: int) -> int | None:
+    """Shared parser for the `/<command> [N]` shape: returns N (default when
+    omitted), or None for a malformed/non-positive arg. The three int-arg
+    commands (/queue, /decisions, /trace) delegate here."""
+    raw = line.strip().lstrip("/")
+    parts = raw.split(maxsplit=1)
+    if parts[0].lower() != command:
+        return None
+    if len(parts) == 1:
+        return default
+    try:
+        n = int(parts[1].strip())
+    except ValueError:
+        return None
+    return n if n > 0 else None
 
 
 def _parse_queue_command(line: str) -> int | None:
     """Returns N from `/queue [N]`. Defaults to 10; returns None for malformed args."""
-    raw = line.strip().lstrip("/")
-    parts = raw.split(maxsplit=1)
-    if parts[0].lower() != "queue":
-        return None
-    if len(parts) == 1:
-        return 10
-    try:
-        n = int(parts[1].strip())
-    except ValueError:
-        return None
-    return n if n > 0 else None
+    return _parse_int_arg(line, "queue", 10)
 
 
 def _parse_decisions_command(line: str) -> int | None:
     """Returns N from `/decisions [N]`. Defaults to 10; returns None for malformed args."""
-    raw = line.strip().lstrip("/")
-    parts = raw.split(maxsplit=1)
-    if parts[0].lower() != "decisions":
-        return None
-    if len(parts) == 1:
-        return 10
-    try:
-        n = int(parts[1].strip())
-    except ValueError:
-        return None
-    return n if n > 0 else None
+    return _parse_int_arg(line, "decisions", 10)
 
 
 def _parse_trace_command(line: str) -> int | None:
     """Returns N from `/trace [N]`. Defaults to 1; returns None for malformed args."""
-    raw = line.strip().lstrip("/")
-    parts = raw.split(maxsplit=1)
-    if parts[0].lower() != "trace":
-        return None
-    if len(parts) == 1:
-        return 1
-    try:
-        n = int(parts[1].strip())
-    except ValueError:
-        return None
-    return n if n > 0 else None
+    return _parse_int_arg(line, "trace", 1)
 
 
 def _parse_exec_command(line: str) -> str | None:
@@ -113,7 +101,9 @@ def _format_time(ts: str | None) -> str:
 
 
 def _render_queue_table(n: int = 10) -> str:
-    rows = queue.last_n(n)
+    # Hide command-output rows (source="command", now queued per ADR-0002) so the
+    # view stays the assistant-turn history it has always been.
+    rows = queue.last_n(n, exclude_sources=("command",))
     if not rows:
         return "Queue is empty."
     lines = [f"Recent queue (last {n}):"]
@@ -222,37 +212,25 @@ def _render_optimize_targets() -> str:
 
 
 def _render_optimize(target: str) -> str:
-    """Generate, persist, and render variants for one target (Phase 16d).
-
-    A direct tool like /exec: no master.handle, no governance, no enqueue. The
-    variants are written to evolution_lineage and previewed here.
-    """
-    from ubongo.config import load_evolution
-    from ubongo.evolution import generator, lineage
+    """Render variants for one target. The generate+persist business logic lives
+    in ubongo.evolution.manual; this only formats the result (Phase 16d)."""
+    from ubongo.evolution import manual
     from ubongo.evolution.targets import UnknownTargetError
 
     try:
-        n = int(load_evolution().get("population_size", 8))
-    except (TypeError, ValueError):
-        n = 8
-
-    try:
-        variants = generator.generate(target, n)
+        out = manual.generate_variants(target)
     except UnknownTargetError:
         return f"Unknown target: {target}.\n{_render_optimize_targets()}"
 
-    if not variants:
+    if not out.variants:
         return f"No variants generated for {target} (generator produced none)."
 
-    ids = lineage.record_variants(target, variants)
-    generation = lineage.next_generation(target) - 1  # record_variants just used this
-
     header = (
-        f"{len(variants)} variant(s) for {target}, generation {generation} "
-        f"(requested {n})."
+        f"{len(out.variants)} variant(s) for {out.target}, generation {out.generation} "
+        f"(requested {out.requested})."
     )
     lines = [header]
-    for idx, (variant, row_id) in enumerate(zip(variants, ids), start=1):
+    for idx, (variant, row_id) in enumerate(zip(out.variants, out.ids), start=1):
         preview = " ".join(variant.text.split())
         if len(preview) > 100:
             preview = preview[:97] + "..."
@@ -295,32 +273,21 @@ def _render_evaluate_targets() -> str:
 
 
 def _render_evaluate(target: str) -> str:
-    """Score a target's latest generation, persist evaluations, render the
-    fitness leaderboard (Phase 17e).
-
-    A direct tool like /optimize: no master.handle, no governance, no enqueue.
-    The sandbox harness has no side effects; only evolution_evaluations rows
-    are written here, after fitness is computed across the cohort.
-    """
-    from ubongo.evolution import loop, sandbox
-    from ubongo.evolution.targets import UnknownTargetError, is_target
-    from ubongo.memory import store
-
-    if not is_target(target):
-        return f"Unknown target: {target}.\n{_render_evaluate_targets()}"
-
-    generation = store.max_lineage_generation(target)
-    if generation == 0:
-        return f"No variants for {target}. Run /optimize {target} first."
-
-    variant_rows = store.lineage_for_target(target, generation=generation)
-    strategy_by_id = {r["id"]: (r["variant_metadata"] or {}).get("strategy") for r in variant_rows}
+    """Render the fitness leaderboard for a target's latest generation. The
+    score+persist business logic lives in ubongo.evolution.manual; this only
+    formats the result (Phase 17e)."""
+    from ubongo.evolution import manual
+    from ubongo.evolution.targets import UnknownTargetError
 
     try:
-        result = sandbox.evaluate_target(variant_rows, target)
+        out = manual.score_latest_generation(target)
     except UnknownTargetError:
         return f"Unknown target: {target}.\n{_render_evaluate_targets()}"
+    except manual.NoVariantsError:
+        return f"No variants for {target}. Run /optimize {target} first."
 
+    result = out.result
+    generation = out.generation
     if not result.cohort:
         return (
             f"No variants evaluated for {target} (call budget exhausted before "
@@ -328,16 +295,14 @@ def _render_evaluate(target: str) -> str:
             f"{result.skipped}/{result.total_variants} skipped."
         )
 
-    ranked = loop.persist_cohort_evaluations(result)
-
     header = (
         f"Leaderboard for {target}, generation {generation} "
         f"(sample_set={result.sample_set_version}; "
         f"{result.evaluated}/{result.total_variants} scored, {result.skipped} skipped):"
     )
     lines = [header]
-    for rank, (metrics, fit) in enumerate(ranked, start=1):
-        strat = strategy_by_id.get(metrics.lineage_id) or "?"
+    for rank, (metrics, fit) in enumerate(out.ranked, start=1):
+        strat = out.strategy_by_id.get(metrics.lineage_id) or "?"
         lines.append(
             f"  {rank}. #{metrics.lineage_id} {strat:<20} "
             f"fitness={fit:.3f}  "
@@ -870,6 +835,171 @@ def handle_slash(line: str, current_persona: str) -> tuple[str, bool, str, bool 
     return current_persona, True, f"Unknown command: /{cmd}. {_HELP_COMMANDS}", None
 
 
+# ---------- command registry (the seam the loop dispatches over) ----------
+#
+# Each handler takes the full command line + the mutable ReplState and returns
+# the text to emit (or None). Handlers are pure — the loop owns I/O (emit routes
+# through the notification queue). Adding a command = a handler + a registry
+# entry, not an edit to _repl_loop. persona/auto/exit stay in handle_slash (their
+# 4-tuple contract is exercised directly by tests); the loop falls back to it when
+# a head isn't registered.
+
+def _cmd_summary(line: str, state: ReplState) -> str | None:
+    return _run_summary()
+
+
+def _cmd_skills(line: str, state: ReplState) -> str | None:
+    return _render_skills_table()
+
+
+def _cmd_queue(line: str, state: ReplState) -> str | None:
+    n = _parse_queue_command(line)
+    return f"Usage: /queue [N]. {_HELP_COMMANDS}" if n is None else _render_queue_table(n)
+
+
+def _cmd_decisions(line: str, state: ReplState) -> str | None:
+    n = _parse_decisions_command(line)
+    return f"Usage: /decisions [N]. {_HELP_COMMANDS}" if n is None else _render_decisions_table(n)
+
+
+def _cmd_policy(line: str, state: ReplState) -> str | None:
+    return _render_policy()
+
+
+def _cmd_agents(line: str, state: ReplState) -> str | None:
+    return _render_agents_table()
+
+
+def _cmd_trace(line: str, state: ReplState) -> str | None:
+    n = _parse_trace_command(line)
+    return f"Usage: /trace [N]. {_HELP_COMMANDS}" if n is None else _render_trace(n)
+
+
+def _cmd_exec(line: str, state: ReplState) -> str | None:
+    cmd = _parse_exec_command(line)
+    return f"Usage: /exec <cmd>. {_HELP_COMMANDS}" if cmd is None else _render_exec(cmd)
+
+
+def _cmd_mode(line: str, state: ReplState) -> str | None:
+    from ubongo import router as _router
+    arg = _parse_mode_command(line)
+    if arg is None:
+        return f"Usage: /mode <workflow_name> | /mode list. {_HELP_COMMANDS}"
+    if arg == _MODE_LIST_SENTINEL:
+        return _render_mode_list()
+    if arg not in _router.workflow_names():
+        return f"Unknown workflow: {arg}."
+    state.pending_workflow = arg
+    return f"Next turn will use workflow: {arg}."
+
+
+def _cmd_optimize(line: str, state: ReplState) -> str | None:
+    arg = _parse_optimize_command(line)
+    if arg is None or arg == _OPTIMIZE_LIST_SENTINEL:
+        return _render_optimize_targets()
+    return _render_optimize(arg)
+
+
+def _cmd_evaluate(line: str, state: ReplState) -> str | None:
+    arg = _parse_evaluate_command(line)
+    if arg is None or arg == _EVALUATE_LIST_SENTINEL:
+        return _render_evaluate_targets()
+    return _render_evaluate(arg)
+
+
+def _cmd_evolution(line: str, state: ReplState) -> str | None:
+    sub = _parse_evolution_command(line)
+    if sub is None or sub == "status":
+        return _render_evolution_status()
+    if sub in ("pause", "resume", "off"):
+        return _render_evolution_control(sub)
+    return f"Unknown subcommand: {sub}. Usage: /evolution status|pause|resume|off."
+
+
+def _cmd_recall(line: str, state: ReplState) -> str | None:
+    q = _parse_recall_command(line)
+    return _render_recall(q or "")
+
+
+def _cmd_audit(line: str, state: ReplState) -> str | None:
+    parsed = _parse_audit_command(line)
+    cat, n = parsed if parsed else (None, 20)
+    return _render_audit(cat, n)
+
+
+def _cmd_conflicts(line: str, state: ReplState) -> str | None:
+    parsed = _parse_conflicts_command(line)
+    if parsed is None or parsed[0] == "list":
+        return _render_conflicts_list()
+    if parsed[0] == "usage":
+        return "Usage: /conflicts [resolve <id> <keep-mine|keep-theirs|merge>]."
+    return _render_conflicts_resolve(parsed[1], parsed[2])
+
+
+def _cmd_improvements(line: str, state: ReplState) -> str | None:
+    parsed = _parse_improvements_command(line)
+    if parsed is None or parsed[0] == "list":
+        return _render_improvements_list()
+    if parsed[0] == "usage":
+        return "Usage: /improvements [approve <id> | reject <id> | rollback <target>]."
+    return _render_improvements_action(parsed[0], parsed[1])
+
+
+def _cmd_reload(line: str, state: ReplState) -> str | None:
+    return _reload_all()
+
+
+def _cmd_skill(line: str, state: ReplState) -> str | None:
+    requested = _parse_skill_command(line)
+    if not requested:
+        return f"Usage: /skill <name>. {_HELP_COMMANDS}"
+    if not skills.has(requested):
+        return f"Unknown skill: {requested}."
+    state.pending_skill = requested
+    return f"Next turn will use skill: {requested}."
+
+
+COMMANDS: dict[str, Command] = {
+    "skill":        Command(_cmd_skill, "/skill <name>"),
+    "skills":       Command(_cmd_skills, "/skills"),
+    "summary":      Command(_cmd_summary, "/summary"),
+    "queue":        Command(_cmd_queue, "/queue [N]"),
+    "decisions":    Command(_cmd_decisions, "/decisions [N]"),
+    "policy":       Command(_cmd_policy, "/policy"),
+    "agents":       Command(_cmd_agents, "/agents"),
+    "trace":        Command(_cmd_trace, "/trace [N]"),
+    "exec":         Command(_cmd_exec, "/exec <cmd>"),
+    "mode":         Command(_cmd_mode, "/mode <workflow>"),
+    "optimize":     Command(_cmd_optimize, "/optimize <target>"),
+    "evaluate":     Command(_cmd_evaluate, "/evaluate <target>"),
+    "evolution":    Command(_cmd_evolution, "/evolution <status|pause|resume|off>"),
+    "improvements": Command(_cmd_improvements, "/improvements"),
+    "recall":       Command(_cmd_recall, "/recall [query]"),
+    "audit":        Command(_cmd_audit, "/audit [category]"),
+    "conflicts":    Command(_cmd_conflicts, "/conflicts"),
+    "reload":       Command(_cmd_reload, "/reload"),
+}
+
+# Single source of truth for the help banner: derived from the registry plus the
+# persona/exit tokens handled by handle_slash.
+_HELP_COMMANDS = commands.help_banner(
+    COMMANDS, extra=("/architect", "/operator", "/casual", "/auto", "/exit")
+)
+
+
+def emit(text: str) -> None:
+    """Route command output through the notification queue (ADR-0002), then print.
+
+    ``after_send_payload=None`` so command output does NOT trigger the vault
+    projection (only assistant turns project — single-writer intact). Tagged
+    source="command" so /queue (which shows assistant turns) filters it out.
+    Interactive prompts stay direct: they are synchronous request/response I/O,
+    not deliverable notifications."""
+    token = queue.enqueue_for_delivery(text, source="command", after_send_payload=None)
+    print(text)
+    queue.flush_delivered(token)
+
+
 def _prompt_repair_retry() -> str:
     """Phase 13f: ask the user whether to retry after Repair exhausted.
 
@@ -934,6 +1064,10 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
 
 
 def _repl_loop(persona, auto_mode, pending_skill, pending_workflow) -> int:
+    state = ReplState(
+        persona=persona, auto_mode=auto_mode,
+        pending_skill=pending_skill, pending_workflow=pending_workflow,
+    )
     while True:
         try:
             line = input("> ")
@@ -947,158 +1081,48 @@ def _repl_loop(persona, auto_mode, pending_skill, pending_workflow) -> int:
             continue
 
         if stripped.startswith("/"):
-            head = stripped.lstrip("/").split(maxsplit=1)[0].lower() if stripped.lstrip("/") else ""
-            if head == "summary":
-                print(_run_summary())
-                continue
-            if head == "skills":
-                print(_render_skills_table())
-                continue
-            if head == "queue":
-                n = _parse_queue_command(stripped)
-                if n is None:
-                    print(f"Usage: /queue [N]. {_HELP_COMMANDS}")
-                else:
-                    print(_render_queue_table(n))
-                continue
-            if head == "decisions":
-                n = _parse_decisions_command(stripped)
-                if n is None:
-                    print(f"Usage: /decisions [N]. {_HELP_COMMANDS}")
-                else:
-                    print(_render_decisions_table(n))
-                continue
-            if head == "policy":
-                print(_render_policy())
-                continue
-            if head == "agents":
-                print(_render_agents_table())
-                continue
-            if head == "trace":
-                n = _parse_trace_command(stripped)
-                if n is None:
-                    print(f"Usage: /trace [N]. {_HELP_COMMANDS}")
-                else:
-                    print(_render_trace(n))
-                continue
-            if head == "exec":
-                cmd = _parse_exec_command(stripped)
-                if cmd is None:
-                    print(f"Usage: /exec <cmd>. {_HELP_COMMANDS}")
-                else:
-                    print(_render_exec(cmd))
-                continue
-            if head == "mode":
-                from ubongo import router as _router
-                arg = _parse_mode_command(stripped)
-                if arg is None:
-                    print(f"Usage: /mode <workflow_name> | /mode list. {_HELP_COMMANDS}")
-                elif arg == _MODE_LIST_SENTINEL:
-                    print(_render_mode_list())
-                elif arg not in _router.workflow_names():
-                    print(f"Unknown workflow: {arg}.")
-                else:
-                    pending_workflow = arg
-                    print(f"Next turn will use workflow: {arg}.")
-                continue
-            if head == "optimize":
-                arg = _parse_optimize_command(stripped)
-                if arg is None or arg == _OPTIMIZE_LIST_SENTINEL:
-                    print(_render_optimize_targets())
-                else:
-                    print(_render_optimize(arg))
-                continue
-            if head == "evaluate":
-                arg = _parse_evaluate_command(stripped)
-                if arg is None or arg == _EVALUATE_LIST_SENTINEL:
-                    print(_render_evaluate_targets())
-                else:
-                    print(_render_evaluate(arg))
-                continue
-            if head == "evolution":
-                sub = _parse_evolution_command(stripped)
-                if sub is None or sub == "status":
-                    print(_render_evolution_status())
-                elif sub in ("pause", "resume", "off"):
-                    print(_render_evolution_control(sub))
-                else:
-                    print(f"Unknown subcommand: {sub}. Usage: /evolution status|pause|resume|off.")
-                continue
-            if head == "recall":
-                q = _parse_recall_command(stripped)
-                print(_render_recall(q or ""))
-                continue
-            if head == "audit":
-                parsed = _parse_audit_command(stripped)
-                cat, n = parsed if parsed else (None, 20)
-                print(_render_audit(cat, n))
-                continue
-            if head == "conflicts":
-                parsed = _parse_conflicts_command(stripped)
-                if parsed is None or parsed[0] == "list":
-                    print(_render_conflicts_list())
-                elif parsed[0] == "usage":
-                    print("Usage: /conflicts [resolve <id> <keep-mine|keep-theirs|merge>].")
-                else:
-                    print(_render_conflicts_resolve(parsed[1], parsed[2]))
-                continue
-            if head == "improvements":
-                parsed = _parse_improvements_command(stripped)
-                if parsed is None or parsed[0] == "list":
-                    print(_render_improvements_list())
-                elif parsed[0] == "usage":
-                    print("Usage: /improvements [approve <id> | reject <id> | rollback <target>].")
-                else:
-                    print(_render_improvements_action(parsed[0], parsed[1]))
-                continue
-            if head == "reload":
-                print(_reload_all())
-                continue
-            if head == "skill":
-                requested = _parse_skill_command(stripped)
-                if not requested:
-                    print(f"Usage: /skill <name>. {_HELP_COMMANDS}")
-                elif not skills.has(requested):
-                    print(f"Unknown skill: {requested}.")
-                else:
-                    pending_skill = requested
-                    print(f"Next turn will use skill: {requested}.")
-                continue
-
-            persona, keep_going, msg, auto_change = handle_slash(stripped, persona)
-            print(msg)
-            if auto_change is not None:
-                auto_mode = auto_change
-            store.upsert_session(active_persona=persona, auto_mode=auto_mode)
-            if not keep_going:
-                return 0
+            head, _rest = commands.split_command(stripped)
+            result = commands.dispatch(COMMANDS, head, stripped, state)
+            if result is commands.UNKNOWN:
+                # persona / auto / exit / unknown — handle_slash owns these; its
+                # 4-tuple contract is exercised directly by tests.
+                new_persona, keep_going, msg, auto_change = handle_slash(stripped, state.persona)
+                state.persona = new_persona
+                if auto_change is not None:
+                    state.auto_mode = auto_change
+                emit(msg)
+                store.upsert_session(active_persona=state.persona, auto_mode=state.auto_mode)
+                if not keep_going:
+                    return 0
+            elif result is not None:
+                emit(result)
             continue
 
         response = master.handle(
-            stripped, persona, auto_mode,
-            pending_skill=pending_skill,
-            pending_workflow=pending_workflow,
+            stripped, state.persona, state.auto_mode,
+            pending_skill=state.pending_skill,
+            pending_workflow=state.pending_workflow,
         )
-        pending_skill = None  # one-shot
-        pending_workflow = None  # one-shot
+        state.pending_skill = None  # one-shot
+        state.pending_workflow = None  # one-shot
         print(response.text)
         queue.flush_delivered(response.delivery_token)
-        if auto_mode:
-            persona = response.persona
+        if state.auto_mode:
+            state.persona = response.persona
 
         # Phase 13f: when Repair gave up, prompt for one-shot retry.
         if response.requires_user_decision:
             choice = _prompt_repair_retry()
             if choice == "y":
                 retry_response = master.handle(
-                    stripped, persona, auto_mode,
+                    stripped, state.persona, state.auto_mode,
                     pending_skill=None,
                     pending_workflow=None,
                 )
                 print(retry_response.text)
                 queue.flush_delivered(retry_response.delivery_token)
-                if auto_mode:
-                    persona = retry_response.persona
+                if state.auto_mode:
+                    state.persona = retry_response.persona
             # On "n" (or anything else), just continue the loop. The user
             # types the next prompt as usual.
 
@@ -1108,15 +1132,15 @@ def _repl_loop(persona, auto_mode, pending_skill, pending_workflow) -> int:
             store.update_governance_decision(response.approval["decision_id"], choice)
             if choice == "y":
                 approved_response = master.handle(
-                    stripped, persona, auto_mode,
+                    stripped, state.persona, state.auto_mode,
                     pending_skill=None, pending_workflow=None, approved=True,
                 )
                 print(approved_response.text)
                 queue.flush_delivered(approved_response.delivery_token)
-                if auto_mode:
-                    persona = approved_response.persona
+                if state.auto_mode:
+                    state.persona = approved_response.persona
             else:
-                print("Aborted; nothing was done.")
+                emit("Aborted; nothing was done.")
 
 
 if __name__ == "__main__":
