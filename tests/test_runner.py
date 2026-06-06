@@ -1481,3 +1481,27 @@ def test_collaborative_runs_trailing_evaluator_sequentially_after_merge():
     assert "## retrieval and synthesis" in merged_seen
     assert "## contrarian challenger" in merged_seen
     assert result.evaluator_confidence == 0.8
+
+
+def test_run_recovery_rejects_unknown_scope():
+    """_run_recovery maps a plain-string scope to RecoveryScope; an unknown
+    value must fail loudly rather than silently defaulting to a peer hop."""
+    import asyncio
+
+    runner = WorkflowRunner({"repair": StubRepair(plans=[])})
+    with pytest.raises(ValueError, match="unknown scope"):
+        asyncio.run(runner._run_recovery(
+            agent_name="architect",
+            original_result=AgentResult(
+                text="", ok=False, model="m", tokens_in=0, tokens_out=0,
+                latency_ms=1, error="persona_llm_error",
+            ),
+            scope="bogus",
+            message="hi",
+            history=[],
+            summary_text=None,
+            prior_findings=[],
+            workflow=_wf(("architect",)),
+            context=_ctx(None),
+            workflow_run_id=None,
+        ))

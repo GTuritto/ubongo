@@ -339,7 +339,12 @@ class WorkflowRunner:
             RepairAttempt,
         )
 
-        allow = RecoveryScope.LADDER if scope == "ladder" else RecoveryScope.PEER_ONLY
+        if scope == "ladder":
+            allow = RecoveryScope.LADDER
+        elif scope == "peer_only":
+            allow = RecoveryScope.PEER_ONLY
+        else:
+            raise ValueError(f"_run_recovery: unknown scope {scope!r}")
 
         repair = self.registry.get("repair")
         if repair is None or not hasattr(repair, "recover"):
