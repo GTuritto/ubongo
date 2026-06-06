@@ -416,6 +416,45 @@ class WorkflowRunner:
             clock=store.now_iso,
         )
 
+    async def _recover_fanout_failures(
+        self,
+        *,
+        names: list[str],
+        agents: list,
+        results: list[AgentResult],
+        message: str,
+        history: list,
+        summary_text: str | None,
+        workflow: "Workflow",
+        context: "Context",
+        workflow_run_id: int | None,
+    ) -> None:
+        """Single peer hop for each failed result (the fan-out recovery rule),
+        in place. Shared verbatim by parallel / competitive / collaborative; a
+        recovered slot's result and agent are swapped to the peer. Modes that
+        don't read `agents` afterward (competitive) are unaffected by the swap.
+        """
+        for i, (name, result) in enumerate(zip(names, results)):
+            if result.ok:
+                continue
+            outcome = await self._run_recovery(
+                agent_name=name,
+                original_result=result,
+                scope="peer_only",
+                message=message,
+                history=history,
+                summary_text=summary_text,
+                prior_findings=[],
+                workflow=workflow,
+                context=context,
+                workflow_run_id=workflow_run_id,
+            )
+            if outcome.peer_agent is not None and outcome.result.ok:
+                results[i] = outcome.result
+                peer = self.registry.get(outcome.peer_agent)
+                if peer is not None:
+                    agents[i] = peer
+
     # ---------- sequential mode (Phase 9 baseline + Phase 13 Repair ladder) ----------
 
     async def _run_sequential(
@@ -428,31 +467,26 @@ class WorkflowRunner:
         history: list,
         workflow_run_id: int | None,
     ) -> "WorkflowResult":
-        prior_findings: list[str] = []
-        last_ok_result: AgentResult | None = None
-        last_composer_result: AgentResult | None = None
-        evaluator_confidence: float | None = None
-        any_failure = False
+        from ubongo.invoke import SequentialHarvest, resolve_agents
 
         repair = self.registry.get("repair")
+        requested = [n for n in workflow.agents if n != "repair"]
+        resolved = resolve_agents(self.registry, workflow.agents)
 
-        for agent_name in workflow.agents:
-            if agent_name == "repair":
-                continue
+        harvest = SequentialHarvest()
+        # Sequential mode (unlike fan-out) counts an unresolvable agent as a
+        # failure, not a silent skip.
+        if len(resolved) < len(requested):
+            harvest.mark_failure()
 
-            agent = self.registry.get(agent_name)
-            if agent is None:
-                logger.warning("agent_not_registered", extra={"agent": agent_name})
-                any_failure = True
-                continue
-
+        for agent_name, agent in resolved:
             result = await self._dispatch_agent_async(
                 agent=agent,
                 agent_name=agent_name,
                 message=message,
                 history=history,
                 summary_text=summary_text,
-                prior_findings=prior_findings,
+                prior_findings=list(harvest.prior),
                 workflow=workflow,
                 context=context,
                 workflow_run_id=workflow_run_id,
@@ -471,25 +505,17 @@ class WorkflowRunner:
                     message=message,
                     history=history,
                     summary_text=summary_text,
-                    prior_findings=prior_findings,
+                    prior_findings=list(harvest.prior),
                     workflow=workflow,
                     context=context,
                     workflow_run_id=workflow_run_id,
                 )).result
 
-            if result.ok:
-                if result.text:
-                    prior_findings.append(result.text)
-                last_ok_result = result
-                if getattr(agent, "composer", False):
-                    last_composer_result = result
-                if result.confidence is not None:
-                    evaluator_confidence = result.confidence
-            else:
-                any_failure = True
+            harvest.observe(agent, result)
 
+        out = harvest.outcome()
         return self._build_workflow_result(
-            last_composer_result, last_ok_result, evaluator_confidence, any_failure
+            out.last_composer, out.last_ok, out.evaluator_confidence, out.any_failure
         )
 
     # ---------- parallel mode (Phase 12a) ----------
@@ -514,20 +540,13 @@ class WorkflowRunner:
           (deterministic, even though tasks finish in any order).
         - WorkflowResult.ok requires every agent to succeed.
         """
-        agent_names: list[str] = []
-        agents: list = []
-        for name in workflow.agents:
-            if name == "repair":
-                continue
-            agent = self.registry.get(name)
-            if agent is None:
-                logger.warning("agent_not_registered", extra={"agent": name})
-                continue
-            agent_names.append(name)
-            agents.append(agent)
+        from ubongo.invoke import SequentialHarvest, resolve_agents
 
-        if not agents:
+        resolved = resolve_agents(self.registry, workflow.agents)
+        if not resolved:
             return self._build_workflow_result(None, None, None, True)
+        agent_names = [n for n, _ in resolved]
+        agents = [a for _, a in resolved]
 
         tasks = [
             self._dispatch_agent_async(
@@ -543,48 +562,24 @@ class WorkflowRunner:
                 override_model=None,
                 retried=False,
             )
-            for name, agent in zip(agent_names, agents)
+            for name, agent in resolved
         ]
-        results: list[AgentResult] = await asyncio.gather(*tasks)
+        results: list[AgentResult] = list(await asyncio.gather(*tasks))
 
         # Phase 13c: per-failure peer replacement. Single hop only.
-        for i, (name, result) in enumerate(zip(agent_names, results)):
-            if result.ok:
-                continue
-            outcome = await self._run_recovery(
-                agent_name=name,
-                original_result=result,
-                scope="peer_only",
-                message=message,
-                history=history,
-                summary_text=summary_text,
-                prior_findings=[],
-                workflow=workflow,
-                context=context,
-                workflow_run_id=workflow_run_id,
-            )
-            if outcome.peer_agent is not None and outcome.result.ok:
-                results[i] = outcome.result
-                peer_agent = self.registry.get(outcome.peer_agent)
-                if peer_agent is not None:
-                    agents[i] = peer_agent
+        await self._recover_fanout_failures(
+            names=agent_names, agents=agents, results=results,
+            message=message, history=history, summary_text=summary_text,
+            workflow=workflow, context=context, workflow_run_id=workflow_run_id,
+        )
 
-        last_ok_result: AgentResult | None = None
-        last_composer_result: AgentResult | None = None
-        evaluator_confidence: float | None = None
-        any_failure = False
-        for name, agent, result in zip(agent_names, agents, results):
-            if result.ok:
-                last_ok_result = result
-                if getattr(agent, "composer", False):
-                    last_composer_result = result
-                if result.confidence is not None:
-                    evaluator_confidence = result.confidence
-            else:
-                any_failure = True
-
+        # Fan-out harvest: no prior threading; last-composer-wins by index.
+        harvest = SequentialHarvest(thread_prior=False)
+        for _name, agent, result in zip(agent_names, agents, results):
+            harvest.observe(agent, result)
+        out = harvest.outcome()
         return self._build_workflow_result(
-            last_composer_result, last_ok_result, evaluator_confidence, any_failure
+            out.last_composer, out.last_ok, out.evaluator_confidence, out.any_failure
         )
 
 
@@ -623,20 +618,13 @@ class WorkflowRunner:
         if evaluator is None or not hasattr(evaluator, "rank"):
             raise ValueError("competitive mode requires an EvaluatorAgent with rank()")
 
-        competitor_names: list[str] = []
-        competitor_agents: list = []
-        for name in workflow.agents[:-1]:
-            if name == "repair":
-                continue
-            agent = self.registry.get(name)
-            if agent is None:
-                logger.warning("agent_not_registered", extra={"agent": name})
-                continue
-            competitor_names.append(name)
-            competitor_agents.append(agent)
+        from ubongo.invoke import resolve_agents
 
-        if not competitor_agents:
+        resolved = resolve_agents(self.registry, workflow.agents[:-1])
+        if not resolved:
             return self._build_workflow_result(None, None, None, True)
+        competitor_names = [n for n, _ in resolved]
+        competitor_agents = [a for _, a in resolved]
 
         tasks = [
             self._dispatch_agent_async(
@@ -652,29 +640,17 @@ class WorkflowRunner:
                 override_model=None,
                 retried=False,
             )
-            for name, agent in zip(competitor_names, competitor_agents)
+            for name, agent in resolved
         ]
-        results: list[AgentResult] = await asyncio.gather(*tasks)
+        results: list[AgentResult] = list(await asyncio.gather(*tasks))
 
         # Phase 13c: per-failure peer replacement before ranking, so a
         # recovered candidate still competes. Single hop only (fan-out rule).
-        for i, (name, result) in enumerate(zip(competitor_names, results)):
-            if result.ok:
-                continue
-            outcome = await self._run_recovery(
-                agent_name=name,
-                original_result=result,
-                scope="peer_only",
-                message=message,
-                history=history,
-                summary_text=summary_text,
-                prior_findings=[],
-                workflow=workflow,
-                context=context,
-                workflow_run_id=workflow_run_id,
-            )
-            if outcome.peer_agent is not None and outcome.result.ok:
-                results[i] = outcome.result
+        await self._recover_fanout_failures(
+            names=competitor_names, agents=competitor_agents, results=results,
+            message=message, history=history, summary_text=summary_text,
+            workflow=workflow, context=context, workflow_run_id=workflow_run_id,
+        )
 
         ok_pairs = [(n, r) for n, r in zip(competitor_names, results) if r.ok]
         if not ok_pairs:
@@ -758,29 +734,22 @@ class WorkflowRunner:
         """
         from ubongo.master import WorkflowResult as _WR
 
-        evaluator_name: str | None = None
-        producer_names: list[str] = []
-        producer_agents: list = []
+        from ubongo.invoke import resolve_agents
+
         # Strip trailing evaluator if present (auto-appended by master.plan
         # via the Phase-10 evaluate flag) so it can run sequentially after
         # the merge instead of in parallel with the producers.
+        evaluator_name: str | None = None
         agents_list = list(workflow.agents)
         if agents_list and agents_list[-1] == "evaluator":
             evaluator_name = "evaluator"
             agents_list = agents_list[:-1]
 
-        for name in agents_list:
-            if name == "repair":
-                continue
-            agent = self.registry.get(name)
-            if agent is None:
-                logger.warning("agent_not_registered", extra={"agent": name})
-                continue
-            producer_names.append(name)
-            producer_agents.append(agent)
-
-        if not producer_agents:
+        resolved = resolve_agents(self.registry, agents_list)
+        if not resolved:
             return self._build_workflow_result(None, None, None, True)
+        producer_names = [n for n, _ in resolved]
+        producer_agents = [a for _, a in resolved]
 
         tasks = [
             self._dispatch_agent_async(
@@ -796,35 +765,20 @@ class WorkflowRunner:
                 override_model=None,
                 retried=False,
             )
-            for name, agent in zip(producer_names, producer_agents)
+            for name, agent in resolved
         ]
-        results: list[AgentResult] = await asyncio.gather(*tasks)
+        results: list[AgentResult] = list(await asyncio.gather(*tasks))
 
         # Phase 13c: for each failed producer, ask Repair if peer-replacement
         # applies. If so, the peer's result takes that slot (with the peer's
         # role heading); /trace shows the peer's agent_runs row under its
         # real name. The smoke 12.4 fix routes critic_no_candidate to
         # architect, restoring the merged-doc's critic section.
-        for i, (name, agent, result) in enumerate(zip(producer_names, producer_agents, results)):
-            if result.ok:
-                continue
-            outcome = await self._run_recovery(
-                agent_name=name,
-                original_result=result,
-                scope="peer_only",
-                message=message,
-                history=history,
-                summary_text=summary_text,
-                prior_findings=[],
-                workflow=workflow,
-                context=context,
-                workflow_run_id=workflow_run_id,
-            )
-            if outcome.peer_agent is not None and outcome.result.ok:
-                results[i] = outcome.result
-                peer_agent = self.registry.get(outcome.peer_agent)
-                if peer_agent is not None:
-                    producer_agents[i] = peer_agent
+        await self._recover_fanout_failures(
+            names=producer_names, agents=producer_agents, results=results,
+            message=message, history=history, summary_text=summary_text,
+            workflow=workflow, context=context, workflow_run_id=workflow_run_id,
+        )
 
         # Structural merge: one section per ok producer, ordered by
         # workflow.agents (deterministic).
