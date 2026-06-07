@@ -12,6 +12,10 @@ _Avoid_: service, component, worker (bare).
 How a Worker Agent reaches the model. Every LLM-calling agent's `run()` builds its own system prompt and messages, then hands them to the shared **model-call envelope** `ubongo.agents.llm_run.run_agent_llm` (or `call_model_or_none` for the `… | None` callers, `evaluator.rank` / `agree`). The envelope owns the parts mechanical to every call: the monotonic timer, `override_model` / `max_tokens_override` resolution off `input.metadata`, the `LLMError → AgentResult(ok=False, error="<name>_llm_error")` mapping, the `"<name>_run"` log line, and the success-result assembly. It in turn calls `ubongo.llm.complete(system_prompt, messages, model, max_tokens, temperature=None)`, which still owns the single retry, token/latency accounting, and `before_llm`/`after_llm` events. What stays in each agent's own `run()` is the part that actually differs: prompt assembly, the repair-hint append (`input.metadata['repair_prompt_hint']`), and result interpretation — the Evaluator passes an `on_success` hook to parse its JSON behind the envelope. The envelope is a mechanical seam, not an invocation/routing layer: it makes no decision about which model, persona, or workflow runs. Agents pass their own module-level `complete` in as `complete_fn` so the call stays patchable per agent.
 _Avoid_: invocation, request, LLM step.
 
+**Agent directives**:
+The typed control signals the orchestrator passes down to an agent for one run, carried on `AgentInput.directives` as a frozen `AgentDirectives` (`override_model`, `max_tokens_override`, `repair_prompt_hint`, `debate_role`, `skill`, `exec_command`). It replaced the old untyped `metadata` string keys, so a misspelled directive fails at construction instead of silently no-op'ing. Distinct from `AgentInput.metadata`, which stays an open dict for the **Memory agent's commit payload** (`conversation_id`, `response_text`, …) — a variable record, not a fixed control surface.
+_Avoid_: metadata (for directives), options, params (bare).
+
 **Composer**:
 The one Worker Agent in a workflow whose output becomes the user-facing response. Marked by a `composer = True` attribute; `WorkflowResult.text` is taken from the last composer to run. Validators (Evaluator, Critic) and helpers (Research, Execution) contribute findings but are not composers.
 _Avoid_: responder, finalizer.
@@ -23,6 +27,10 @@ _Avoid_: result (bare), output.
 **Execution mode**:
 The strategy the WorkflowRunner uses to run a workflow's agents: `sequential`, `parallel`, `competitive`, `collaborative`, `debate`, or `speculative`. Selected off `workflow.execution_mode`; the runner is async internally but sync at its `execute()` boundary.
 _Avoid_: strategy (bare), pipeline.
+
+**Workflow plan**:
+What `router.plan_workflow(classification, …)` returns: a validated `WorkflowPlan` (workflow name, chosen persona, agent tuple with the evaluator appended, mode, rounds, timeout) assembled from routing + hysteresis + the `/mode` override + structural mode/agents validation. The router owns config assembly; `master.plan` maps the `WorkflowPlan` to a `Workflow` by adding the persona model and resolved skill — the split is **router = config, master = turn state + registries**. The runner keeps its mode-invariant raises as a registry-aware backstop.
+_Avoid_: route result, plan (bare), workflow spec.
 
 **Governance decision**:
 The gate the Master Agent applies before composing: a matrix over `risk` / `confidence` / `reversibility` returning `auto` | `ask_clarification` | `require_approval` | `reject` (config in `governance.yaml`). `require_approval` becomes an interactive `y/n/why` prompt.

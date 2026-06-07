@@ -11,8 +11,9 @@ Draw.io page: `Runtime Components`
 
 Summary:
 - CLI (`__main__.py`, `repl.py`, `oneshot.py`) enters through `MasterAgent`.
-- `MasterAgent` handles classify/plan/execute/govern/compose and persistence seams.
-- `WorkflowRunner` dispatches worker agents from a registry of ten: three personas (`architect`, `operator`, `casual`), `research`, `memory`, `evaluator`, `critic`, `coding`, `execution`, `repair`. Persona names are bare (no `persona:` prefix as of Phase 10).
+- `MasterAgent` handles classify/plan/execute/govern/compose and persistence seams. Planning is delegated: `router.plan_workflow(classification, …)` returns a validated `WorkflowPlan` (ADR-0012) and `master.plan` adds the persona model + resolved skill to make the `Workflow`.
+- `WorkflowRunner` dispatches worker agents from a registry of ten: three personas (`architect`, `operator`, `casual`), `research`, `memory`, `evaluator`, `critic`, `coding`, `execution`, `repair`. Persona names are bare (no `persona:` prefix as of Phase 10). It hands each agent a typed `AgentDirectives` (override model, token cap, repair hint, debate role, skill, exec command).
+- Every LLM agent reaches the model through one shared **model-call envelope** (`agents/llm_run.py`: `run_agent_llm` / `call_model_or_none`, ADR-0012): timer, model/max-tokens resolution, `LLMError → AgentResult` mapping, the `<name>_run` log, and result assembly. Prompt assembly stays in each agent's `run()`. The envelope calls `llm.complete()` (the single egress) underneath.
 - The runner walks the full Repair strategy ladder on `agent_failed` (Phase 13): `RepairAgent.plan_recovery` classifies the failure into one of seven `FailureKind`s and returns an ordered `RecoveryPlan` (variant prompt -> different model -> smaller model + shorter prompt -> peer replacement -> abort), capped at `agents.repair.max_attempts`. In `sequential` mode the runner drives the whole ladder; in the five fan-out modes Repair acts only by peer replacement. Each attempt is persisted to `repair_runs`; the recovered retry's `agent_runs` row is marked `retried = 1`. (Phase 11's `plan_retry` shim is retained for back-compat.)
 - `sandbox.py` (Phase 11b, hardened Phase 15c) is the single safety contract for shell execution: an allowlist resolved to absolute program paths, no shell metacharacters, no path traversal, a filesystem allowlist (path args must resolve inside the repo), `shell=False`, an empty child `PATH`, repo-root cwd, and a 10s timeout. The Execution Agent and the `/exec` REPL command both route through it. Full contract in [docs/SECURITY.md](SECURITY.md).
 - Queue and event bus coordinate side effects (`before_send`, `after_send`).
@@ -32,8 +33,9 @@ flowchart LR
     EXECUTION["execution"] --> SANDBOX["sandbox.run_constrained"]
     REPL_EXEC["/exec REPL command"] --> SANDBOX
     CLASSIFIER --> LLM["LiteLLM/OpenRouter: llm.py"]
-    PERSONAS --> LLM
-    WORKERS --> LLM
+    PERSONAS --> ENVELOPE["Model-call envelope: agents/llm_run.py"]
+    WORKERS --> ENVELOPE
+    ENVELOPE --> LLM
     MASTER --> STORE["SQLite Store: memory/store.py"]
     RUNNER --> STORE
     MASTER --> QUEUE["Delivery Queue: delivery/queue.py"]
@@ -50,7 +52,7 @@ Draw.io page: `Turn Flow`
 
 Flow:
 1. User input (REPL or one-shot)
-2. `MasterAgent.handle()` classify + plan (plan appends `evaluator` to `workflow.agents` when `workflows.yaml` declares `evaluate: true`)
+2. `MasterAgent.handle()` classify + plan. Planning delegates to `router.plan_workflow` (ADR-0012): it routes, applies hysteresis, honors the `/mode` override, appends `evaluator` when `workflows.yaml` declares `evaluate: true`, and validates the mode/agents shape — returning a `WorkflowPlan`; `master.plan` then adds the persona model + skill to make the `Workflow`.
 3. Persist user turn + insert `workflow_runs` (`in_progress`)
 4. `WorkflowRunner.execute()` agent dispatch; on `agent_failed` consult `RepairAgent.plan_retry` and rerun once with model fallback
 5. Phase 10 borderline confidence (evaluator score in `[0.2, 0.6)`) triggers a second runner pass `(critic, persona)` under the same `workflow_run_id`; the retry's text replaces the response
@@ -227,17 +229,17 @@ Workflows are configured in `config/workflows.yaml` and routed by `config/routin
 All six execution modes are live (Phase 12): `sequential`, `parallel`, `competitive`, `collaborative`, `debate`, `speculative`. The `WorkflowRunner` is async internally (one strategy coroutine per mode, selected off `workflow.execution_mode`) but sync at its public `execute()` boundary. Only `sequential` and `parallel` auto-route; the other four are opt-in per turn via `/mode <workflow>`. `competitive` uses `EvaluatorAgent.rank()` to pick a winner; `speculative` uses `EvaluatorAgent.agree()`; `debate` runs N rounds (default 2) then a synthesizer turn.
 
 Runtime pattern:
-- `classifier.classify()` -> `router.route_workflow()` + hysteresis
-- Workflow template resolves to ordered agent list; if `evaluate: true`, plan appends `evaluator`
+- `classifier.classify()` -> `router.plan_workflow()` (routing + hysteresis + `/mode` override + name resolution + evaluator append + structural mode/agents validation) -> `WorkflowPlan`; `master.plan` maps it to a `Workflow` by adding the persona model + resolved skill (ADR-0012)
 - `WorkflowRunner` executes agents in order, calls `RepairAgent.plan_retry` on failures, threads each agent's text into the next agent's `prior_findings`, and persists `agent_runs`
 - `WorkflowResult.text` comes from the LAST agent whose class declares `composer = True` (the personas + Coding Agent today). Validators (Evaluator / Critic) and helpers (Research / Execution) contribute findings without claiming the response.
 - `WorkflowResult.evaluator_confidence` is harvested from any agent's `AgentResult.confidence` (the evaluator sets it). Master forwards it to `governance.decide` and to `governance_decisions.confidence`.
 
 ```mermaid
 flowchart LR
-    C["Classification: intent, tone, risk, confidence"] --> ROUTE["router.route_workflow()"]
-    ROUTE --> HYST["router.apply_hysteresis()"]
-    HYST --> WF["Workflow: persona, model, skill, mode, agents"]
+    C["Classification: intent, tone, risk, confidence"] --> PLAN["router.plan_workflow() (route + hysteresis + /mode + validate)"]
+    PLAN --> WP["WorkflowPlan: persona, agents, mode, rounds, timeout"]
+    WP --> MAP["master.plan: add model + skill"]
+    MAP --> WF["Workflow"]
     REG["default_registry()"] --> RUN["WorkflowRunner.execute()"]
     WF --> RUN
     RUN --> OUT["WorkflowResult and agent_runs rows"]
@@ -306,6 +308,7 @@ Patterns introduced across the tiers that later phases inherit:
 - **GP self-improvement loop (Tier 5, Phases 16-19).** The `src/ubongo/evolution/` package closes a full loop: `generator` mutates an evolvable **target** (kind `prompt` for `persona:*`, kind `config` for `routing:default` / `toolchain:<wf>` / `retry:repair`) into a generation of variants in `evolution_lineage`; `sandbox` evaluates each to a cohort-normalized `fitness` (prompt/routing/tool-chain variants are judged by running them; retry uses a structural proxy); `selection` keeps top-K survivors that seed the next generation (cross-generation `parent_id`); the `EvolutionLoop` daemon runs cycles continuously but throttled, paced, and **paused by default**; `promotion` proposes a winner to `pending_promotions` only when it beats the active baseline, and the user approves via `/improvements`. Approval writes `active_evolutions` and performs a **live swap**: the runtime read paths (`context.build_system_prompt` for personas, `router.route_workflow` / `router.workflow_agents` for config) consult `active_evolutions`, guarded by `store.is_connected`.
 - **Semantic recall (Tier 6, Phase 20).** `store.recall(conversation_id, query)` embeds the query and KNN-searches `vec_messages` (`sqlite-vec`) for relevant turns outside the recency window, folded into the turn as a labelled context block. Messages are indexed idempotently on write (`embedding_meta` hash). Everything is best-effort behind a `vec_available()` guard — disabled/unavailable degrades to recency-only with no error, and an embedding never blocks a message commit.
 - **Bidirectional vault sync (Tier 6, Phase 21).** The `VaultWatcher` daemon (no dependency, mirroring `EvolutionLoop`) polls the vault and ingests external edits (re-embed into `vec_vault`), distinguishing its own writes from user edits via the `vault_state` hash. Collisions queue to `vault_conflicts` (`/conflicts`). Governance, evolution, and sync decisions unify into `vault/system/audit.md` (`/audit`); `/reload` hot-reloads settings (`config.reload()` before `personas.reload()`).
+- **Model-call envelope + typed directives + router-owned planning (post-v0.1, ADR-0012).** Three deepening refactors of the orchestration core, behavior-neutral: (a) every LLM agent reaches the model through one shared envelope (`agents/llm_run.py`: `run_agent_llm` / `call_model_or_none`) that owns the timer, model/max-tokens resolution, `LLMError → AgentResult` mapping, the `<name>_run` log, and result assembly, while prompt assembly stays in each `run()`; (b) the orchestrator→agent contract is a frozen `AgentDirectives` on `AgentInput.directives`, not untyped `metadata` string keys (`metadata` stays a dict only for the Memory agent's commit payload); (c) `router.plan_workflow` returns a validated `WorkflowPlan` and `master.plan` maps it to a `Workflow`, so routing/assembly/invariants live in the router (config) and turn-state/registry lookups stay in master.
 
 ---
 
