@@ -20,9 +20,10 @@ import time
 from typing import TYPE_CHECKING
 
 from ubongo.agents.base import AgentInput, AgentResult
+from ubongo.agents.llm_run import call_model_or_none, run_agent_llm
 from ubongo.config import load_config
 from ubongo.context import build_system_prompt
-from ubongo.llm import LLMError, complete
+from ubongo.llm import CompletionResult, complete
 
 if TYPE_CHECKING:
     from ubongo.master import Context
@@ -191,70 +192,62 @@ class EvaluatorAgent:
         if prompt_hint:
             system_prompt = system_prompt + "\n\n## Repair guidance\n\n" + prompt_hint
 
-        model = input.metadata.get("override_model") or self.default_model
-        max_tokens = input.metadata.get("max_tokens_override") or self.max_tokens
-        try:
-            completion = complete(
-                system_prompt=system_prompt,
-                messages=[{"role": "user", "content": "Judge the candidate response."}],
-                model=model,
-                max_tokens=max_tokens,
-            )
-        except LLMError as exc:
-            elapsed = int((time.monotonic() - t0) * 1000)
-            logger.warning(
-                "evaluator_llm_error",
-                extra={"model": model, "cause": str(exc.cause) if exc.cause else None},
-            )
-            return AgentResult(
-                text="",
-                ok=False,
-                model=model,
-                tokens_in=0,
-                tokens_out=0,
-                latency_ms=elapsed,
-                error="evaluator_llm_error",
-            )
+        def on_success(completion: CompletionResult) -> AgentResult:
+            # Evaluator-specific: interpret the JSON judgment behind the envelope.
+            parsed = _parse_judgment(completion.text)
+            if parsed is None:
+                logger.warning(
+                    "evaluator_parse_error",
+                    extra={
+                        "model": completion.model,
+                        "raw_preview": completion.text[:_RAW_PREVIEW_LEN],
+                    },
+                )
+                return AgentResult(
+                    text="",
+                    ok=False,
+                    model=completion.model,
+                    tokens_in=completion.tokens_in,
+                    tokens_out=completion.tokens_out,
+                    latency_ms=completion.latency_ms,
+                    error="evaluator_parse_error",
+                    metadata={"raw": completion.text[:_RAW_PREVIEW_LEN]},
+                )
 
-        parsed = _parse_judgment(completion.text)
-        if parsed is None:
-            logger.warning(
-                "evaluator_parse_error",
-                extra={"model": completion.model, "raw_preview": completion.text[:_RAW_PREVIEW_LEN]},
+            conf, issues = parsed
+            issues_str = "; ".join(issues) if issues else "none"
+            logger.info(
+                "evaluator_run",
+                extra={
+                    "model": completion.model,
+                    "confidence": conf,
+                    "issue_count": len(issues),
+                    "tokens_in": completion.tokens_in,
+                    "tokens_out": completion.tokens_out,
+                    "latency_ms": completion.latency_ms,
+                },
             )
             return AgentResult(
-                text="",
-                ok=False,
+                text=f"Confidence: {conf:.2f}. Issues: {issues_str}.",
+                ok=True,
                 model=completion.model,
                 tokens_in=completion.tokens_in,
                 tokens_out=completion.tokens_out,
                 latency_ms=completion.latency_ms,
-                error="evaluator_parse_error",
-                metadata={"raw": completion.text[:_RAW_PREVIEW_LEN]},
+                confidence=conf,
+                metadata={"issues": issues, "raw": completion.text[:_RAW_PREVIEW_LEN]},
             )
 
-        conf, issues = parsed
-        issues_str = "; ".join(issues) if issues else "none"
-        logger.info(
-            "evaluator_run",
-            extra={
-                "model": completion.model,
-                "confidence": conf,
-                "issue_count": len(issues),
-                "tokens_in": completion.tokens_in,
-                "tokens_out": completion.tokens_out,
-                "latency_ms": completion.latency_ms,
-            },
-        )
-        return AgentResult(
-            text=f"Confidence: {conf:.2f}. Issues: {issues_str}.",
-            ok=True,
-            model=completion.model,
-            tokens_in=completion.tokens_in,
-            tokens_out=completion.tokens_out,
-            latency_ms=completion.latency_ms,
-            confidence=conf,
-            metadata={"issues": issues, "raw": completion.text[:_RAW_PREVIEW_LEN]},
+        return run_agent_llm(
+            agent_name="evaluator",
+            logger=logger,
+            input=input,
+            system_prompt=system_prompt,
+            messages=[{"role": "user", "content": "Judge the candidate response."}],
+            default_model=self.default_model,
+            default_max_tokens=self.max_tokens,
+            complete_fn=complete,
+            on_success=on_success,
         )
 
     # ------------------------------------------------------------------
@@ -296,20 +289,16 @@ class EvaluatorAgent:
             + "\n\n## User question\n\n" + message
             + "\n\n## Candidates\n\n" + candidate_block
         )
-        model = override_model or self.default_model
-
-        try:
-            completion = complete(
-                system_prompt=system_prompt,
-                messages=[{"role": "user", "content": "Rank the candidates."}],
-                model=model,
-                max_tokens=self.max_tokens,
-            )
-        except LLMError as exc:
-            logger.warning(
-                "evaluator_rank_llm_error",
-                extra={"model": model, "cause": str(exc.cause) if exc.cause else None},
-            )
+        completion = call_model_or_none(
+            logger=logger,
+            error_event="evaluator_rank_llm_error",
+            system_prompt=system_prompt,
+            messages=[{"role": "user", "content": "Rank the candidates."}],
+            model=override_model or self.default_model,
+            max_tokens=self.max_tokens,
+            complete_fn=complete,
+        )
+        if completion is None:
             return None
 
         parsed = _parse_ranking(completion.text, len(candidates))
@@ -368,20 +357,16 @@ class EvaluatorAgent:
             + "\n\n## Response A\n\n" + text_a_t
             + "\n\n## Response B\n\n" + text_b_t
         )
-        model = override_model or self.default_model
-
-        try:
-            completion = complete(
-                system_prompt=system_prompt,
-                messages=[{"role": "user", "content": "Do these responses substantively agree?"}],
-                model=model,
-                max_tokens=200,
-            )
-        except LLMError as exc:
-            logger.warning(
-                "evaluator_agree_llm_error",
-                extra={"model": model, "cause": str(exc.cause) if exc.cause else None},
-            )
+        completion = call_model_or_none(
+            logger=logger,
+            error_event="evaluator_agree_llm_error",
+            system_prompt=system_prompt,
+            messages=[{"role": "user", "content": "Do these responses substantively agree?"}],
+            model=override_model or self.default_model,
+            max_tokens=200,
+            complete_fn=complete,
+        )
+        if completion is None:
             return None
 
         parsed = _parse_agree(completion.text)
