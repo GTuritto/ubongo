@@ -157,20 +157,30 @@ smoke passes.
 
 ---
 
-# Phase 07 — Give the Variant a row type
+# Phase 07 — Give the Variant a row type  — DROPPED (premise disproven 2026-06-07)
 
-Branch `improve/07-variant-row`. Strength: **Worth exploring**. Independent.
+Branch `improve/07-variant-row`. Strength: **Worth exploring** → **not pursued**.
 
-## Problem
+> **Correction (2026-06-07).** The 07.1 investigation disproved this candidate's
+> only concrete justification. The claimed `"mutation"` vs `"strategy"` key
+> mismatch is **not a bug**: `lineage.py:43` persists every variant's metadata as
+> `{"strategy": variant.strategy, **variant.metadata}`, so a top-level
+> `"strategy"` key is always present and `manual.py`'s `.get("strategy")` reads it
+> correctly. The `"mutation"` key on config variants is *additional* provenance
+> (the full strategy name), not a substitute. The original report over-claimed
+> this. What remains is a mild, no-bug typing cleanup (variant rows are untyped
+> `list[dict]` with the shape in a docstring), which did not justify a phase next
+> to the higher-value Phase 08. Not pursued.
+
+## Problem (original, retained for the record)
 
 GP Variants flow through the evolution tier as raw `list[dict]`. The shape is
 documented only in `selection.survivors`'s docstring ("Each dict carries
 `lineage_id`, `variant_text`, `fitness`, `strategy`"); `sandbox.evaluate_target`
 takes `variant_rows: list[dict]` and reaches in with `row["variant_text"]`;
 `targets`, `generator`, `loop`, `manual` all assume the shape. **Leaky seam.**
-Concrete symptom: the generator writes config provenance under `"mutation"`
-(`generator.py:395`) but `manual.py:81-82` reads `(r["variant_metadata"] or
-{}).get("strategy")` — they disagree on the key, and `.get()` hides it.
+~~Concrete symptom: the generator writes config provenance under `"mutation"`
+and manual.py reads `"strategy"`.~~ — DISPROVEN, see correction above.
 
 ## Solution
 
@@ -265,9 +275,15 @@ time; pytest green; smoke passes (esp. `/mode` and competitive routing).
 
 ---
 
-# Phase 09 — Decompose the turn body into testable steps
+# Phase 09 — Decompose the turn body into testable steps  — NOT PURSUED
 
-Branch `improve/09-turn-steps`. Strength: **Speculative**. Do LAST.
+Branch `improve/09-turn-steps`. Strength: **Speculative** → **not pursued**.
+
+> **Decision (2026-06-07).** Roadmap closed after Phase 08. The two Strong
+> candidates (05, 06) shipped, plus the higher-value Phase 08 (router
+> consolidation). 07 was dropped (premise disproven) and 09 is Speculative with
+> seam-design risk; not worth it next to the value already captured. Retained
+> below as a record of the idea, not a committed plan.
 
 ## Problem
 

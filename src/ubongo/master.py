@@ -84,12 +84,6 @@ class Response:
     approval: dict | None = None
 
 
-_PERSONA_DEFAULT_WORKFLOW: dict[str, str] = {
-    "architect": "technical_deep",
-    "operator": "quick_action",
-    "casual": "casual_reply",
-}
-
 _REJECT_MESSAGE = (
     "I'm not confident enough in my answer to give it. "
     "Try rephrasing or breaking the question down."
@@ -134,23 +128,6 @@ _REPAIR_EXHAUSTED_TEMPLATE = (
     "{last_strategy}. Last error: {last_error}. "
     "Try rephrasing, switching mode (/mode), or simplifying the request."
 )
-
-
-def _resolve_workflow_name(
-    chosen_persona: str,
-    suggested_workflow: str | None,
-    auto_mode: bool,
-) -> str:
-    """Decide which workflow to run.
-
-    auto_mode + hysteresis kept the suggested persona  -> use suggested workflow.
-    auto_mode + hysteresis flipped to a different one  -> persona's default.
-    auto_mode off                                       -> persona's default.
-    """
-    if auto_mode and suggested_workflow is not None:
-        if router.workflow_persona(suggested_workflow) == chosen_persona:
-            return suggested_workflow
-    return _PERSONA_DEFAULT_WORKFLOW.get(chosen_persona, "casual_reply")
 
 
 class MasterAgent:
@@ -200,14 +177,16 @@ class MasterAgent:
                 "auto_mode": ctx.auto_mode,
             },
         )
-        chosen = ctx.persona
-        suggested_workflow_name: str | None = None
-        suggested_skill = None
+        # Phase 08: the router owns routing + config assembly + structural
+        # validation; master keeps the persona/skill registry lookups.
+        wf_plan = router.plan_workflow(
+            classification,
+            current_persona=ctx.persona,
+            auto_mode=ctx.auto_mode,
+            pending_workflow=ctx.pending_workflow,
+        )
+        suggested_skill = classification.suggested_skill if ctx.auto_mode else None
         if ctx.auto_mode:
-            suggested_workflow_name = router.route_workflow(classification)
-            suggested_persona = router.workflow_persona(suggested_workflow_name)
-            chosen = router.apply_hysteresis(ctx.persona, suggested_persona, classification.confidence)
-            suggested_skill = classification.suggested_skill
             logger.info(
                 "classify",
                 extra={
@@ -216,38 +195,23 @@ class MasterAgent:
                     "task_type": classification.task_type,
                     "risk": classification.risk,
                     "confidence": classification.confidence,
-                    "suggested_workflow": suggested_workflow_name,
-                    "suggested_persona": suggested_persona,
-                    "used": chosen,
+                    "suggested_workflow": wf_plan.suggested_workflow,
+                    "suggested_persona": wf_plan.suggested_persona,
+                    "used": wf_plan.persona,
                     "suggested_skill": suggested_skill,
                 },
             )
         resolved_skill = skills.resolve(pinned=ctx.pending_skill, suggested=suggested_skill)
         skill_name = resolved_skill.name if resolved_skill else None
-        # Phase 12g: /mode <workflow> overrides routing for the next turn.
-        # The pending workflow's persona is honored verbatim (overrides hysteresis).
-        if ctx.pending_workflow and ctx.pending_workflow in router.workflow_names():
-            workflow_name = ctx.pending_workflow
-            chosen = router.workflow_persona(workflow_name)
-        else:
-            workflow_name = _resolve_workflow_name(chosen, suggested_workflow_name, ctx.auto_mode)
-        agents = list(router.workflow_agents(workflow_name))
-        mode = router.workflow_mode(workflow_name)
-        # Phase 12b: competitive mode requires its own trailing evaluator as
-        # part of the mode contract; skip the auto-append to avoid a duplicate.
-        if router.workflow_evaluate(workflow_name) and mode != "competitive":
-            agents.append("evaluator")
-        rounds = router.workflow_rounds(workflow_name)
-        timeout_s = router.workflow_timeout_s(workflow_name)
-        persona = personas.get(chosen)
+        persona = personas.get(wf_plan.persona)
         workflow = Workflow(
-            persona=chosen,
+            persona=wf_plan.persona,
             model=persona.model,
             skill_name=skill_name,
-            execution_mode=mode,
-            agents=tuple(agents),
-            rounds=rounds,
-            timeout_s=timeout_s,
+            execution_mode=wf_plan.mode,
+            agents=wf_plan.agents,
+            rounds=wf_plan.rounds,
+            timeout_s=wf_plan.timeout_s,
         )
         events.dispatch("after_plan", {"workflow": asdict(workflow)})
         return workflow
