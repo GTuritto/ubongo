@@ -9,6 +9,13 @@ Self-Improvement (the closed GP loop with human-approved promotions), and Wiki
 Memory + Polish (sqlite-vec semantic recall, the vault-link graph, and
 bidirectional vault sync). See [STATUS.md](../../STATUS.md) for the changelog.
 
+Updated 2026-06-07 for the post-v0.1 architecture-deepening refactors
+([ADR-0012](../adr/0012-agent-envelope-directives-and-router-planning.md)): the
+shared **model-call envelope** (`agents/llm_run`), **typed `AgentDirectives`**, and
+**router-owned `plan_workflow`**. These are internal refactors — the container and
+context boxes are unchanged; the orchestration component and dynamic-turn diagrams
+reflect the new planning seam and envelope.
+
 ## Diagrams
 
 | Level | File | Audience | Shows |

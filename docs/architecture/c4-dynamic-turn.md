@@ -20,7 +20,7 @@ C4Dynamic
   Rel(user, cli, "1. Types a message")
   Rel(cli, master, "2. handle(turn)")
   Rel(master, classifier, "3. Classify message", "LLM call")
-  Rel(master, router, "4. Plan: classification -> Workflow")
+  Rel(master, router, "4. plan_workflow -> WorkflowPlan (master adds model + skill)")
   Rel(master, runner, "5. Execute workflow")
   Rel(runner, fleet, "6. Dispatch agents", "per execution mode")
   Rel(runner, master, "7. Return WorkflowResult")
@@ -44,9 +44,11 @@ C4Dynamic
 3. **Classify.** One LLM call returns intent, tone, task type, suggested skill,
    risk, and confidence.
 
-4. **Plan.** The Router maps the classification, through `routing.yaml` and
-   `workflows.yaml`, to a `Workflow`: persona, model, optional skill, execution
-   mode, and an ordered tuple of agent names.
+4. **Plan.** `router.plan_workflow` maps the classification, through `routing.yaml`
+   and `workflows.yaml`, to a validated `WorkflowPlan` (persona, agents with the
+   evaluator appended, mode, rounds, timeout) — validating the mode/agents shape at
+   plan time. `master.plan` adds the persona model and resolved skill to make the
+   `Workflow` (ADR-0012).
 
 5-6. **Execute.** The Workflow Runner selects the strategy coroutine for the
    workflow's execution mode and dispatches the agent fleet — in order for

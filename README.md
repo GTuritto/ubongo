@@ -233,7 +233,8 @@ ubongo/
     config.py
     logging.py
     agents/
-      base.py                      # Agent protocol; AgentInput / AgentResult
+      base.py                      # Agent protocol; AgentInput / AgentResult / AgentDirectives
+      llm_run.py                   # shared model-call envelope (run_agent_llm / call_model_or_none)
       personas.py                  # Architect / Operator / Casual subclasses
       research.py                  # cross-conversation + vault retrieval + synthesis
       memory.py                    # single writer for messages + vault + embeddings

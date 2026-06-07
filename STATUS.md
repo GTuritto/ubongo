@@ -86,6 +86,20 @@ Each phase is built on its own branch. Don't start Phase N+1 until Phase N's tes
 - [x] Total project size stays under ~15,000 lines of Python (excluding tests).
 - [x] Each phase landed via its own branch and was merged to `main` only after user approval.
 
+## Post-v0.1 — architecture deepening (2026-06-07)
+
+After v0.1, a `/improve-codebase-architecture` review produced a roadmap of
+deepening candidates ([Plans/05-09-architecture-deepening-roadmap.md](Plans/05-09-architecture-deepening-roadmap.md)).
+Three behavior-neutral refactors of the orchestration core merged to `main`
+([ADR-0012](docs/adr/0012-agent-envelope-directives-and-router-planning.md)):
+
+- [x] **05** — one shared model-call envelope behind every LLM agent (`agents/llm_run.py`). PR #26.
+- [x] **06** — typed `AgentDirectives` replacing the untyped `metadata` directive seam. PR #27.
+- [x] **08** — router-owned `plan_workflow` returning a validated `WorkflowPlan`. PR #28.
+- 07 (VariantRow) dropped — its premise (a key-mismatch "bug") was disproven; 09 (decompose the turn body) not pursued (Speculative).
+
+Verified at each merge: full pytest green (779) + the Phases 0–21 cumulative smoke.
+
 ## Notes
 
 Update this file as phases land. When a phase is merged to `main`, change its row from "Not started" → "Complete" and add a date.
