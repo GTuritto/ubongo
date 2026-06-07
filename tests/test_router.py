@@ -210,3 +210,85 @@ def test_unknown_mode_in_workflows_yaml_falls_back_to_sequential(tmp_path, monke
         assert router_mod.workflow_mode("weird_workflow") == "sequential"
     finally:
         router_mod.reload()
+
+
+# --- Phase 08: plan_workflow (the deep planning seam) --------------------
+
+def test_plan_workflow_auto_routes_technical_to_architect():
+    plan = router.plan_workflow(
+        _cls(intent="technical", confidence=0.95),
+        current_persona="casual", auto_mode=True, pending_workflow=None,
+    )
+    assert plan.workflow_name == "technical_deep"
+    assert plan.persona == "architect"
+    assert plan.mode == "sequential"
+    # technical_deep has evaluate: true -> evaluator appended.
+    assert plan.agents[-1] == "evaluator"
+    assert plan.suggested_workflow == "technical_deep"
+    assert plan.suggested_persona == "architect"
+
+
+def test_plan_workflow_hysteresis_keeps_persona_on_weak_confidence():
+    # Low confidence -> hysteresis keeps the current persona; name resolves to
+    # the current persona's default workflow, not the suggested one.
+    plan = router.plan_workflow(
+        _cls(intent="technical", confidence=0.4),
+        current_persona="casual", auto_mode=True, pending_workflow=None,
+    )
+    assert plan.persona == "casual"
+    assert plan.workflow_name == "casual_reply"
+
+
+def test_plan_workflow_auto_off_uses_persona_default():
+    plan = router.plan_workflow(
+        _cls(intent="technical", confidence=0.95),
+        current_persona="operator", auto_mode=False, pending_workflow=None,
+    )
+    assert plan.persona == "operator"
+    assert plan.workflow_name == "quick_action"
+    assert plan.suggested_workflow is None
+
+
+def test_plan_workflow_pending_override_wins_and_sets_persona():
+    plan = router.plan_workflow(
+        _cls(intent="casual", confidence=0.95),
+        current_persona="casual", auto_mode=True, pending_workflow="coding_session",
+    )
+    assert plan.workflow_name == "coding_session"
+    assert plan.persona == "architect"  # coding_session's persona
+    assert plan.agents[-1] == "evaluator"  # coding_session evaluates
+
+
+def test_plan_workflow_competitive_does_not_double_append_evaluator():
+    plan = router.plan_workflow(
+        _cls(), current_persona="casual", auto_mode=False,
+        pending_workflow="coding_competitive",
+    )
+    assert plan.mode == "competitive"
+    # exactly one trailing evaluator (the mode contract's own, not auto-appended)
+    assert plan.agents[-1] == "evaluator"
+    assert plan.agents.count("evaluator") == 1
+
+
+def test_plan_workflow_passes_rounds_for_debate():
+    plan = router.plan_workflow(
+        _cls(), current_persona="casual", auto_mode=False,
+        pending_workflow="debate_then_synthesize",
+    )
+    assert plan.mode == "debate"
+    assert plan.rounds == 2
+
+
+def test_validate_plan_shape_rejects_malformed():
+    # competitive must end with evaluator
+    with pytest.raises(ValueError):
+        router._validate_plan_shape("competitive", ("coding", "architect"))
+    # debate needs >= 3
+    with pytest.raises(ValueError):
+        router._validate_plan_shape("debate", ("architect", "operator"))
+    # speculative needs >= 2
+    with pytest.raises(ValueError):
+        router._validate_plan_shape("speculative", ("casual",))
+    # valid shapes pass
+    router._validate_plan_shape("competitive", ("coding", "architect", "evaluator"))
+    router._validate_plan_shape("sequential", ("architect",))

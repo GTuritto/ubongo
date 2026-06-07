@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -265,3 +265,121 @@ def apply_hysteresis(current_persona: str, suggested: str, confidence: float) ->
     if confidence < threshold:
         return current_persona
     return suggested
+
+
+# --------------------------------------------------------------------------
+# Phase 08: one deep planning seam. `plan_workflow` collapses the routing +
+# config assembly master.plan used to do across 7+ separate calls into a single
+# validated WorkflowPlan. The persona-model and skill resolution stay in master
+# (they read the persona/skill registries, not config); master maps WorkflowPlan
+# -> Workflow by adding model + skill_name.
+# --------------------------------------------------------------------------
+
+# Persona -> its default workflow when routing does not pick one (or auto is off).
+_PERSONA_DEFAULT_WORKFLOW: dict[str, str] = {
+    "architect": "technical_deep",
+    "operator": "quick_action",
+    "casual": "casual_reply",
+}
+
+
+@dataclass(frozen=True)
+class WorkflowPlan:
+    """The config-derived shape of a turn's workflow, before master adds the
+    persona model and resolved skill. Router-owned so the router need not import
+    master.Workflow (which would be a cycle)."""
+
+    workflow_name: str
+    persona: str                      # chosen, post-hysteresis / pending override
+    agents: tuple[str, ...]           # evaluator already appended where applicable
+    mode: str
+    rounds: int | None
+    timeout_s: int | None
+    # Routing telemetry for master's "classify" log (None when auto is off).
+    suggested_workflow: str | None
+    suggested_persona: str | None
+
+
+def _resolve_workflow_name(
+    chosen_persona: str,
+    suggested_workflow: str | None,
+    auto_mode: bool,
+) -> str:
+    """Decide which workflow to run.
+
+    auto_mode + hysteresis kept the suggested persona  -> use suggested workflow.
+    auto_mode + hysteresis flipped to a different one  -> persona's default.
+    auto_mode off                                       -> persona's default.
+    """
+    if auto_mode and suggested_workflow is not None:
+        if workflow_persona(suggested_workflow) == chosen_persona:
+            return suggested_workflow
+    return _PERSONA_DEFAULT_WORKFLOW.get(chosen_persona, "casual_reply")
+
+
+def _validate_plan_shape(mode: str, agents: tuple[str, ...]) -> None:
+    """Validate the structural mode/agents invariants at plan time — the same
+    shape rules the runner enforces at execute time, surfaced earlier with a
+    clearer error. The runner keeps its raises as a registry-aware backstop
+    (it also checks that named agents exist and that the evaluator has rank())."""
+    if mode == "competitive" and (not agents or agents[-1] != "evaluator"):
+        raise ValueError(
+            f"competitive workflows must end with 'evaluator'; got {list(agents)!r}"
+        )
+    if mode == "debate" and len(agents) < 3:
+        raise ValueError(
+            "debate workflows need at least 3 entries: [debater_a, debater_b, synthesizer]"
+        )
+    if mode == "speculative" and len(agents) < 2:
+        raise ValueError("speculative workflows need at least [cheap, strong] in agents")
+
+
+def plan_workflow(
+    classification: Classification,
+    *,
+    current_persona: str,
+    auto_mode: bool,
+    pending_workflow: str | None,
+) -> WorkflowPlan:
+    """Assemble the validated WorkflowPlan for a turn from config.
+
+    Owns: routing (`route_workflow`), persona hysteresis, the `/mode`
+    pending-workflow override, workflow-name resolution, the agent list +
+    evaluator append, mode/rounds/timeout reads, and structural validation.
+    """
+    suggested_workflow: str | None = None
+    suggested_persona: str | None = None
+    chosen = current_persona
+
+    if auto_mode:
+        suggested_workflow = route_workflow(classification)
+        suggested_persona = workflow_persona(suggested_workflow)
+        chosen = apply_hysteresis(current_persona, suggested_persona, classification.confidence)
+
+    # Phase 12g: /mode <workflow> overrides routing for the next turn; its
+    # persona is honored verbatim (overrides hysteresis).
+    if pending_workflow and pending_workflow in workflow_names():
+        workflow_name = pending_workflow
+        chosen = workflow_persona(workflow_name)
+    else:
+        workflow_name = _resolve_workflow_name(chosen, suggested_workflow, auto_mode)
+
+    agents = list(workflow_agents(workflow_name))
+    mode = workflow_mode(workflow_name)
+    # Phase 12b: competitive mode carries its own trailing evaluator as part of
+    # the mode contract; skip the auto-append to avoid a duplicate.
+    if workflow_evaluate(workflow_name) and mode != "competitive":
+        agents.append("evaluator")
+    agents_tuple = tuple(agents)
+    _validate_plan_shape(mode, agents_tuple)
+
+    return WorkflowPlan(
+        workflow_name=workflow_name,
+        persona=chosen,
+        agents=agents_tuple,
+        mode=mode,
+        rounds=workflow_rounds(workflow_name),
+        timeout_s=workflow_timeout_s(workflow_name),
+        suggested_workflow=suggested_workflow,
+        suggested_persona=suggested_persona,
+    )
