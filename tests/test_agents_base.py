@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from ubongo.agents.base import Agent, AgentInput, AgentResult
+from ubongo.agents.base import Agent, AgentDirectives, AgentInput, AgentResult
 
 
 def test_agent_input_is_frozen_with_expected_fields():
@@ -17,8 +17,25 @@ def test_agent_input_is_frozen_with_expected_fields():
     assert inp.summary_text is None
     assert inp.prior_findings == ()
     assert inp.metadata == {}
+    # Directives default to "no directive".
+    assert inp.directives == AgentDirectives()
+    assert inp.directives.override_model is None
     with pytest.raises((AttributeError, Exception)):
         inp.message = "no"  # type: ignore[misc]
+
+
+def test_agent_directives_typed_seam():
+    d = AgentDirectives(override_model="m", max_tokens_override=200, repair_prompt_hint="hint")
+    assert d.override_model == "m"
+    assert d.max_tokens_override == 200
+    assert d.repair_prompt_hint == "hint"
+    assert d.skill is None and d.debate_role is None and d.exec_command is None
+    # Frozen.
+    with pytest.raises((AttributeError, Exception)):
+        d.override_model = "x"  # type: ignore[misc]
+    # A misspelled directive fails at construction instead of silently no-op'ing.
+    with pytest.raises(TypeError):
+        AgentDirectives(overide_model="m")  # type: ignore[call-arg]
 
 
 def test_agent_result_is_frozen_with_expected_fields():

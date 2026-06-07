@@ -89,7 +89,7 @@ class CriticAgent:
         if eval_findings is not None:
             sections.append("## Evaluator flagged issues\n\n" + eval_findings)
         # Phase 13b: Repair may pass a prompt-hint addendum on a same-model retry.
-        prompt_hint = input.metadata.get("repair_prompt_hint")
+        prompt_hint = input.directives.repair_prompt_hint
         if prompt_hint:
             sections.append("## Repair guidance\n\n" + prompt_hint)
 

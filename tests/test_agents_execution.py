@@ -8,7 +8,7 @@ import pytest
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo import context, events, skills  # noqa: E402
-from ubongo.agents.base import AgentInput  # noqa: E402
+from ubongo.agents.base import AgentDirectives, AgentInput  # noqa: E402
 from ubongo.agents.execution import ExecutionAgent, _extract_fenced_command  # noqa: E402
 from ubongo.memory import store, vault  # noqa: E402
 
@@ -31,12 +31,13 @@ def _clean_env(tmp_path: Path):
 
 
 def _input(message: str = "", *, metadata: dict | None = None) -> AgentInput:
+    md = metadata or {}
     return AgentInput(
         message=message,
         history=({"role": "user", "content": message},),
         summary_text=None,
         prior_findings=(),
-        metadata=metadata or {},
+        directives=AgentDirectives(exec_command=md.get("exec_command")),
     )
 
 

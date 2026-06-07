@@ -17,11 +17,33 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class AgentDirectives:
+    """Typed control signals the orchestrator passes down to an agent.
+
+    The directive seam (Phase 06): what the runner/Master may tell an agent to
+    do for one run. Every field is optional; the default is "no directive."
+    Replaces the old untyped `metadata` string keys read across the agents, so a
+    misspelled directive fails at construction instead of silently no-op'ing.
+
+    Distinct from `AgentInput.metadata`, which remains an open dict for the
+    Memory agent's commit payload (conversation_id, response_text, ...).
+    """
+
+    override_model: str | None = None
+    max_tokens_override: int | None = None
+    repair_prompt_hint: str | None = None
+    debate_role: str | None = None
+    skill: str | None = None
+    exec_command: str | None = None
+
+
+@dataclass(frozen=True)
 class AgentInput:
     message: str
     history: tuple[dict, ...]
     summary_text: str | None
     prior_findings: tuple[str, ...]
+    directives: AgentDirectives = field(default_factory=AgentDirectives)
     metadata: dict = field(default_factory=dict)
 
 

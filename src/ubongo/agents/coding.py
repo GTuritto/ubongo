@@ -58,7 +58,7 @@ class CodingAgent:
         for i, finding in enumerate(input.prior_findings, start=1):
             sections.append(f"## Prior agent findings #{i}\n\n{finding}")
         # Phase 13b: Repair may pass a prompt-hint addendum on a same-model retry.
-        prompt_hint = input.metadata.get("repair_prompt_hint")
+        prompt_hint = input.directives.repair_prompt_hint
         if prompt_hint:
             sections.append("## Repair guidance\n\n" + prompt_hint)
 

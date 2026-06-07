@@ -9,7 +9,7 @@ import pytest
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo import context, events, skills  # noqa: E402
-from ubongo.agents.base import AgentInput  # noqa: E402
+from ubongo.agents.base import AgentDirectives, AgentInput  # noqa: E402
 from ubongo.agents.evaluator import EvaluatorAgent, _parse_agree, _parse_judgment, _parse_ranking  # noqa: E402
 from ubongo.llm import CompletionResult, LLMError  # noqa: E402
 from ubongo.memory import store, vault  # noqa: E402
@@ -129,7 +129,7 @@ def test_evaluator_appends_repair_prompt_hint_and_max_tokens_override():
         history=({"role": "user", "content": "explain caching"},),
         summary_text=None,
         prior_findings=("the candidate response",),
-        metadata={"repair_prompt_hint": "JSON ONLY.", "max_tokens_override": 200},
+        directives=AgentDirectives(repair_prompt_hint="JSON ONLY.", max_tokens_override=200),
     )
     with patch(
         "ubongo.agents.evaluator.complete",

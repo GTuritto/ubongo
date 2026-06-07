@@ -3,7 +3,7 @@
 Phase 11 ships the agent as composer=False (output is data the persona
 summarizes, not the user-facing response). Source of the command, in
 order of precedence:
-  1. input.metadata["exec_command"]  (set by Master / /exec)
+  1. input.directives.exec_command  (set by Master / /exec)
   2. a single fenced ```sh / ```bash code block in input.message
   3. otherwise: AgentResult(ok=False, error="execution_no_command")
 
@@ -65,7 +65,7 @@ class ExecutionAgent:
 
     def run(self, input: AgentInput, context: "Context") -> AgentResult:
         t0 = time.monotonic()
-        cmd = input.metadata.get("exec_command")
+        cmd = input.directives.exec_command
         if not cmd:
             cmd = _extract_fenced_command(input.message)
         if not cmd:

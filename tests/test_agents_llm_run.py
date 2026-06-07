@@ -6,7 +6,7 @@ import pytest
 
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
-from ubongo.agents.base import AgentInput, AgentResult  # noqa: E402
+from ubongo.agents.base import AgentDirectives, AgentInput, AgentResult  # noqa: E402
 from ubongo.agents.llm_run import (  # noqa: E402
     call_model_or_none,
     resolve_max_tokens,
@@ -24,13 +24,13 @@ def _completion(text: str = "hi") -> CompletionResult:
     )
 
 
-def _input(metadata: dict | None = None) -> AgentInput:
+def _input(directives: dict | None = None) -> AgentInput:
     return AgentInput(
         message="q",
         history=({"role": "user", "content": "q"},),
         summary_text=None,
         prior_findings=(),
-        metadata=metadata or {},
+        directives=AgentDirectives(**(directives or {})),
     )
 
 
