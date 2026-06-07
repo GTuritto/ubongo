@@ -124,6 +124,24 @@ uv run python -m ubongo send --persona casual --mode parallel "what should I coo
 
 A one-shot continues an ongoing REPL session if you're inside the 30-minute session window. If launching produces nothing, check that `OPENROUTER_API_KEY` is set in `.env` and that `.env` is being loaded.
 
+### Web UI (optional, self-hosted)
+
+A local Streamlit chat page for driving Ubongo from another device on your home
+network (e.g. a tablet). It is an additive channel — it calls the same
+`master.handle` seam as the REPL, so classify → plan → execute → govern → compose
+→ enqueue all run unchanged; the governance approval gate becomes Approve/Deny
+buttons. Streamlit is an optional dependency, kept out of the core.
+
+```bash
+uv sync --extra web          # install Streamlit once
+./start-ubongo-web.sh         # binds 0.0.0.0:8501; UBONGO_WEB_PORT to override
+# then open http://<this-machine-ip>:8501 on your tablet
+```
+
+**Security:** no auth and no TLS, by design — intended for a trusted home LAN
+only. Anyone who can reach the page can drive the agent. Do not port-forward it or
+expose it to the internet.
+
 ## Usage
 
 In REPL mode, type messages naturally. Ubongo classifies intent and tone, plans a workflow, runs the agents, gates the result through governance, composes a response in the chosen persona, and writes everything to memory.

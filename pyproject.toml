@@ -14,6 +14,13 @@ dependencies = [
     "sqlite-vec>=0.1.6",
 ]
 
+[project.optional-dependencies]
+# Optional, post-v0.1 web channel (self-hosted Streamlit chat UI). Kept out of the
+# core deps so the CLI stays lean: install with `uv sync --extra web`.
+web = [
+    "streamlit>=1.30",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
