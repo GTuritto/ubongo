@@ -19,9 +19,10 @@ import time
 from typing import TYPE_CHECKING
 
 from ubongo.agents.base import AgentInput, AgentResult
+from ubongo.agents.llm_run import run_agent_llm
 from ubongo.config import load_config
 from ubongo.context import build_system_prompt
-from ubongo.llm import LLMError, complete
+from ubongo.llm import complete
 
 if TYPE_CHECKING:
     from ubongo.master import Context
@@ -91,48 +92,15 @@ class CriticAgent:
         prompt_hint = input.metadata.get("repair_prompt_hint")
         if prompt_hint:
             sections.append("## Repair guidance\n\n" + prompt_hint)
-        system_prompt = "\n\n".join(sections)
 
-        model = input.metadata.get("override_model") or self.default_model
-        max_tokens = input.metadata.get("max_tokens_override") or self.max_tokens
-        try:
-            completion = complete(
-                system_prompt=system_prompt,
-                messages=[{"role": "user", "content": "Argue against the candidate response."}],
-                model=model,
-                max_tokens=max_tokens,
-            )
-        except LLMError as exc:
-            elapsed = int((time.monotonic() - t0) * 1000)
-            logger.warning(
-                "critic_llm_error",
-                extra={"model": model, "cause": str(exc.cause) if exc.cause else None},
-            )
-            return AgentResult(
-                text="",
-                ok=False,
-                model=model,
-                tokens_in=0,
-                tokens_out=0,
-                latency_ms=elapsed,
-                error="critic_llm_error",
-            )
-
-        logger.info(
-            "critic_run",
-            extra={
-                "model": completion.model,
-                "tokens_in": completion.tokens_in,
-                "tokens_out": completion.tokens_out,
-                "latency_ms": completion.latency_ms,
-                "saw_evaluator_findings": eval_findings is not None,
-            },
-        )
-        return AgentResult(
-            text=completion.text,
-            ok=True,
-            model=completion.model,
-            tokens_in=completion.tokens_in,
-            tokens_out=completion.tokens_out,
-            latency_ms=completion.latency_ms,
+        return run_agent_llm(
+            agent_name="critic",
+            logger=logger,
+            input=input,
+            system_prompt="\n\n".join(sections),
+            messages=[{"role": "user", "content": "Argue against the candidate response."}],
+            default_model=self.default_model,
+            default_max_tokens=self.max_tokens,
+            complete_fn=complete,
+            success_log_extra={"saw_evaluator_findings": eval_findings is not None},
         )

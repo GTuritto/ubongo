@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -9,9 +8,10 @@ from typing import TYPE_CHECKING
 import yaml
 
 from ubongo.agents.base import AgentInput, AgentResult
+from ubongo.agents.llm_run import run_agent_llm
 from ubongo.config import load_config
 from ubongo.context import build_system_prompt
-from ubongo.llm import LLMError, complete
+from ubongo.llm import complete
 
 if TYPE_CHECKING:
     from ubongo.master import Context
@@ -109,7 +109,6 @@ class BasePersonaAgent:
         self._max_tokens = persona.max_tokens
 
     def run(self, input: AgentInput, context: "Context") -> AgentResult:
-        t0 = time.monotonic()
         persona = get(self.persona_name)
         skill_name = input.metadata.get("skill")
         base = build_system_prompt(self.persona_name, skill=skill_name)
@@ -145,56 +144,19 @@ class BasePersonaAgent:
         prompt_hint = input.metadata.get("repair_prompt_hint")
         if prompt_hint:
             sections.append("## Repair guidance\n\n" + prompt_hint)
-        system_prompt = "\n\n".join(sections)
-        model = input.metadata.get("override_model") or persona.model
-        max_tokens = input.metadata.get("max_tokens_override") or persona.max_tokens
 
-        try:
-            completion = complete(
-                system_prompt=system_prompt,
-                messages=list(input.history),
-                model=model,
-                max_tokens=max_tokens,
-            )
-        except LLMError as exc:
-            elapsed = int((time.monotonic() - t0) * 1000)
-            logger.error(
-                "persona_llm_error",
-                extra={
-                    "persona": self.persona_name,
-                    "model": model,
-                    "cause": str(exc.cause) if exc.cause else None,
-                },
-            )
-            return AgentResult(
-                text=_LLM_FAILURE_MESSAGE,
-                ok=False,
-                model=model,
-                tokens_in=0,
-                tokens_out=0,
-                latency_ms=elapsed,
-                error="persona_llm_error",
-            )
-
-        logger.info(
-            "persona_run",
-            extra={
-                "persona": self.persona_name,
-                "model": completion.model,
-                "tokens_in": completion.tokens_in,
-                "tokens_out": completion.tokens_out,
-                "latency_ms": completion.latency_ms,
-                "attempts": completion.attempts,
-                "had_findings": bool(input.prior_findings),
-            },
-        )
-        return AgentResult(
-            text=completion.text,
-            ok=True,
-            model=completion.model,
-            tokens_in=completion.tokens_in,
-            tokens_out=completion.tokens_out,
-            latency_ms=completion.latency_ms,
+        return run_agent_llm(
+            agent_name="persona",
+            logger=logger,
+            input=input,
+            system_prompt="\n\n".join(sections),
+            messages=list(input.history),
+            default_model=persona.model,
+            default_max_tokens=persona.max_tokens,
+            complete_fn=complete,
+            error_text=_LLM_FAILURE_MESSAGE,
+            log_extra={"persona": self.persona_name},
+            success_log_extra={"had_findings": bool(input.prior_findings)},
         )
 
 

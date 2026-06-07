@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 from typing import TYPE_CHECKING
 
 from ubongo.agents.base import AgentInput, AgentResult
+from ubongo.agents.llm_run import run_agent_llm
 from ubongo.config import load_config
 from ubongo.context import build_system_prompt
-from ubongo.llm import LLMError, complete
+from ubongo.llm import complete
 from ubongo.memory import store, vault
 
 if TYPE_CHECKING:
@@ -102,7 +102,6 @@ class ResearchAgent:
         )
 
     def run(self, input: AgentInput, context: "Context") -> AgentResult:
-        t0 = time.monotonic()
         all_recent = store.last_n_messages_global(_MAX_CONV_MESSAGES)
         relevant = _filter_messages_by_overlap(input.message, all_recent)
         snippets = vault.search_daily_notes(input.message, max_snippets=_MAX_VAULT_SNIPPETS)
@@ -124,55 +123,20 @@ class ResearchAgent:
         prompt_hint = input.metadata.get("repair_prompt_hint")
         if prompt_hint:
             system_prompt = system_prompt + "\n\n## Repair guidance\n\n" + prompt_hint
-        model = input.metadata.get("override_model") or self.default_model
-        max_tokens = input.metadata.get("max_tokens_override") or self.max_tokens
-        try:
-            completion = complete(
-                system_prompt=system_prompt,
-                messages=[{"role": "user", "content": input.message}],
-                model=model,
-                max_tokens=max_tokens,
-            )
-        except LLMError as exc:
-            elapsed = int((time.monotonic() - t0) * 1000)
-            logger.warning(
-                "research_llm_error",
-                extra={"model": model, "cause": str(exc.cause) if exc.cause else None},
-            )
-            return AgentResult(
-                text="",
-                ok=False,
-                model=model,
-                tokens_in=0,
-                tokens_out=0,
-                latency_ms=elapsed,
-                error="research_llm_error",
-                metadata={
-                    "retrieved_messages": len(relevant),
-                    "retrieved_snippets": len(snippets),
-                },
-            )
 
-        logger.info(
-            "research_run",
-            extra={
-                "model": completion.model,
-                "tokens_in": completion.tokens_in,
-                "tokens_out": completion.tokens_out,
-                "latency_ms": completion.latency_ms,
-                "retrieved_messages": len(relevant),
-                "retrieved_snippets": len(snippets),
-            },
-        )
-        return AgentResult(
-            text=completion.text,
-            ok=True,
-            model=completion.model,
-            tokens_in=completion.tokens_in,
-            tokens_out=completion.tokens_out,
-            latency_ms=completion.latency_ms,
-            metadata={
-                "retrieved_messages": len(relevant),
-                "retrieved_snippets": len(snippets),
-            },
+        retrieval = {
+            "retrieved_messages": len(relevant),
+            "retrieved_snippets": len(snippets),
+        }
+        return run_agent_llm(
+            agent_name="research",
+            logger=logger,
+            input=input,
+            system_prompt=system_prompt,
+            messages=[{"role": "user", "content": input.message}],
+            default_model=self.default_model,
+            default_max_tokens=self.max_tokens,
+            complete_fn=complete,
+            result_metadata=retrieval,
+            success_log_extra=retrieval,
         )
