@@ -65,8 +65,26 @@ These are deliberate v0.1 scope boundaries, not oversights:
   file, run arbitrary Python). The filesystem allowlist bounds *where*; it does
   not bound *what* an interpreter does inside that boundary.
 
+## Optional web UI (post-v0.1)
+
+The optional Streamlit web channel (`src/ubongo/web/`, `./start-ubongo-web.sh`)
+adds a network listener, by design **without authentication or TLS** — it is
+intended for a single user on a trusted home LAN. Consequences to be aware of:
+
+- **No login, no transport encryption.** Anyone who can reach the host:port can
+  drive the agent. The launcher binds `0.0.0.0` so a tablet on the same network
+  can connect; this also means any device on that network can.
+- **The agent's governance + sandbox still apply** — the web turn runs through
+  the same `master.handle` pipeline as the CLI, so the approval gate (rendered as
+  Approve/Deny) and the Execution sandbox above are unchanged. The web UI adds no
+  new privileged path; it adds an *unauthenticated* way to reach the existing one.
+- **Do not expose it beyond your LAN.** No port-forwarding, no reverse proxy to
+  the internet. Authentication/TLS are explicitly out of v0.1 scope. The channel
+  is off unless you install (`./install.sh --web`) and start it.
+
 ## Reporting
 
-This is a personal project with no external attack surface (CLI only, single
-user, local). There is no disclosure process; security notes belong in the
-repo's issue tracker.
+This is a personal project with no external attack surface in the default CLI
+configuration (single user, local). The optional web UI is LAN-only by design
+(above). There is no disclosure process; security notes belong in the repo's
+issue tracker.
