@@ -42,6 +42,11 @@ Ubongo is a single-user, single-machine, local app. No Docker, no database serve
 
 That's it. The installer finishes by verifying a clean cold start.
 
+> **Want the web UI too?** Run `./install.sh --web` instead. It additionally
+> installs the optional Streamlit chat page so you can talk to Ubongo from a
+> tablet on your home network. See §4 below. (You can re-run `./install.sh --web`
+> later to add it.)
+
 > **Note on semantic recall:** Ubongo uses `sqlite-vec` for semantic memory. If it can't load on your platform, the installer says so and Ubongo runs in **recency-only** mode — everything else works normally. You lose only the "find older relevant turns" feature.
 
 ---
@@ -75,6 +80,29 @@ One-shot (run a single message and exit — good for scripts):
 ```
 
 To leave the REPL: type `/exit`, or press **Ctrl-D**.
+
+### Web UI (optional — talk to Ubongo from your tablet)
+
+If you installed with `./install.sh --web`, you can run a local chat page that
+other devices on your home Wi-Fi (a tablet, a laptop) can open in a browser:
+
+```bash
+./start-ubongo-web.sh
+```
+
+It prints the address to use, e.g. `http://192.168.1.20:8501`. Open that on your
+tablet. The page has a chat box, a persona selector, and an auto-route toggle;
+when a turn needs approval you get **Approve / Deny** buttons instead of the
+`y/n` prompt. Change the port with `UBONGO_WEB_PORT=9000 ./start-ubongo-web.sh`.
+
+It is the same Ubongo — the web page runs every turn through the exact same
+pipeline as the REPL (classify → plan → execute → govern → compose → remember),
+sharing the same database and vault.
+
+> **Security:** the web page has **no password and no HTTPS**, on purpose — it is
+> meant for your trusted home network only. Anyone who can reach the address can
+> talk to Ubongo (and it can run sandboxed shell commands). Do not forward the
+> port through your router or expose it to the internet. See `docs/SECURITY.md`.
 
 ---
 

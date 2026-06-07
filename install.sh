@@ -17,7 +17,18 @@ say()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m !!\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m xx\033[0m %s\n' "$*" >&2; exit 1; }
 
+# --web also installs the optional Streamlit web UI (the tablet chat page).
+WITH_WEB=0
+for arg in "$@"; do
+  case "$arg" in
+    --web) WITH_WEB=1 ;;
+    -h|--help) echo "Usage: ./install.sh [--web]"; exit 0 ;;
+    *) die "Unknown option: $arg (try --web)" ;;
+  esac
+done
+
 say "Installing Ubongo into: $APP_DIR"
+[ "$WITH_WEB" -eq 1 ] && say "Including the optional web UI (Streamlit)."
 
 # --- 1. Python >= 3.11 ------------------------------------------------------
 command -v python3 >/dev/null 2>&1 || \
@@ -44,7 +55,11 @@ source .venv/bin/activate
 # --- 3. dependencies --------------------------------------------------------
 say "Installing dependencies (a few minutes on a Pi the first time)…"
 python -m pip install --upgrade pip wheel >/dev/null
-python -m pip install -e .
+if [ "$WITH_WEB" -eq 1 ]; then
+  python -m pip install -e ".[web]"
+else
+  python -m pip install -e .
+fi
 
 # --- 4. sqlite-vec sanity (optional; recall degrades gracefully) ------------
 if python -c 'import sqlite_vec' 2>/dev/null; then
@@ -98,4 +113,9 @@ echo
 say "Install complete."
 echo "    Start the REPL:   ./start-ubongo.sh"
 echo "    One-shot:         ./start-ubongo.sh send \"hello\" --persona casual"
+if [ "$WITH_WEB" -eq 1 ]; then
+  echo "    Web UI (tablet):  ./start-ubongo-web.sh   then open http://<this-ip>:8501"
+else
+  echo "    Web UI (tablet):  re-run ./install.sh --web, then ./start-ubongo-web.sh"
+fi
 echo "    User manual:      docs/USER_MANUAL.md"
