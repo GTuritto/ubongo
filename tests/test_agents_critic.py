@@ -9,7 +9,7 @@ import pytest
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo import context, events, skills  # noqa: E402
-from ubongo.agents.base import AgentInput  # noqa: E402
+from ubongo.agents.base import AgentDirectives, AgentInput  # noqa: E402
 from ubongo.agents.critic import CriticAgent, _extract_evaluator_issues  # noqa: E402
 from ubongo.llm import CompletionResult, LLMError  # noqa: E402
 from ubongo.memory import store, vault  # noqa: E402
@@ -106,7 +106,7 @@ def test_critic_appends_repair_prompt_hint_and_max_tokens_override():
     inp = AgentInput(
         message="x", history=({"role": "user", "content": "x"},),
         summary_text=None, prior_findings=("the candidate response",),
-        metadata={"repair_prompt_hint": "Be terse.", "max_tokens_override": 200},
+        directives=AgentDirectives(repair_prompt_hint="Be terse.", max_tokens_override=200),
     )
     with patch("ubongo.agents.critic.complete", return_value=_completion("- bullet")) as m:
         agent.run(inp, context=None)

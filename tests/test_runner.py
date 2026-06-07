@@ -270,7 +270,7 @@ class FlakyAgent:
         self._fail_first = fail_first
 
     def run(self, input, context):
-        self.calls.append({"override_model": input.metadata.get("override_model")})
+        self.calls.append({"override_model": input.directives.override_model})
         if self._fail_first and len(self.calls) == 1:
             return AgentResult(
                 text="", ok=False, model=self.default_model,
@@ -279,7 +279,7 @@ class FlakyAgent:
             )
         return AgentResult(
             text="recovered response", ok=True,
-            model=input.metadata.get("override_model") or self.default_model,
+            model=input.directives.override_model or self.default_model,
             tokens_in=10, tokens_out=20, latency_ms=2,
         )
 
@@ -314,7 +314,7 @@ def test_repair_gives_up_after_second_failure():
 
     class AlwaysFail(FlakyAgent):
         def run(self, input, context):
-            self.calls.append({"override_model": input.metadata.get("override_model")})
+            self.calls.append({"override_model": input.directives.override_model})
             return AgentResult(
                 text="", ok=False, model=self.default_model,
                 tokens_in=0, tokens_out=0, latency_ms=1,
@@ -370,9 +370,9 @@ def test_repair_walks_full_ladder_then_recovers():
 
         def run(self, input, context):
             self.calls.append({
-                "override_model": input.metadata.get("override_model"),
-                "prompt_hint": input.metadata.get("repair_prompt_hint"),
-                "max_tokens": input.metadata.get("max_tokens_override"),
+                "override_model": input.directives.override_model,
+                "prompt_hint": input.directives.repair_prompt_hint,
+                "max_tokens": input.directives.max_tokens_override,
             })
             if len(self.calls) < 3:
                 return AgentResult(
@@ -436,7 +436,7 @@ def test_repair_passes_prompt_hint_to_agent_via_metadata():
             self.captured: list[dict] = []
 
         def run(self, input, context):
-            self.captured.append(dict(input.metadata))
+            self.captured.append({"repair_prompt_hint": input.directives.repair_prompt_hint})
             if len(self.captured) == 1:
                 return AgentResult(
                     text="", ok=False, model="m",
@@ -1134,7 +1134,7 @@ def test_debate_full_2_rounds_plus_synthesis():
             self._call_no += 1
             seen_metadata.append({
                 "agent": self.name,
-                "debate_role": input.metadata.get("debate_role"),
+                "debate_role": input.directives.debate_role,
                 "prior_findings_len": len(input.prior_findings),
                 "call_no": self._call_no,
             })

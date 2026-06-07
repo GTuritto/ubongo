@@ -35,13 +35,13 @@ OnSuccess = Callable[[CompletionResult], AgentResult]
 
 
 def resolve_model(input: "AgentInput", default_model: str) -> str:
-    """The override model from metadata, else the agent default."""
-    return input.metadata.get("override_model") or default_model
+    """The override model from directives, else the agent default."""
+    return input.directives.override_model or default_model
 
 
 def resolve_max_tokens(input: "AgentInput", default_max_tokens: int) -> int:
-    """The override token cap from metadata, else the agent default."""
-    return input.metadata.get("max_tokens_override") or default_max_tokens
+    """The override token cap from directives, else the agent default."""
+    return input.directives.max_tokens_override or default_max_tokens
 
 
 def call_model_or_none(

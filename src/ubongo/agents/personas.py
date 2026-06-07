@@ -110,7 +110,7 @@ class BasePersonaAgent:
 
     def run(self, input: AgentInput, context: "Context") -> AgentResult:
         persona = get(self.persona_name)
-        skill_name = input.metadata.get("skill")
+        skill_name = input.directives.skill
         base = build_system_prompt(self.persona_name, skill=skill_name)
 
         sections: list[str] = [base]
@@ -123,7 +123,7 @@ class BasePersonaAgent:
         # Phase 12d: debate mode tags the second-and-onward speaker with
         # debate_role="challenge" so they argue against the prior position.
         # A debate_role="synthesize" tag is set on the synthesizer turn.
-        debate_role = input.metadata.get("debate_role")
+        debate_role = input.directives.debate_role
         if debate_role == "challenge":
             sections.append(
                 "## Debate role: challenge\n\nYou are in a debate. Read the prior turns above "
@@ -141,7 +141,7 @@ class BasePersonaAgent:
         # Phase 13b: Repair may pass a prompt-hint addendum (stricter schema,
         # rephrase instruction) on a same-model retry. Appended last so it
         # takes priority over default phrasing.
-        prompt_hint = input.metadata.get("repair_prompt_hint")
+        prompt_hint = input.directives.repair_prompt_hint
         if prompt_hint:
             sections.append("## Repair guidance\n\n" + prompt_hint)
 

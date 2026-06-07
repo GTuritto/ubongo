@@ -26,7 +26,7 @@ import time
 from typing import TYPE_CHECKING
 
 from ubongo import events
-from ubongo.agents.base import Agent, AgentInput, AgentResult
+from ubongo.agents.base import Agent, AgentDirectives, AgentInput, AgentResult
 from ubongo.memory import store
 
 if TYPE_CHECKING:
@@ -100,26 +100,26 @@ class WorkflowRunner:
         workflow_run_id: int | None,
         override_model: str | None,
         retried: bool,
-        extra_metadata: dict | None = None,
+        repair_prompt_hint: str | None = None,
+        max_tokens_override: int | None = None,
+        debate_role: str | None = None,
     ) -> AgentResult:
         """Run a single agent off-thread, record the agent_runs row, dispatch
         lifecycle events. Used by every mode strategy; the only place we cross
         the sync/async boundary into agent code."""
-        metadata: dict = {
-            "persona": workflow.persona,
-            "skill": workflow.skill_name,
-        }
-        if override_model:
-            metadata["override_model"] = override_model
-        if extra_metadata:
-            metadata.update(extra_metadata)
-
+        directives = AgentDirectives(
+            skill=workflow.skill_name,
+            override_model=override_model,
+            repair_prompt_hint=repair_prompt_hint,
+            max_tokens_override=max_tokens_override,
+            debate_role=debate_role,
+        )
         input = AgentInput(
             message=message,
             history=tuple(history),
             summary_text=summary_text,
             prior_findings=tuple(prior_findings),
-            metadata=metadata,
+            directives=directives,
         )
         events.dispatch(
             "agent_started",
@@ -372,11 +372,6 @@ class WorkflowRunner:
                     override_model=None,
                     retried=True,
                 )
-            extra_metadata: dict = {}
-            if plan.prompt_hint:
-                extra_metadata["repair_prompt_hint"] = plan.prompt_hint
-            if plan.max_tokens_cap:
-                extra_metadata["max_tokens_override"] = plan.max_tokens_cap
             return await self._dispatch_agent_async(
                 agent=agent,
                 agent_name=agent_name,
@@ -389,7 +384,8 @@ class WorkflowRunner:
                 workflow_run_id=workflow_run_id,
                 override_model=plan.override_model,
                 retried=True,
-                extra_metadata=extra_metadata or None,
+                repair_prompt_hint=plan.prompt_hint or None,
+                max_tokens_override=plan.max_tokens_cap or None,
             )
 
         def persist(attempt: RepairAttempt) -> None:
@@ -898,7 +894,7 @@ class WorkflowRunner:
                     workflow_run_id=workflow_run_id,
                     override_model=None,
                     retried=False,
-                    extra_metadata=({"debate_role": debate_role} if debate_role else None),
+                    debate_role=debate_role,
                 )
                 if not result.ok:
                     # Phase 13c: one peer substitution before short-circuiting,
@@ -944,7 +940,7 @@ class WorkflowRunner:
             workflow_run_id=workflow_run_id,
             override_model=None,
             retried=False,
-            extra_metadata={"debate_role": "synthesize"},
+            debate_role="synthesize",
         )
 
         if not synth_result.ok:

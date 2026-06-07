@@ -9,7 +9,7 @@ import pytest
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo import context, events, skills  # noqa: E402
-from ubongo.agents.base import AgentInput  # noqa: E402
+from ubongo.agents.base import AgentDirectives, AgentInput  # noqa: E402
 from ubongo.agents.coding import CodingAgent  # noqa: E402
 from ubongo.llm import CompletionResult, LLMError  # noqa: E402
 from ubongo.memory import store, vault  # noqa: E402
@@ -99,7 +99,7 @@ def test_coding_honors_override_model_from_metadata():
     agent = CodingAgent()
     inp = AgentInput(
         message="x", history=({"role": "user", "content": "x"},),
-        summary_text=None, prior_findings=(), metadata={"override_model": "fallback-m"},
+        summary_text=None, prior_findings=(), directives=AgentDirectives(override_model="fallback-m"),
     )
     with patch("ubongo.agents.coding.complete", return_value=_completion()) as m:
         agent.run(inp, context=None)
@@ -111,7 +111,7 @@ def test_coding_appends_repair_prompt_hint_and_max_tokens_override():
     inp = AgentInput(
         message="x", history=({"role": "user", "content": "x"},),
         summary_text=None, prior_findings=(),
-        metadata={"repair_prompt_hint": "Be concise.", "max_tokens_override": 200},
+        directives=AgentDirectives(repair_prompt_hint="Be concise.", max_tokens_override=200),
     )
     with patch("ubongo.agents.coding.complete", return_value=_completion()) as m:
         agent.run(inp, context=None)

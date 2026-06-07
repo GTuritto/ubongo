@@ -9,7 +9,7 @@ import pytest
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo import context, events, skills  # noqa: E402
-from ubongo.agents.base import AgentInput  # noqa: E402
+from ubongo.agents.base import AgentDirectives, AgentInput  # noqa: E402
 from ubongo.agents.personas import (  # noqa: E402
     ArchitectPersona,
     BasePersonaAgent,
@@ -100,7 +100,7 @@ def test_persona_appends_repair_prompt_hint_from_metadata():
         history=({"role": "user", "content": "hi"},),
         summary_text=None,
         prior_findings=(),
-        metadata={"repair_prompt_hint": "Be brief and JSON-only."},
+        directives=AgentDirectives(repair_prompt_hint="Be brief and JSON-only."),
     )
     with patch("ubongo.agents.personas.complete", return_value=_completion("ok")) as m:
         agent.run(inp, context=None)
@@ -117,7 +117,7 @@ def test_persona_max_tokens_override_applies():
         history=({"role": "user", "content": "hi"},),
         summary_text=None,
         prior_findings=(),
-        metadata={"max_tokens_override": 200},
+        directives=AgentDirectives(max_tokens_override=200),
     )
     with patch("ubongo.agents.personas.complete", return_value=_completion("ok")) as m:
         agent.run(inp, context=None)

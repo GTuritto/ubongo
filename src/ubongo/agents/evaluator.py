@@ -188,7 +188,7 @@ class EvaluatorAgent:
             + "\n\n## Candidate response\n\n" + candidate
         )
         # Phase 13b: Repair may pass a prompt-hint addendum on a same-model retry.
-        prompt_hint = input.metadata.get("repair_prompt_hint")
+        prompt_hint = input.directives.repair_prompt_hint
         if prompt_hint:
             system_prompt = system_prompt + "\n\n## Repair guidance\n\n" + prompt_hint
 

@@ -9,7 +9,7 @@ import pytest
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo import context, events, skills  # noqa: E402
-from ubongo.agents.base import AgentInput  # noqa: E402
+from ubongo.agents.base import AgentDirectives, AgentInput  # noqa: E402
 from ubongo.agents.research import ResearchAgent, _filter_messages_by_overlap, _tokens  # noqa: E402
 from ubongo.llm import CompletionResult, LLMError  # noqa: E402
 from ubongo.memory import store, vault  # noqa: E402
@@ -139,7 +139,7 @@ def test_research_appends_repair_prompt_hint_and_max_tokens_override():
         history=({"role": "user", "content": "explain caching"},),
         summary_text=None,
         prior_findings=(),
-        metadata={"repair_prompt_hint": "Limit to one paragraph.", "max_tokens_override": 200},
+        directives=AgentDirectives(repair_prompt_hint="Limit to one paragraph.", max_tokens_override=200),
     )
     with patch("ubongo.agents.research.complete", return_value=_completion("ok")) as m:
         agent.run(inp, context=None)
