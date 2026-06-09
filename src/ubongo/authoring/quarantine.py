@@ -75,7 +75,7 @@ def write_candidate_folder(candidate: SkillCandidate, *, base: Path | None = Non
         prompts_dir.mkdir(exist_ok=True)
         for key, content in candidate.prompts.items():
             (prompts_dir / f"{key}.md").write_text(content.rstrip() + "\n", encoding="utf-8")
-    logger.info("authoring_quarantined", extra={"name": candidate.name, "path": str(root)})
+    logger.info("authoring_quarantined", extra={"skill_name": candidate.name, "path": str(root)})
     return root
 
 
@@ -98,6 +98,6 @@ def persist(candidate: SkillCandidate, *, source: str = "manual") -> int:
     )
     logger.info(
         "authoring_persisted",
-        extra={"id": row_id, "name": candidate.name, "generation": generation},
+        extra={"id": row_id, "skill_name": candidate.name, "generation": generation},
     )
     return row_id
