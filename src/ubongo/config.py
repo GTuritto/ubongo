@@ -114,5 +114,15 @@ def load_evolution(path: Path | None = None, *, force_reload: bool = False) -> d
     return load_config(path, force_reload=force_reload).get("evolution", {})
 
 
+def load_authoring(path: Path | None = None, *, force_reload: bool = False) -> dict[str, Any]:
+    """Return the `authoring:` block from settings.yaml (self-extension experiment).
+
+    A thin accessor over `load_config()`, mirroring `load_evolution()`, so the
+    skill-authoring layer reads its knobs (drafting model, daemon budget/cron)
+    through one named entry point. Empty dict if the block is absent.
+    """
+    return load_config(path, force_reload=force_reload).get("authoring", {})
+
+
 def reload() -> None:
     _cache.clear()

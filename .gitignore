@@ -13,6 +13,12 @@
 vault/*
 !vault/.gitkeep
 
+# Self-authored skills: quarantined drafts and pre-overwrite backups are
+# generated at runtime (the approval gate materializes approved skills into the
+# tracked config/skills/). Not source.
+config/skills_candidates/
+config/skills_backups/
+
 # Python
 __pycache__/
 *.py[cod]

@@ -1730,3 +1730,129 @@ def resolve_vault_conflict(conflict_id: int, resolution: str) -> bool:
         (resolution, conflict_id),
     )
     return cur.rowcount > 0
+
+
+# --- Authored skills (self-extension experiment) ----------------------------
+# One row per drafted skill candidate. Phase 1 writes 'draft' rows; the approval
+# gate (Phase 3) updates status / backup_path / decided_at, and the evaluation
+# (Phase 2) sets quality.
+
+_AUTHORED_COLUMNS = (
+    "id, name, description, status, generation, source, candidate, "
+    "quarantine_path, backup_path, quality, created_at, decided_at"
+)
+
+
+def _authored_row(r: sqlite3.Row) -> dict:
+    import json as _json
+
+    d = dict(r)
+    raw = d.get("candidate")
+    d["candidate"] = _json.loads(raw) if raw else {}
+    return d
+
+
+def append_authored_skill(
+    *,
+    name: str,
+    description: str,
+    status: str = "draft",
+    generation: int = 1,
+    source: str = "manual",
+    candidate: dict,
+    quarantine_path: str | None = None,
+    created_at: str | None = None,
+) -> int:
+    """Persist one authored_skills row (the candidate dict is stored as JSON).
+    Returns the new id."""
+    import json as _json
+
+    conn = connection()
+    cursor = conn.execute(
+        """
+        INSERT INTO authored_skills
+            (name, description, status, generation, source, candidate,
+             quarantine_path, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            name,
+            description,
+            status,
+            generation,
+            source,
+            _json.dumps(candidate),
+            quarantine_path,
+            created_at or now_iso(),
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
+def get_authored_skill(skill_id: int) -> dict | None:
+    conn = connection()
+    r = conn.execute(
+        f"SELECT {_AUTHORED_COLUMNS} FROM authored_skills WHERE id = ?", (skill_id,)
+    ).fetchone()
+    return _authored_row(r) if r is not None else None
+
+
+def authored_skills(status: str | None = None, limit: int = 50) -> list[dict]:
+    """List authored-skill rows, newest first, optionally filtered by status."""
+    conn = connection()
+    if status is not None:
+        rows = conn.execute(
+            f"SELECT {_AUTHORED_COLUMNS} FROM authored_skills WHERE status = ? "
+            "ORDER BY id DESC LIMIT ?",
+            (status, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            f"SELECT {_AUTHORED_COLUMNS} FROM authored_skills ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [_authored_row(r) for r in rows]
+
+
+def max_authored_generation(name: str) -> int:
+    """Highest generation recorded for an authored-skill name, or 0 if none."""
+    conn = connection()
+    r = conn.execute(
+        "SELECT COALESCE(MAX(generation), 0) AS g FROM authored_skills WHERE name = ?",
+        (name,),
+    ).fetchone()
+    return int(r["g"]) if r is not None else 0
+
+
+def update_authored_skill(
+    skill_id: int,
+    *,
+    status: str | None = None,
+    backup_path: str | None = None,
+    quality: float | None = None,
+    decided_at: str | None = None,
+) -> bool:
+    """Patch the mutable fields of an authored-skill row (Phase 2/3). Only the
+    provided fields change. Returns True if a row was updated."""
+    sets: list[str] = []
+    params: list = []
+    if status is not None:
+        sets.append("status = ?")
+        params.append(status)
+    if backup_path is not None:
+        sets.append("backup_path = ?")
+        params.append(backup_path)
+    if quality is not None:
+        sets.append("quality = ?")
+        params.append(quality)
+    if decided_at is not None:
+        sets.append("decided_at = ?")
+        params.append(decided_at)
+    if not sets:
+        return False
+    params.append(skill_id)
+    conn = connection()
+    cur = conn.execute(
+        f"UPDATE authored_skills SET {', '.join(sets)} WHERE id = ?", params
+    )
+    return cur.rowcount > 0

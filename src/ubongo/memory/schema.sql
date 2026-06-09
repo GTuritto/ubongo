@@ -203,6 +203,30 @@ CREATE TABLE IF NOT EXISTS vault_conflicts (
 );
 CREATE INDEX IF NOT EXISTS idx_vault_conflicts_open ON vault_conflicts(status) WHERE status = 'open';
 
+-- Self-authored skills (the self-extension experiment). One row per drafted
+-- skill candidate. A candidate is written to config/skills_candidates/<name>/
+-- (quarantine, NOT scanned by skills.py) and recorded here as 'draft'. The
+-- approval gate (Phase 3) flips it to 'approved' (materialized into
+-- config/skills/) or 'rejected'; rollback marks 'rolled_back'. `backup_path`
+-- records where a prior version was copied before an approve overwrote it, so
+-- rollback can restore it. `quality` is the Phase 2 evaluation score.
+CREATE TABLE IF NOT EXISTS authored_skills (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL CHECK (status IN ('draft', 'approved', 'rejected', 'rolled_back')),
+  generation INTEGER NOT NULL DEFAULT 1,
+  source TEXT NOT NULL DEFAULT 'manual',
+  candidate JSON NOT NULL,
+  quarantine_path TEXT,
+  backup_path TEXT,
+  quality REAL,
+  created_at TIMESTAMP NOT NULL,
+  decided_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_authored_skills_status ON authored_skills(status);
+CREATE INDEX IF NOT EXISTS idx_authored_skills_name ON authored_skills(name, generation);
+
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_summaries_conversation ON summaries(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_queue_undelivered ON notification_queue(delivered_at) WHERE delivered_at IS NULL;

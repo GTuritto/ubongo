@@ -115,15 +115,16 @@ def _truncate(text: str, cap: int) -> str:
     return text[:cap] + f"\n…(truncated; {len(text) - cap} more bytes)"
 
 
-def run_constrained(cmd: str, *, timeout: int | None = None) -> SandboxResult:
-    """Run a single allowlisted command inside the repo root with a tight env.
+def validate_command(cmd: str) -> list[str]:
+    """Run every pre-execution safety check and return the parsed argv.
 
-    Raises SandboxRefused for any command that fails the safety checks.
-    Returns a SandboxResult for every actual subprocess execution (including
-    failures and timeouts).
+    Raises SandboxRefused for any command that fails the allowlist /
+    metacharacter / path-traversal checks. This is the exact gate
+    `run_constrained` applies before spawning, factored out so callers that need
+    to *validate without executing* (e.g. the skill-authoring layer vetting a
+    generated command template) reuse the identical contract instead of
+    re-implementing it. The enforcement stays in this one module (ADR-0005).
     """
-    timeout_value = timeout if timeout is not None else _DEFAULT_TIMEOUT_SECONDS
-
     if not cmd or not cmd.strip():
         raise SandboxRefused("empty command")
 
@@ -144,6 +145,20 @@ def run_constrained(cmd: str, *, timeout: int | None = None) -> SandboxResult:
 
     _check_metachars(argv)
     _check_paths(argv)
+    return argv
+
+
+def run_constrained(cmd: str, *, timeout: int | None = None) -> SandboxResult:
+    """Run a single allowlisted command inside the repo root with a tight env.
+
+    Raises SandboxRefused for any command that fails the safety checks.
+    Returns a SandboxResult for every actual subprocess execution (including
+    failures and timeouts).
+    """
+    timeout_value = timeout if timeout is not None else _DEFAULT_TIMEOUT_SECONDS
+
+    argv = validate_command(cmd)
+    program = argv[0]
 
     # Phase 15c: dispatch the resolved absolute path; the child gets PATH=""
     # so it cannot spawn further programs by bare name.

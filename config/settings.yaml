@@ -107,6 +107,26 @@ evolution:
     hallucination_inverse: 0.20
     user_correction_inverse: 0.15
 
+# Self-authored skills (the self-extension experiment). Ubongo drafts brand-new
+# skills; nothing becomes discoverable until the user approves it via
+# /skill-candidates. The manual `/author` command works regardless of these
+# knobs; they configure the autonomous authoring daemon (Phase 4).
+authoring:
+  # Phase 4 daemon master switch (the loop comes up PAUSED even when true).
+  enabled: true
+  # Phase 4: rolling-hour LLM-call budget for the autonomous daemon.
+  max_calls_per_hour: 20
+  # Phase 4 pacing. null = continuous (bounded by max_calls_per_hour); an int =
+  # minimum seconds between draft cycles.
+  cron: null
+  # Drafting model for /author and the daemon. null = fall back to models.coding.
+  model: null
+  # Phase 2: held-out samples scored per candidate when evaluating.
+  samples_per_eval: 3
+  # Phase 3 placeholder: a daemon-drafted candidate is only surfaced for approval
+  # when its quality clears this floor.
+  promotion_margin: 0.05
+
 logging:
   level: INFO
   format: json
