@@ -1016,12 +1016,90 @@ def _render_skill_candidates_list() -> str:
             f"gen={r['generation']} {'cmd' if is_cmd else 'prompt'} "
             f"src={r['source']}{q}"
         )
+        if r["status"] == "draft":
+            lines.extend("      " + dl for dl in _candidate_collision_diff(r))
+    lines.append(
+        "Approve with /skill-candidates approve <id> (reject <id>, rollback <name>)."
+    )
     return "\n".join(lines)
 
 
+def _candidate_collision_diff(row: dict) -> list[str]:
+    """If a draft would overwrite a live skill of the same name, a compact diff
+    of the live SKILL.md -> the candidate's, so the reviewer sees the change
+    before approving. Empty for a fresh (non-colliding) candidate."""
+    from pathlib import Path
+
+    live = skills.skills_dir() / row["name"] / "SKILL.md"
+    qpath = row.get("quarantine_path")
+    if not live.exists() or not qpath:
+        return []
+    qmd = Path(qpath) / "SKILL.md"
+    if not qmd.exists():
+        return []
+    try:
+        diff = _diff_preview(live.read_text(encoding="utf-8"), qmd.read_text(encoding="utf-8"))
+    except OSError:
+        return []
+    header = f"(would overwrite live '{row['name']}'{'' if diff else '; no textual change'}:)"
+    return [header] + diff
+
+
+def _parse_skill_candidates_command(line: str):
+    """Parse `/skill-candidates [approve <id> | reject <id> | rollback <name>]`.
+    Returns ("list", None), ("approve"|"reject", id:int), ("rollback", name),
+    ("usage", None), or None for other commands."""
+    raw = line.strip().lstrip("/")
+    parts = raw.split()
+    if not parts or parts[0].lower() != "skill-candidates":
+        return None
+    if len(parts) == 1 or parts[1].lower() == "list":
+        return ("list", None)
+    sub = parts[1].lower()
+    if sub in ("approve", "reject"):
+        if len(parts) < 3:
+            return ("usage", None)
+        try:
+            return (sub, int(parts[2]))
+        except ValueError:
+            return ("usage", None)
+    if sub == "rollback":
+        if len(parts) < 3:
+            return ("usage", None)
+        return ("rollback", parts[2])
+    return ("usage", None)
+
+
+def _render_skill_candidates_action(action: str, arg) -> str:
+    from ubongo.authoring import promotion
+
+    try:
+        if action == "approve":
+            r = promotion.approve(arg)
+            msg = f"Approved #{r.candidate_id} '{r.name}' — registered and now in /skills."
+            if r.backed_up:
+                msg += f"\n  Prior version backed up to {r.backup_path}."
+            return msg
+        if action == "reject":
+            r = promotion.reject(arg)
+            return f"Rejected #{r.candidate_id} '{r.name}'. Left in quarantine."
+        if action == "rollback":
+            r = promotion.rollback(arg)
+            if r.restored:
+                return f"Rolled back '{r.name}' — restored the prior version from {r.backup_path}."
+            return f"Rolled back '{r.name}' — unregistered (no prior version to restore)."
+    except promotion.PromotionError as exc:
+        return f"Cannot do that: {exc}"
+    return "Unknown action."
+
+
 def _cmd_skill_candidates(line: str, state: ReplState) -> str | None:
-    # Phase 1: listing only. The approve/reject/rollback gate ships in Phase 3.
-    return _render_skill_candidates_list()
+    parsed = _parse_skill_candidates_command(line)
+    if parsed is None or parsed[0] == "list":
+        return _render_skill_candidates_list()
+    if parsed[0] == "usage":
+        return "Usage: /skill-candidates [approve <id> | reject <id> | rollback <name>]."
+    return _render_skill_candidates_action(parsed[0], parsed[1])
 
 
 COMMANDS: dict[str, Command] = {
@@ -1040,7 +1118,7 @@ COMMANDS: dict[str, Command] = {
     "evolution":    Command(_cmd_evolution, "/evolution <status|pause|resume|off>"),
     "improvements": Command(_cmd_improvements, "/improvements"),
     "author":       Command(_cmd_author, "/author <description>"),
-    "skill-candidates": Command(_cmd_skill_candidates, "/skill-candidates"),
+    "skill-candidates": Command(_cmd_skill_candidates, "/skill-candidates [approve <id>|reject <id>|rollback <name>]"),
     "recall":       Command(_cmd_recall, "/recall [query]"),
     "audit":        Command(_cmd_audit, "/audit [category]"),
     "conflicts":    Command(_cmd_conflicts, "/conflicts"),

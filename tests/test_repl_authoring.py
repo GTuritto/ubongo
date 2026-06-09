@@ -8,7 +8,7 @@ import pytest
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo import repl, skills  # noqa: E402
-from ubongo.authoring import candidate, quarantine  # noqa: E402
+from ubongo.authoring import candidate, promotion, quarantine  # noqa: E402
 from ubongo.commands import ReplState  # noqa: E402
 from ubongo.llm import CompletionResult  # noqa: E402
 from ubongo.memory import store, vault  # noqa: E402
@@ -25,11 +25,13 @@ def env(tmp_path: Path, monkeypatch):
     store.set_db_path(tmp_path / "test.db")
     store.bootstrap()
     quarantine.set_candidates_dir(tmp_path / "candidates")
+    promotion.set_backups_dir(tmp_path / "backups")
     skills.set_skills_dir(tmp_path / "live")
     monkeypatch.setattr(vault, "append_audit_entry", lambda *a, **k: None)
     yield tmp_path
     store.set_db_path(store._REPO_ROOT / "data" / "ubongo.db")
     quarantine.set_candidates_dir(None)
+    promotion.set_backups_dir(None)
     skills.set_skills_dir(None)
 
 
@@ -90,6 +92,52 @@ def test_author_shows_quality_when_eval_enabled(env, monkeypatch) -> None:
     # listing should also show the score
     listing = repl._cmd_skill_candidates("skill-candidates", _state())
     assert "quality=" in listing
+
+
+def _draft(state) -> int:
+    repl._cmd_author("author summarize a git diff into notes", state)
+    return store.authored_skills(status="draft")[0]["id"]
+
+
+def test_gate_approve_then_rollback(env, monkeypatch) -> None:
+    monkeypatch.setattr(candidate, "complete", _fake)
+    st = _state()
+    cid = _draft(st)
+    out = repl._cmd_skill_candidates(f"skill-candidates approve {cid}", st)
+    assert "Approved" in out and "now in /skills" in out
+    assert skills.has("diff-notes")
+    out2 = repl._cmd_skill_candidates("skill-candidates rollback diff-notes", st)
+    assert "Rolled back" in out2
+    assert not skills.has("diff-notes")
+
+
+def test_gate_reject(env, monkeypatch) -> None:
+    monkeypatch.setattr(candidate, "complete", _fake)
+    st = _state()
+    cid = _draft(st)
+    out = repl._cmd_skill_candidates(f"skill-candidates reject {cid}", st)
+    assert "Rejected" in out
+    assert store.get_authored_skill(cid)["status"] == "rejected"
+    assert not skills.has("diff-notes")
+
+
+def test_gate_usage_and_errors(env) -> None:
+    assert "Usage" in repl._cmd_skill_candidates("skill-candidates approve", _state())
+    assert "Usage" in repl._cmd_skill_candidates("skill-candidates approve notanint", _state())
+    assert "Cannot do that" in repl._cmd_skill_candidates("skill-candidates approve 999", _state())
+    assert "Cannot do that" in repl._cmd_skill_candidates("skill-candidates rollback nope", _state())
+
+
+def test_listing_shows_collision_diff(env, monkeypatch) -> None:
+    monkeypatch.setattr(candidate, "complete", _fake)
+    st = _state()
+    # approve a first version so a live skill exists
+    cid = _draft(st)
+    repl._cmd_skill_candidates(f"skill-candidates approve {cid}", st)
+    # draft a second version of the same name; listing should show a diff
+    _draft(st)
+    listing = repl._cmd_skill_candidates("skill-candidates", st)
+    assert "would overwrite live 'diff-notes'" in listing
 
 
 def test_commands_registered() -> None:
