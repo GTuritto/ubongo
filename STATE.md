@@ -12,13 +12,14 @@ If STATE.md and the spec disagree, the code is the source of truth and STATE.md 
 - **v0.1 is complete and merged to `main`.** All 22 phases (0–21) landed, each on its own
   `phase-N-<name>` branch, merged after review (16 phase PRs).
 - **Plus a post-v0.1 layer that is also on `main`**: six architecture-deepening refactors
-  (PRs #20, #22, #24, #25, #26, #27, #28) and an optional web channel (PRs #29, #30, #31).
-  These are *not* in the v0.1 spec; see Drift below.
-- **Size:** 12,063 LOC under `src/` (was 11,255 at the v0.1 certification; the deepening +
-  web layer added ~800). Still under the ~15,000 soft target.
-- **Tests:** 778 pytest across 75 test files, green. The spec's `tests/` layout listed ~16
-  files; the actual suite is far broader (one test module per real module, plus REPL,
-  live-swap, recovery, evaluation, sync, audit suites).
+  (PRs #20, #22, #24, #25, #26, #27, #28), an optional web channel (PRs #29, #30, #31), and
+  the **self-authored-skills** experiment (the `authoring/` package, ADR-0013 — see "What is
+  actually built" and STATUS.md). These are *not* in the v0.1 spec; see Drift below.
+- **Size:** ~13,850 LOC under `src/` (11,255 at v0.1 certification; the deepening + web layer
+  added ~800; the authoring package ~1,285). Still under the ~15,000 soft target.
+- **Tests:** ~874 pytest, green. The spec's `tests/` layout listed ~16 files; the actual suite
+  is far broader (one test module per real module, plus REPL, live-swap, recovery, evaluation,
+  sync, audit, and the six authoring suites).
 - **Stack matches spec:** Python 3.11+, LiteLLM over OpenRouter, stdlib SQLite, `sqlite-vec`,
   YAML config, `.env` secrets, uv. No LangGraph / Temporal / Ray / Redis / Docker. The only
   dependency added beyond the spec table is `streamlit`, and it is an optional extra (see Drift).
@@ -52,6 +53,13 @@ Every v0.1 acceptance criterion (the 24 in the spec / 26 enumerated in STATUS) i
   vault-link graph from `[[wikilinks]]`; `/recall`; bidirectional vault sync via a polling watcher
   (off by default) with a conflict queue; unified `vault/system/audit.md` and `/audit`; config +
   router hot-reload on `/reload`.
+- **Self-authored skills (post-v0.1, `authoring/`).** Beyond the v0.1 spec: Ubongo drafts
+  brand-new skills, manually (`/author`) and autonomously (the `AuthoringLoop` daemon — boots
+  paused, throttled, infers recurring capability gaps), scores them side-effect-free, and you
+  approve them into live capabilities via `/skill-candidates approve|reject|rollback` with
+  versioned backups. Drafts are quarantined (invisible to the runtime) until approved; a
+  command-skill risk floor and static sandbox validation are enforced in code (ADR-0013). The
+  daemon only ever drafts — approval stays manual.
 
 ## Drift from the spec
 
@@ -123,6 +131,10 @@ The architectural "why" lives in `docs/adr/`. Twelve ADRs, all Accepted:
 - **0012 — Model-call envelope, typed directives, router-owned planning.** The post-v0.1 deepening:
   `agents/llm_run.py` (one envelope), `AgentDirectives` (typed replacement for the bare `metadata` dict),
   and `router.plan_workflow` returning a validated `WorkflowPlan`. Behavior-neutral refactors.
+- **0013 — Self-authored skills: quarantine + approval boundary.** The self-extension experiment. Ubongo
+  drafts new skills, but the boundary holds in code: quarantine before discoverability, a command-skill risk
+  floor that is enforced not author-declared, static command validation reusing the sandbox contract, and a
+  daemon that only drafts. The sandbox allowlist stays a human-only change (extends 0005, 0006).
 
 Two CLAUDE.md rules worth restating because they constrained the build throughout: new capabilities default
 to CLI scripts behind the constrained-bash skill rather than first-class tools, and new v0.2+ behavior ships

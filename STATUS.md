@@ -100,6 +100,36 @@ Three behavior-neutral refactors of the orchestration core merged to `main`
 
 Verified at each merge: full pytest green (779) + the Phases 0–21 cumulative smoke.
 
+## Post-v0.1 — self-authored skills (2026-06-09)
+
+The self-extension experiment — the last open item in
+[docs/ubongo-open-items.md](docs/ubongo-open-items.md). The GP loop *tunes* what
+exists; this lets Ubongo *author brand-new skills* behind a human approval boundary
+([ADR-0013](docs/adr/0013-self-authored-skills-quarantine-and-approval.md)). A new
+`src/ubongo/authoring/` package (~1,285 LOC) mirrors `evolution/` one-for-one across
+five branch-per-phase steps, each merged to `main` after a live smoke:
+
+- [x] **Phase 1** — candidate model + LLM drafting + validation (schema reuse + a
+  command-skill risk floor) + quarantine (`config/skills_candidates/`, not scanned by
+  `skills.py`) + the `authored_skills` table + manual `/author`. `sandbox.validate_command`
+  extracted so a generated command template is vetted against the exact run-time contract.
+- [x] **Phase 2** — side-effect-free `evaluate_candidate` (prompt judge + command dry-run)
+  + a deterministic `score_candidate` scalar, surfaced in `/author` and `/skill-candidates`.
+- [x] **Phase 3** — the approval gate `/skill-candidates approve|reject|rollback` with
+  **versioned backups** (a re-author backs up the prior version; rollback restores it).
+- [x] **Phase 4** — the autonomous authoring daemon (`AuthoringLoop`): boots paused,
+  budget-throttled, infers recurring capability gaps and drafts into quarantine; approval
+  stays manual. `/authoring status|pause|resume|off`.
+- [x] **Phase 5** — docs: this entry, ADR-0013, the SECURITY.md threat model, the
+  CONTEXT/STATE/README updates, and the authoring smoke-playbook section.
+
+The boundary holds at four layers: quarantine before discoverability, a code-enforced risk
+floor (not author-declared), static command validation reusing the sandbox contract, and a
+daemon that only ever drafts. Nothing self-authored is discoverable or runnable until a human
+approves it; the sandbox allowlist stays a human-only change (ADR-0005). Verified at each merge:
+full pytest green (≈874) + the Phases 0–21 cumulative smoke + the authoring lifecycle live
+(manual `/author`, the approval gate, and the autonomous daemon).
+
 ## Notes
 
 Update this file as phases land. When a phase is merged to `main`, change its row from "Not started" → "Complete" and add a date.

@@ -72,6 +72,23 @@ _Avoid_: trainer, optimizer (bare), scheduler (bare).
 The loop **proposes** a promotion (`pending_promotions`) when a champion beats the active baseline by `evolution.promotion_margin`. The user **approves** via `/improvements`. Approval writes an **active evolution** (`active_evolutions`, one per target) and performs a **live swap**: the runtime read paths (`context.build_system_prompt` for personas, `router.route_workflow` / `router.workflow_agents` for config) consult `active_evolutions`, so behavior actually changes. Promotion is approved, never autonomous.
 _Avoid_: deploy, rollout, activation (bare).
 
+## Self-extension (authored skills, post-v0.1)
+
+Where self-improvement _tunes_ existing prompts/config, **self-extension** _authors brand-new skills_ — the `src/ubongo/authoring/` package, behind the same human-approval boundary ([ADR-0013](docs/adr/0013-self-authored-skills-quarantine-and-approval.md)).
+
+**Candidate / draft**: a `SkillCandidate` is drafted by an LLM from a capability description (`/author`) or inferred gap (the daemon): SKILL.md frontmatter + body + optional prompt templates + an optional constrained-bash **command template**. `validation.validate` reuses the `skills._parse_skill` schema and enforces a **command-skill risk floor** (any command-bearing candidate is forced to `risk >= medium` / `irreversible`, in code, not author-declared); a command template is statically vetted by `sandbox.validate_command`.
+_Avoid_: skill (a drafted candidate is NOT a live skill until approved).
+
+**Quarantine**: a draft is written to `config/skills_candidates/<name>/` (NOT scanned by `skills.py`) and recorded in `authored_skills`. Invisible to the classifier and `/skills` until approved.
+_Avoid_: registered, installed, live (for a quarantined draft).
+
+**Evaluate / quality**: `sandbox.evaluate_candidate` scores a candidate side-effect-free (prompt judge over a few probes + a command dry-run); `fitness.score_candidate` reduces it to a `[0,1]` scalar shown in `/skill-candidates`. An estimate to inform the reviewer, not an autonomous pass/fail.
+
+**Approval gate**: `/skill-candidates approve|reject|rollback` (`authoring/promotion.py`). **Approve** materializes the candidate into the live `config/skills/` (re-validating + backing up any prior version to `config/skills_backups/`) and reloads the registry; **rollback** restores the prior version or unregisters. The human gate is the only path from quarantine to live.
+
+**Authoring daemon**: `AuthoringLoop` (`authoring/loop.py`) mirrors the GP loop — boots paused, throttled by a rolling-hour budget, infers recurring capability gaps (`gaps.next_gap`, intents that matched no skill) and drafts into quarantine. It **only ever drafts**; approval stays manual. Controlled by `/authoring status|pause|resume|off`.
+_Avoid_: auto-approve, auto-install (the daemon never does either).
+
 ## Memory
 
 **Durable memory / single writer**:

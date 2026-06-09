@@ -25,6 +25,7 @@ reflect the new planning seam and envelope.
 | 3 — Component | [c4-components-orchestration.md](c4-components-orchestration.md) | Developers | Master Agent + Workflow Runner internals |
 | 3 — Component | [c4-components-memory.md](c4-components-memory.md) | Developers | Memory subsystem internals (incl. embeddings, graph, vault watcher) |
 | 3 — Component | [c4-components-evolution.md](c4-components-evolution.md) | Developers | GP self-improvement loop internals |
+| 3 — Component | [c4-components-authoring.md](c4-components-authoring.md) | Developers | Self-authored skills (post-v0.1): draft → quarantine → approve |
 | Dynamic | [c4-dynamic-turn.md](c4-dynamic-turn.md) | Technical | One user message, end to end |
 
 ## Reading order
@@ -49,7 +50,12 @@ background daemons the REPL starts alongside the synchronous turn loop:
 - the **wiki-memory** features — `sqlite-vec` semantic recall, the vault-link
   graph, and the `VaultWatcher` bidirectional-sync daemon with a unified audit
   log — now drawn into [c4-components-memory.md](c4-components-memory.md) and the
-  container diagram.
+  container diagram;
+- the post-v0.1 **self-authored skills** experiment (`src/ubongo/authoring/`,
+  [ADR-0013](../adr/0013-self-authored-skills-quarantine-and-approval.md)) — manual
+  `/author`, the `/skill-candidates` approval gate, and a third background daemon,
+  the paused-by-default `AuthoringLoop` — drawn in
+  [c4-components-authoring.md](c4-components-authoring.md).
 
 The build specification in [UBONGO_BUILD.md](../../UBONGO_BUILD.md) remains the
 source of truth for v0.1 scope.

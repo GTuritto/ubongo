@@ -65,6 +65,33 @@ These are deliberate v0.1 scope boundaries, not oversights:
   file, run arbitrary Python). The filesystem allowlist bounds *where*; it does
   not bound *what* an interpreter does inside that boundary.
 
+## Self-authored skills (post-v0.1)
+
+The authoring package (`src/ubongo/authoring/`, ADR-0013) lets Ubongo draft
+brand-new skills — manually via `/author` and autonomously via the authoring
+daemon. A self-authored skill is a new trust surface because a skill can carry a
+constrained-bash command template, and the sandbox allowlist includes powerful
+interpreters (`python`, `git`, `sqlite3`). The boundary that contains it:
+
+| Control | Enforcement |
+| --- | --- |
+| **Quarantine before discoverability** | Drafts are written to `config/skills_candidates/`, which `skills.py` does **not** scan. A drafted skill is invisible to the classifier and `/skills`. Only `/skill-candidates approve` materializes it into the live `config/skills/`. |
+| **Risk floor in code** | Any candidate carrying a command template is forced to `risk >= medium` / `reversibility: irreversible`, regardless of what the drafting model declared — at draft time and again at approve time. A self-authored command skill cannot mark itself low-risk to dodge governance. |
+| **Static command validation** | A generated command template is vetted by `sandbox.validate_command` — the **same** allowlist / metacharacter / path-traversal contract that gates real execution — before it can register. A command that would be refused at run time is refused at draft and approve. |
+| **Allowlist stays human-only** | The authoring layer composes existing allowlisted programs; it never extends the `sandbox.py` allowlist. Adding a new executable remains a human code change. |
+| **The daemon never approves** | The autonomous daemon (`AuthoringLoop`) boots paused, is budget-throttled, and only ever produces *quarantined drafts*. Approval is always a manual `/skill-candidates approve`. |
+| **Reversible** | `approve` backs up any existing same-named skill to `config/skills_backups/<name>/<stamp>/`; `rollback` restores the prior version (or unregisters). |
+
+### Known limitation (v0.1)
+
+- **An *approved* command skill is as powerful as `/exec`.** Because `python` /
+  `git` are allowlisted, an approved skill that runs a command inherits the same
+  reach as the existing Execution sandbox (read any tracked file, run arbitrary
+  Python within the repo tree). What bounds it is the human reviewing the exact
+  SKILL.md and command shape before approval, plus the use-time sandbox — not a
+  narrower allowlist. This is the central residual risk; narrowing the allowlist
+  for authored skills is a future option, not a v0.1 requirement.
+
 ## Optional web UI (post-v0.1)
 
 The optional Streamlit web channel (`src/ubongo/web/`, `./start-ubongo-web.sh`)
