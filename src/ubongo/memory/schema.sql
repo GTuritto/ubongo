@@ -227,6 +227,28 @@ CREATE TABLE IF NOT EXISTS authored_skills (
 CREATE INDEX IF NOT EXISTS idx_authored_skills_status ON authored_skills(status);
 CREATE INDEX IF NOT EXISTS idx_authored_skills_name ON authored_skills(name, generation);
 
+-- The autonomous authoring daemon (Phase 4). One row per cycle: the gap it
+-- worked, the candidate it drafted (NULL if none), the calls it spent (the
+-- rolling-hour throttle window, mirroring evolution_runs), and its outcome.
+CREATE TABLE IF NOT EXISTS authoring_runs (
+  id INTEGER PRIMARY KEY,
+  gap TEXT,
+  candidate_id INTEGER REFERENCES authored_skills(id),
+  calls_spent INTEGER NOT NULL DEFAULT 0,
+  outcome TEXT NOT NULL CHECK (outcome IN ('started', 'drafted', 'evaluated', 'reevaluated', 'aborted')),
+  started_at TIMESTAMP NOT NULL,
+  ended_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_authoring_runs_ended ON authoring_runs(ended_at);
+
+-- Single-row control state for the authoring daemon, persisted so it comes back
+-- paused after a restart (it never auto-drafts until /authoring resume).
+CREATE TABLE IF NOT EXISTS authoring_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  status TEXT NOT NULL CHECK (status IN ('running', 'paused', 'off')),
+  updated_at TIMESTAMP NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_summaries_conversation ON summaries(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_queue_undelivered ON notification_queue(delivered_at) WHERE delivered_at IS NULL;

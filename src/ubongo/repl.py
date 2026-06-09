@@ -1001,6 +1001,63 @@ def _cmd_author(line: str, state: ReplState) -> str | None:
     return _render_author(description)
 
 
+_AUTHORING_SUBCOMMANDS = ("status", "pause", "resume", "off")
+
+
+def _parse_authoring_command(line: str) -> str | None:
+    raw = line.strip().lstrip("/")
+    parts = raw.split(maxsplit=1)
+    if not parts or parts[0].lower() != "authoring":
+        return None
+    if len(parts) == 1 or not parts[1].strip():
+        return "status"
+    return parts[1].strip().split()[0].lower()
+
+
+def _render_authoring_status() -> str:
+    from ubongo.config import load_authoring
+
+    status = store.get_authoring_status()
+    cap = int((load_authoring() or {}).get("max_calls_per_hour", 20))
+    spent = store.authoring_calls_in_last_hour()
+    drafts = store.authored_skills(status="draft", limit=100)
+    auto = [d for d in drafts if d["source"] == "auto"]
+    lines = [
+        f"Authoring daemon: {status}  (budget {spent}/{cap} calls in the last hour)",
+        f"  pending drafts: {len(drafts)} ({len(auto)} auto-authored) — review with /skill-candidates",
+    ]
+    runs = store.authoring_runs_recent(5)
+    if runs:
+        lines.append("  recent cycles:")
+        for r in runs:
+            lines.append(
+                f"    #{r['id']} {r['outcome']:<11} gap={r['gap'] or '-'} "
+                f"cand={r['candidate_id'] or '-'} calls={r['calls_spent']}"
+            )
+    return "\n".join(lines)
+
+
+def _render_authoring_control(sub: str) -> str:
+    if sub == "pause":
+        store.set_authoring_status("paused")
+        return "Authoring daemon paused."
+    if sub == "resume":
+        store.set_authoring_status("running")
+        return ("Authoring daemon running. It drafts candidates into quarantine on "
+                "recurring capability gaps; approval stays manual (/skill-candidates).")
+    store.set_authoring_status("off")
+    return "Authoring daemon off."
+
+
+def _cmd_authoring(line: str, state: ReplState) -> str | None:
+    sub = _parse_authoring_command(line)
+    if sub is None or sub == "status":
+        return _render_authoring_status()
+    if sub in ("pause", "resume", "off"):
+        return _render_authoring_control(sub)
+    return f"Unknown subcommand: {sub}. Usage: /authoring status|pause|resume|off."
+
+
 def _render_skill_candidates_list() -> str:
     rows = store.authored_skills(limit=30)
     if not rows:
@@ -1118,6 +1175,7 @@ COMMANDS: dict[str, Command] = {
     "evolution":    Command(_cmd_evolution, "/evolution <status|pause|resume|off>"),
     "improvements": Command(_cmd_improvements, "/improvements"),
     "author":       Command(_cmd_author, "/author <description>"),
+    "authoring":    Command(_cmd_authoring, "/authoring <status|pause|resume|off>"),
     "skill-candidates": Command(_cmd_skill_candidates, "/skill-candidates [approve <id>|reject <id>|rollback <name>]"),
     "recall":       Command(_cmd_recall, "/recall [query]"),
     "audit":        Command(_cmd_audit, "/audit [category]"),
@@ -1201,11 +1259,19 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
     _vault_watcher = VaultWatcher()
     _vault_watcher.start()
 
+    # Phase 4 (authoring): start the autonomous authoring daemon when
+    # authoring.enabled. Boots paused (persisted), throttled by a rolling-hour
+    # budget; it only ever drafts into quarantine — approval stays manual.
+    from ubongo.authoring.loop import AuthoringLoop
+    _authoring_loop = AuthoringLoop()
+    _authoring_loop.start()
+
     try:
         return _repl_loop(persona, auto_mode, pending_skill, pending_workflow)
     finally:
         _evolution_loop.stop()
         _vault_watcher.stop()
+        _authoring_loop.stop()
 
 
 def _repl_loop(persona, auto_mode, pending_skill, pending_workflow) -> int:
