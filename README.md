@@ -173,6 +173,14 @@ The full v0.1 command surface:
 - `/evolution <status|pause|resume|off>` — control the autonomous background GP loop (starts paused)
 - `/improvements [approve <id> | reject <id> | rollback <target>]` — review and act on proposed promotions (live swap on approve)
 
+### Self-extension (authored skills, post-v0.1)
+
+Beyond tuning existing prompts/config, Ubongo can author brand-new skills behind a human approval boundary ([ADR-0013](docs/adr/0013-self-authored-skills-quarantine-and-approval.md)). Drafts are quarantined (invisible to the runtime) until you approve them.
+
+- `/author <description>` — draft a new skill from a capability description; it is validated, quarantined, and given an estimated quality score
+- `/skill-candidates [approve <id> | reject <id> | rollback <name>]` — review drafts and act: approve materializes the skill into the live registry (backing up any prior version), rollback restores the prior version or unregisters
+- `/authoring <status|pause|resume|off>` — control the autonomous authoring daemon: it boots paused, is throttled, infers recurring capability gaps, and drafts into quarantine (approval stays manual)
+
 ### Memory
 
 - `/recall [query]` — recency window + semantic recall (sqlite-vec) + vault-graph neighbors

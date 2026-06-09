@@ -412,3 +412,24 @@ The final v0.1 phase. The one-way vault projection becomes bidirectional: when `
 | 21.8 | Help | `/help` or unknown command | usage includes `/audit [category]` and `/conflicts`. |
 | 21.9 | Pytest passes | `uv run pytest tests/` | All green (723 expected after Phase 21: Phase-20's 701 + 22 sync/audit/reload tests). |
 | 21.10 | Full cumulative smoke | walk the entire playbook (Phases 0–21) | passes end-to-end without manual fixup — **v0.1 certification**. |
+
+## Post-v0.1 — Self-authored skills (authoring)
+
+The self-extension experiment ([ADR-0013](../../docs/adr/0013-self-authored-skills-quarantine-and-approval.md)): Ubongo drafts brand-new skills behind a human approval boundary. Drafts are quarantined in `config/skills_candidates/` (which `skills.py` does not scan), so nothing is discoverable until you approve it via `/skill-candidates approve`. A command-skill risk floor and static `sandbox.validate_command` checks are enforced in code. The autonomous `AuthoringLoop` daemon boots paused, is throttled, infers recurring capability gaps, and only ever drafts — approval stays manual. Off-switches `UBONGO_DISABLE_AUTHORING_EVAL` / `UBONGO_DISABLE_AUTHORING` keep the suite offline and daemon-free.
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| A.1 | Daemon boots paused | launch REPL; `/authoring status` | "Authoring daemon: paused"; never auto-spends on launch. |
+| A.2 | Manual draft | `/author summarize a git diff into release notes` | a candidate is drafted, risk-floored if it carries a command, given an estimated quality, and **quarantined** (status: quarantined). |
+| A.3 | Quarantine isolation | `/skills` | the just-drafted skill is NOT listed (invisible to the runtime until approved). |
+| A.4 | List candidates | `/skill-candidates` | the draft is listed with status `draft`, source, and quality. |
+| A.5 | Approve → live | `/skill-candidates approve <id>`; then `/skills` | "Approved … now in /skills"; the skill now appears in `/skills`. |
+| A.6 | Use it | `/skill <name>`; send a matching message; `/trace 1` | the response reflects the skill; the trace shows `skill=<name>` on the turn. |
+| A.7 | Rollback | `/skill-candidates rollback <name>`; `/skills` | "Rolled back …"; the skill is gone from `/skills` (or restored to the prior version if one existed). |
+| A.8 | Versioned backup | re-`/author` the same name; approve; check `config/skills_backups/<name>/` | a timestamped backup of the prior version exists; the new version is live; `rollback` restores the prior version intact. |
+| A.9 | Risk floor / sandbox | `/author a skill that runs a shell command` | a command-bearing draft is forced to `risk: medium` / `irreversible`; an unsafe command (non-allowlisted program, metacharacter, path traversal) is rejected at draft. |
+| A.10 | Reject | `/skill-candidates reject <id>` | "Rejected …"; the draft stays in quarantine, never registered. |
+| A.11 | Autonomous daemon (live) | seed recurring turns whose intent matches no skill; `/authoring resume`; wait a cycle; `/authoring status` + `/skill-candidates` | the daemon drafts a `src=auto` candidate into quarantine; it is NOT auto-approved. |
+| A.12 | Daemon control | `/authoring pause`, `/authoring off`, `/authoring resume` | status flips and persists across restart (comes back in the persisted state, paused on first ever launch). |
+| A.13 | Audit | `/audit authoring` | rows under `[authoring]` for drafts and decisions. |
+| A.14 | Pytest passes | `uv run pytest` | all green (the six `test_authoring_*` suites included). |

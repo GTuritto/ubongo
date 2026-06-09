@@ -48,21 +48,23 @@ duplicate and fight the classifier's job and breach the ADR-0003 pipeline. If di
 ever needs sharpening, the correct layer is the classifier/routing rules, which the GP loop can
 already evolve via the `routing:default` target.
 
-## What actually remains
+## Built
 
-### 1. New-capability authoring (the real self-extension gap)
+### 1. New-capability authoring (the self-extension gap) — DONE 2026-06-09
 
-The GP loop already provides governed self-improvement: it evolves prompts and configs,
-evaluates in a sandbox, boots paused, and promotes nothing without approval. What it does not
-do is author brand-new skills or integrations. It optimizes what already exists.
+This was the one remaining open item, and it is now built and merged to `main`: the
+`src/ubongo/authoring/` package (ADR-0013, STATUS.md "Post-v0.1 — self-authored skills").
+Ubongo authors brand-new skills rather than only tuning existing ones — manually via `/author`
+and autonomously via the `AuthoringLoop` daemon (boots paused, throttled, infers recurring
+capability gaps). It inherited exactly the patterns this note asked for: a contained environment
+(quarantine in `config/skills_candidates/`, invisible to the runtime), full logging + audit, and
+the existing approval gate as the boundary — `/skill-candidates approve|reject|rollback`, with a
+command-skill risk floor and static sandbox validation enforced in code, and the sandbox
+allowlist kept a human-only change. The daemon only ever drafts; nothing is live without a human
+approval. Built across five branch-per-phase steps, each live-smoke-certified.
 
-So the only thing a self-extension experiment would actually add, beyond what is built, is
-Ubongo authoring new capabilities rather than tuning current ones. That is a narrow, specific
-experiment, not the broad "let it grow on its own" framing from earlier. If pursued, it should
-inherit the patterns already in place: contained environment, full logging, and the existing
-approval gate as the boundary between the experiment and real credentials. Distinct from the GP
-loop, lower priority, and only worth doing if the itch is specifically to watch it invent
-capabilities you would not have specified.
+With this done, there are no open work items — only the references below and the parked PR #19
+(mutation testing, on hold for hardware reasons).
 
 ## External references worth consulting
 
@@ -82,7 +84,8 @@ Neither is a build task. Both are pointers so the relevant work starts from prio
 
 ## Net
 
-The "verify first" item resolved to done, so the only open item is the new-capability experiment,
-and that one is optional. The project is past the stage where an ideas list adds value; the useful
-artifacts now are STATE.md and the ADRs. The Goose pointers above are reference material, not work
-items.
+Both items are now resolved: the "verify first" model-selection question was confirmed done, and
+the new-capability experiment is built and merged (the `authoring/` package, ADR-0013). There are
+no open work items left. The project is past the stage where an ideas list adds value; the useful
+artifacts now are STATE.md, STATUS.md, and the ADRs. The Goose pointers above are reference
+material, not work items, and PR #19 (mutation testing) is parked on hold, not open work.
