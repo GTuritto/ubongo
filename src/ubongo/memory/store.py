@@ -1856,3 +1856,135 @@ def update_authored_skill(
         f"UPDATE authored_skills SET {', '.join(sets)} WHERE id = ?", params
     )
     return cur.rowcount > 0
+
+
+def auto_drafts_unevaluated(limit: int = 5) -> list[dict]:
+    """Auto-authored drafts that have no quality score yet (a crash between
+    persist and evaluate leaves these). The daemon re-evaluates them on its next
+    cycle rather than drafting anew."""
+    conn = connection()
+    rows = conn.execute(
+        f"SELECT {_AUTHORED_COLUMNS} FROM authored_skills "
+        "WHERE source = 'auto' AND status = 'draft' AND quality IS NULL "
+        "ORDER BY id ASC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [_authored_row(r) for r in rows]
+
+
+# --- Authoring daemon runs + control state (Phase 4) ------------------------
+# Mirrors the evolution_runs / evolution_state accessors: per-cycle rows double
+# as the rolling-hour throttle window, and a single control row persists the
+# daemon's paused/running/off state across restarts.
+
+
+def start_authoring_run(*, gap: str | None, started_at: str | None = None) -> int:
+    conn = connection()
+    cursor = conn.execute(
+        "INSERT INTO authoring_runs (gap, calls_spent, outcome, started_at) "
+        "VALUES (?, 0, 'started', ?)",
+        (gap, started_at or now_iso()),
+    )
+    return int(cursor.lastrowid)
+
+
+def finish_authoring_run(
+    run_id: int,
+    *,
+    calls_spent: int,
+    outcome: str,
+    candidate_id: int | None = None,
+    ended_at: str | None = None,
+) -> None:
+    conn = connection()
+    conn.execute(
+        "UPDATE authoring_runs SET calls_spent = ?, outcome = ?, candidate_id = ?, "
+        "ended_at = ? WHERE id = ?",
+        (calls_spent, outcome, candidate_id, ended_at or now_iso(), run_id),
+    )
+
+
+def authoring_calls_in_last_hour() -> int:
+    cutoff = (_now() - timedelta(hours=1)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    conn = connection()
+    row = conn.execute(
+        "SELECT COALESCE(SUM(calls_spent), 0) AS n FROM authoring_runs "
+        "WHERE ended_at IS NOT NULL AND ended_at >= ?",
+        (cutoff,),
+    ).fetchone()
+    return int(row["n"]) if row and row["n"] is not None else 0
+
+
+def authoring_seconds_since_last_cycle() -> float | None:
+    conn = connection()
+    row = conn.execute(
+        "SELECT MAX(ended_at) AS t FROM authoring_runs WHERE ended_at IS NOT NULL"
+    ).fetchone()
+    if not row or row["t"] is None:
+        return None
+    return (_now() - _parse_iso(row["t"])).total_seconds()
+
+
+def authoring_runs_recent(n: int = 10) -> list[dict]:
+    if n <= 0:
+        return []
+    conn = connection()
+    rows = conn.execute(
+        "SELECT id, gap, candidate_id, calls_spent, outcome, started_at, ended_at "
+        "FROM authoring_runs ORDER BY id DESC LIMIT ?",
+        (n,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def worked_authoring_gaps() -> set[str]:
+    """The gaps the daemon has already worked (drafted, not aborted), so it does
+    not re-draft the same capability every cycle."""
+    conn = connection()
+    rows = conn.execute(
+        "SELECT DISTINCT gap FROM authoring_runs "
+        "WHERE gap IS NOT NULL AND outcome != 'aborted'"
+    ).fetchall()
+    return {r["gap"] for r in rows}
+
+
+def get_authoring_status() -> str:
+    """The daemon control status; defaults to 'paused' when unset so it never
+    auto-drafts on first launch."""
+    conn = connection()
+    row = conn.execute("SELECT status FROM authoring_state WHERE id = 1").fetchone()
+    return row["status"] if row else "paused"
+
+
+def set_authoring_status(status: str) -> None:
+    if status not in ("running", "paused", "off"):
+        raise ValueError(f"invalid authoring status: {status}")
+    conn = connection()
+    conn.execute(
+        "INSERT INTO authoring_state (id, status, updated_at) VALUES (1, ?, ?) "
+        "ON CONFLICT(id) DO UPDATE SET status = excluded.status, updated_at = excluded.updated_at",
+        (status, now_iso()),
+    )
+
+
+def recent_workflow_classifications(limit: int = 200) -> list[dict]:
+    """Recent turns' classification JSON joined to the user message, newest
+    first — the raw material for authoring gap inference. Each dict is
+    {classification: dict, message: str}."""
+    import json as _json
+
+    conn = connection()
+    rows = conn.execute(
+        "SELECT w.classification AS cls, m.content AS msg "
+        "FROM workflow_runs w JOIN messages m ON m.id = w.message_id "
+        "ORDER BY w.id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    out: list[dict] = []
+    for r in rows:
+        try:
+            cls = _json.loads(r["cls"]) if r["cls"] else {}
+        except (TypeError, ValueError):
+            cls = {}
+        out.append({"classification": cls if isinstance(cls, dict) else {}, "message": r["msg"] or ""})
+    return out

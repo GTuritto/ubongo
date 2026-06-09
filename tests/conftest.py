@@ -13,3 +13,6 @@ os.environ.setdefault("UBONGO_DISABLE_VAULT_WATCH", "1")
 # default so the suite stays offline. Evaluation-specific tests re-enable it
 # explicitly (delete the env var) and patch authoring.sandbox.complete.
 os.environ.setdefault("UBONGO_DISABLE_AUTHORING_EVAL", "1")
+
+# Authoring Phase 4: never start the autonomous authoring daemon during the suite.
+os.environ.setdefault("UBONGO_DISABLE_AUTHORING", "1")

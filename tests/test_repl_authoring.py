@@ -140,6 +140,18 @@ def test_listing_shows_collision_diff(env, monkeypatch) -> None:
     assert "would overwrite live 'diff-notes'" in listing
 
 
+def test_authoring_status_and_control(env) -> None:
+    out = repl._cmd_authoring("authoring", _state())
+    assert "Authoring daemon:" in out and "paused" in out
+    repl._cmd_authoring("authoring resume", _state())
+    assert store.get_authoring_status() == "running"
+    repl._cmd_authoring("authoring pause", _state())
+    assert store.get_authoring_status() == "paused"
+    repl._cmd_authoring("authoring off", _state())
+    assert store.get_authoring_status() == "off"
+
+
 def test_commands_registered() -> None:
     assert repl.COMMANDS["author"].usage == "/author <description>"
     assert "skill-candidates" in repl.COMMANDS
+    assert "authoring" in repl.COMMANDS
