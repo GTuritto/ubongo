@@ -30,6 +30,7 @@ class AuthorOutcome:
     candidate_id: int
     candidate: SkillCandidate
     generation: int
+    quality: float | None = None
 
 
 def author_skill(description: str, *, source: str = "manual") -> AuthorOutcome:
@@ -46,6 +47,14 @@ def author_skill(description: str, *, source: str = "manual") -> AuthorOutcome:
     candidate_id = quarantine.persist(candidate, source=source)
     row = store.get_authored_skill(candidate_id)
     generation = int(row["generation"]) if row else 0
+
+    # Best-effort quality estimate. Evaluation is side-effect-free and
+    # off-switchable (UBONGO_DISABLE_AUTHORING_EVAL); a failure here never blocks
+    # a draft — the candidate is still quarantined for review.
+    quality = _evaluate_quality(candidate)
+    if quality is not None:
+        store.update_authored_skill(candidate_id, quality=quality)
+
     # Audit the draft so /audit authoring shows a trail even before approval.
     try:
         vault.append_audit_entry(
@@ -61,6 +70,22 @@ def author_skill(description: str, *, source: str = "manual") -> AuthorOutcome:
 
     events.dispatch(
         "authoring_candidate",
-        {"id": candidate_id, "name": candidate.name, "source": source},
+        {"id": candidate_id, "name": candidate.name, "source": source, "quality": quality},
     )
-    return AuthorOutcome(candidate_id=candidate_id, candidate=candidate, generation=generation)
+    return AuthorOutcome(candidate_id=candidate_id, candidate=candidate,
+                         generation=generation, quality=quality)
+
+
+def _evaluate_quality(candidate: SkillCandidate) -> float | None:
+    """Run the side-effect-free candidate evaluation and reduce it to a scalar,
+    or None when evaluation is disabled / fails."""
+    from ubongo.authoring import fitness, sandbox
+
+    try:
+        metrics = sandbox.evaluate_candidate(candidate)
+    except Exception as exc:  # eval is best-effort; never break a draft
+        logger.warning("authoring_eval_failed", extra={"cause": str(exc)})
+        return None
+    if metrics is None:
+        return None
+    return fitness.score_candidate(metrics)

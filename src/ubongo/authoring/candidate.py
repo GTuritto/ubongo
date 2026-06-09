@@ -175,6 +175,6 @@ def draft_candidate(description: str, *, source: str = "manual") -> SkillCandida
     candidate = SkillCandidate.from_dict(data)
     logger.info(
         "authoring_drafted",
-        extra={"name": candidate.name, "command_skill": candidate.is_command_skill},
+        extra={"skill_name": candidate.name, "command_skill": candidate.is_command_skill},
     )
     return candidate

@@ -8,3 +8,8 @@ os.environ.setdefault("UBONGO_DISABLE_EMBEDDINGS", "1")
 
 # Phase 21: never start the vault watcher daemon during the suite.
 os.environ.setdefault("UBONGO_DISABLE_VAULT_WATCH", "1")
+
+# Authoring Phase 2: candidate evaluation makes LLM calls; keep it a no-op by
+# default so the suite stays offline. Evaluation-specific tests re-enable it
+# explicitly (delete the env var) and patch authoring.sandbox.complete.
+os.environ.setdefault("UBONGO_DISABLE_AUTHORING_EVAL", "1")

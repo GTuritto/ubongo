@@ -71,6 +71,27 @@ def test_skill_candidates_empty(env) -> None:
     assert "No authored skill candidates" in out
 
 
+def test_author_shows_quality_when_eval_enabled(env, monkeypatch) -> None:
+    from ubongo.authoring import sandbox as eval_sandbox
+    monkeypatch.setenv("UBONGO_DISABLE_AUTHORING_EVAL", "0")
+    monkeypatch.setattr(candidate, "complete", _fake)
+
+    def _eval_complete(**kwargs):
+        if kwargs["messages"][0]["content"].startswith("Score the response"):
+            text = '{"quality": 0.75, "hallucination": 0.1, "would_user_correct": false}'
+        else:
+            text = "ok"
+        return CompletionResult(text=text, model="m", tokens_in=2, tokens_out=2,
+                                latency_ms=4, attempts=1)
+    monkeypatch.setattr(eval_sandbox, "complete", _eval_complete)
+
+    out = repl._cmd_author("author release notes from a diff", _state())
+    assert "quality:" in out
+    # listing should also show the score
+    listing = repl._cmd_skill_candidates("skill-candidates", _state())
+    assert "quality=" in listing
+
+
 def test_commands_registered() -> None:
     assert repl.COMMANDS["author"].usage == "/author <description>"
     assert "skill-candidates" in repl.COMMANDS

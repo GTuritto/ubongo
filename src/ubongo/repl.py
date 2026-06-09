@@ -987,6 +987,8 @@ def _render_author(description: str) -> str:
     ]
     if c.is_command_skill:
         lines.append(f"  command: {c.command_template.strip()}")
+    if outcome.quality is not None:
+        lines.append(f"  quality: {outcome.quality:.3f} (estimated)")
     lines.append("  status: quarantined (not discoverable until approved).")
     lines.append("  Review with /skill-candidates.")
     return "\n".join(lines)

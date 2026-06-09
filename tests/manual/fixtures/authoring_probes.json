@@ -1,0 +1,10 @@
+{
+  "version": "authoring-probes-2026-06",
+  "description": "Generic, capability-agnostic probe messages used to exercise a drafted skill candidate during evaluation. The candidate's own stated purpose is always the first probe; these fill out the rest deterministically. Tune freely — order is preserved.",
+  "probes": [
+    "Walk me through how you would handle this.",
+    "Give me the result.",
+    "What do you need from me to do this?",
+    "Can you do this for a tricky case too?"
+  ]
+}
