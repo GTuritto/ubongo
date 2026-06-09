@@ -959,6 +959,69 @@ def _cmd_skill(line: str, state: ReplState) -> str | None:
     return f"Next turn will use skill: {requested}."
 
 
+def _parse_author_command(line: str) -> str | None:
+    """`/author <description>` -> the description, or None if missing."""
+    raw = line.strip().lstrip("/")
+    parts = raw.split(maxsplit=1)
+    if not parts or parts[0].lower() != "author":
+        return None
+    if len(parts) == 1 or not parts[1].strip():
+        return None
+    return parts[1].strip()
+
+
+def _render_author(description: str) -> str:
+    from ubongo.authoring import manual
+
+    try:
+        outcome = manual.author_skill(description)
+    except manual.AuthoringError as exc:
+        return f"Could not author a skill: {exc}"
+    c = outcome.candidate
+    kind = "command skill" if c.is_command_skill else "prompt skill"
+    lines = [
+        f"Drafted candidate #{outcome.candidate_id} '{c.name}' (gen {outcome.generation}, {kind}).",
+        f"  risk: {c.risk}   reversibility: {c.reversibility}"
+        + (f"   persona: {c.default_persona}" if c.default_persona else ""),
+        f"  {c.description}",
+    ]
+    if c.is_command_skill:
+        lines.append(f"  command: {c.command_template.strip()}")
+    lines.append("  status: quarantined (not discoverable until approved).")
+    lines.append("  Review with /skill-candidates.")
+    return "\n".join(lines)
+
+
+def _cmd_author(line: str, state: ReplState) -> str | None:
+    description = _parse_author_command(line)
+    if not description:
+        return f"Usage: /author <capability description>. {_HELP_COMMANDS}"
+    return _render_author(description)
+
+
+def _render_skill_candidates_list() -> str:
+    rows = store.authored_skills(limit=30)
+    if not rows:
+        return "No authored skill candidates yet. Draft one with /author <description>."
+    lines = ["Authored skill candidates (newest first):"]
+    for r in rows:
+        cand = r.get("candidate") or {}
+        is_cmd = bool((cand.get("command_template") or "").strip())
+        quality = r.get("quality")
+        q = f" quality={quality:.3f}" if isinstance(quality, (int, float)) else ""
+        lines.append(
+            f"  #{r['id']} {r['name']:<24} {r['status']:<11} "
+            f"gen={r['generation']} {'cmd' if is_cmd else 'prompt'} "
+            f"src={r['source']}{q}"
+        )
+    return "\n".join(lines)
+
+
+def _cmd_skill_candidates(line: str, state: ReplState) -> str | None:
+    # Phase 1: listing only. The approve/reject/rollback gate ships in Phase 3.
+    return _render_skill_candidates_list()
+
+
 COMMANDS: dict[str, Command] = {
     "skill":        Command(_cmd_skill, "/skill <name>"),
     "skills":       Command(_cmd_skills, "/skills"),
@@ -974,6 +1037,8 @@ COMMANDS: dict[str, Command] = {
     "evaluate":     Command(_cmd_evaluate, "/evaluate <target>"),
     "evolution":    Command(_cmd_evolution, "/evolution <status|pause|resume|off>"),
     "improvements": Command(_cmd_improvements, "/improvements"),
+    "author":       Command(_cmd_author, "/author <description>"),
+    "skill-candidates": Command(_cmd_skill_candidates, "/skill-candidates"),
     "recall":       Command(_cmd_recall, "/recall [query]"),
     "audit":        Command(_cmd_audit, "/audit [category]"),
     "conflicts":    Command(_cmd_conflicts, "/conflicts"),
