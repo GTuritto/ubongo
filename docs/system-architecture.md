@@ -18,6 +18,7 @@ Summary:
 - `sandbox.py` (Phase 11b, hardened Phase 15c) is the single safety contract for shell execution: an allowlist resolved to absolute program paths, no shell metacharacters, no path traversal, a filesystem allowlist (path args must resolve inside the repo), `shell=False`, an empty child `PATH`, repo-root cwd, and a 10s timeout. The Execution Agent and the `/exec` REPL command both route through it. Full contract in [docs/SECURITY.md](SECURITY.md).
 - Queue and event bus coordinate side effects (`before_send`, `after_send`).
 - SQLite store is canonical memory; vault is projected markdown.
+- The diagram below is the synchronous turn path. Three background daemon threads run alongside it, started/stopped by the REPL and all paused/off by default: the GP self-improvement loop (`evolution.loop`), the vault watcher (`memory.vault_watch`), and — post-v0.1 — the skill-authoring daemon (`authoring.loop`, [ADR-0013](adr/0013-self-authored-skills-quarantine-and-approval.md)), which drafts brand-new skills into quarantine for human approval (see [docs/architecture/c4-components-authoring.md](architecture/c4-components-authoring.md)). None touches the turn path.
 
 ```mermaid
 flowchart LR
@@ -273,6 +274,7 @@ Implemented command families in `repl.py`:
 - Sandbox debug: `/exec <cmd>` (Phase 11; bypasses `master.handle`, no workflow_runs row)
 - Self-improvement (Tier 5): `/optimize <target>` (generate variants), `/evaluate <target>` (fitness leaderboard), `/evolution <status|pause|resume|off>` (the background loop), `/improvements [approve|reject <id> | rollback <target>]` (promotions + live swap)
 - Wiki memory (Tier 6): `/recall [query]` (recency + semantic + vault-graph neighbors), `/audit [category] [N]` (unified audit tail), `/conflicts [resolve <id> <keep-mine|keep-theirs|merge>]` (vault edit collisions)
+- Self-authored skills (post-v0.1, ADR-0013): `/author <description>` (draft a new skill into quarantine), `/skill-candidates [approve <id> | reject <id> | rollback <name>]` (the approval gate + versioned backups), `/authoring <status|pause|resume|off>` (the authoring daemon)
 - Control: `/exit`
 
 ## 8) Prompt and Configuration Hierarchy

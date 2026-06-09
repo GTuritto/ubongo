@@ -11,7 +11,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-NAME="ubongo-v0.1"
+# Bundle name tracks the project version so the artifact is self-identifying
+# (e.g. ubongo-v0.1.2). Derived from pyproject.toml so a version bump flows here.
+VERSION="$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)"
+NAME="ubongo-v${VERSION}"
 OUT="dist/$NAME"
 
 rm -rf "$OUT" "dist/$NAME.zip"
@@ -24,7 +27,7 @@ cp -R src config docs tests "$OUT/"
 
 # Top-level files needed to install / run / read.
 cp pyproject.toml uv.lock \
-   README.md CONTEXT.md STATUS.md UBONGO_BUILD.md UBONGO_VISION.md \
+   README.md CONTEXT.md STATE.md STATUS.md UBONGO_BUILD.md UBONGO_VISION.md \
    install.sh start-ubongo.sh start-ubongo-web.sh .env.example \
    "$OUT/"
 

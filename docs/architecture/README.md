@@ -3,11 +3,13 @@
 Architecture documentation for Ubongo using the [C4 model](https://c4model.com/).
 Diagrams are Mermaid C4; GitHub and most Markdown viewers render them inline.
 
-Reflects **v0.1 complete** — all 22 phases (0–21) merged to `main`. All six
-tiers are done: Foundation, Multi-Agent, Self-Healing, Governance,
+Reflects **v0.1.2** (v0.1 complete plus the post-v0.1 layers). All 22 v0.1 phases
+(0–21) are merged to `main` — Foundation, Multi-Agent, Self-Healing, Governance,
 Self-Improvement (the closed GP loop with human-approved promotions), and Wiki
 Memory + Polish (sqlite-vec semantic recall, the vault-link graph, and
-bidirectional vault sync). See [STATUS.md](../../STATUS.md) for the changelog.
+bidirectional vault sync). On top of that: the optional web UI (v0.1.1) and the
+self-authored-skills experiment (v0.1.2, the `authoring/` package). See
+[STATUS.md](../../STATUS.md) for the changelog.
 
 Updated 2026-06-07 for the post-v0.1 architecture-deepening refactors
 ([ADR-0012](../adr/0012-agent-envelope-directives-and-router-planning.md)): the
@@ -26,14 +28,18 @@ reflect the new planning seam and envelope.
 | 3 — Component | [c4-components-memory.md](c4-components-memory.md) | Developers | Memory subsystem internals (incl. embeddings, graph, vault watcher) |
 | 3 — Component | [c4-components-evolution.md](c4-components-evolution.md) | Developers | GP self-improvement loop internals |
 | 3 — Component | [c4-components-authoring.md](c4-components-authoring.md) | Developers | Self-authored skills (post-v0.1): draft → quarantine → approve |
-| Dynamic | [c4-dynamic-turn.md](c4-dynamic-turn.md) | Technical | One user message, end to end |
+| Dynamic | [c4-dynamic-turn.md](c4-dynamic-turn.md) | Technical | One user message, end to end (event-annotated) |
+| Flow + Sequence | [flow-and-sequence.md](flow-and-sequence.md) | Technical | Turn flow diagram + UML sequence diagram |
+| Agents | [agents.md](agents.md) | Developers | The worker fleet: roster, UML class model, six execution modes |
 
 ## Reading order
 
 Start with **Context** for scope, then **Container** for the module map. The
-three **Component** diagrams (orchestration, memory, evolution) and the
-**Dynamic** turn trace add depth where it helps; they are not needed to
-understand the whole.
+**Component** diagrams (orchestration, memory, evolution, authoring) and the
+**Dynamic** turn trace add depth where it helps. For the turn itself, the
+**Flow + Sequence** page gives a flowchart and a UML sequence diagram, and the
+**Agents** page documents the worker fleet (roster, UML class model, the six
+execution modes). None are needed to understand the whole.
 
 ## Scope
 

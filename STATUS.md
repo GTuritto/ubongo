@@ -1,6 +1,6 @@
 # Ubongo — Implementation Status
 
-Last updated: 2026-06-04
+Last updated: 2026-06-09. Current version: **v0.1.2** (the v0.1 build, plus the post-v0.1 web UI (v0.1.1) and self-authored-skills (v0.1.2) layers; v0.2 is Telegram).
 
 ## Overall
 
