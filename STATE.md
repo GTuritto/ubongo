@@ -9,6 +9,8 @@ If STATE.md and the spec disagree, the code is the source of truth and STATE.md 
 
 ## Snapshot
 
+- **Current version: v0.1.2.** v0.1 (the 22-phase build) plus the optional web UI (v0.1.1)
+  and self-authored skills (v0.1.2). Not yet v0.2 (Telegram).
 - **v0.1 is complete and merged to `main`.** All 22 phases (0–21) landed, each on its own
   `phase-N-<name>` branch, merged after review (16 phase PRs).
 - **Plus a post-v0.1 layer that is also on `main`**: six architecture-deepening refactors

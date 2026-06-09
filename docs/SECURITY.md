@@ -1,4 +1,4 @@
-# Ubongo Security Model (v0.1)
+# Ubongo Security Model (v0.1.2)
 
 Ubongo is a personal, local, single-user CLI. It is not a multi-user or
 production system. This document describes the two security-relevant surfaces

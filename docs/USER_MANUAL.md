@@ -1,4 +1,8 @@
-# Ubongo — User Manual (v0.1)
+<p align="center">
+  <img src="ubongo_plush_brain_bongos_pinegreen.svg" alt="Ubongo logo: a happy pink brain playing the bongos" width="360">
+</p>
+
+# Ubongo User Manual (v0.1.2)
 
 Ubongo is a personal, mood-aware AI mind that runs entirely on your own machine as a command-line app. *Ubongo* is Swahili for *brain*. It talks to you in one of three personas, remembers your conversations in a local database and an Obsidian-compatible Markdown vault, can run safe shell commands, gates risky actions behind your approval, and quietly tries to improve its own prompts over time — promoting changes only when you approve them.
 
@@ -22,8 +26,8 @@ Ubongo is a single-user, single-machine, local app. No Docker, no database serve
 1. Copy the bundle onto the Pi and unzip it:
 
    ```bash
-   unzip ubongo-v0.1.zip
-   cd ubongo-v0.1
+   unzip ubongo-v0.1.2.zip
+   cd ubongo-v0.1.2
    ```
 
 2. If Python or the venv tools are missing, install them once:
@@ -181,6 +185,15 @@ All commands start with `/`. (One-shot mode uses CLI flags instead.)
 
 Evolvable targets: `persona:architect`, `persona:operator`, `persona:casual`, `routing:default`, `toolchain:<workflow>`, `retry:repair`.
 
+### Self-authored skills (authoring)
+| Command | What it does |
+|---|---|
+| `/author <description>` | Draft a brand-new skill from a description; it is validated, quality-scored, and **quarantined** (not usable yet) |
+| `/skill-candidates [approve <id> \| reject <id> \| rollback <name>]` | Review drafts; **approve** makes a skill live, **rollback** restores the prior version (or removes it) |
+| `/authoring <status\|pause\|resume\|off>` | Control the autonomous authoring daemon (starts **paused**) |
+
+Where self-improvement *tunes* Ubongo's existing prompts, authoring lets it *write new skills*. Nothing a draft proposes is usable until you approve it — see section 10.5.
+
 ### Skills & system
 | Command | What it does |
 |---|---|
@@ -226,6 +239,21 @@ Ubongo can evolve its own prompts and routing/retry configuration:
 3. **Nothing changes until you approve it.** Run `/improvements` to see proposals with a diff and a fitness delta, then `approve`, `reject`, or `rollback`.
 
 The background loop is **off (paused) by default** and never spends money on its own — type `/evolution resume` to let it run, `/evolution pause` or `/evolution off` to stop it, `/evolution status` to check. To enable it at all, set `evolution.enabled: true` in `config/settings.yaml`.
+
+---
+
+## 10.5. Self-authored skills, behind your approval
+
+Beyond tuning what it has, Ubongo can **write brand-new skills** — and you decide which ones become real.
+
+1. **Draft.** `/author "summarize a git diff into release notes"` asks Ubongo to design a skill. It is validated, given a rough quality score, and put in **quarantine** — written to disk but invisible to the running assistant. A skill that runs a shell command is automatically marked medium-risk (it can't downgrade itself), and an unsafe command is rejected on the spot.
+2. **Review.** `/skill-candidates` lists drafts. Each is just a proposal until you act.
+3. **Approve → live.** `/skill-candidates approve <id>` registers the skill so it shows up in `/skills` and you can pin it with `/skill <name>`. If it replaces an older version, the old one is backed up first.
+4. **Undo anytime.** `/skill-candidates rollback <name>` restores the previous version, or removes the skill entirely if it was new. `/skill-candidates reject <id>` discards a draft without registering it.
+
+There is also an **autonomous authoring daemon**: it watches for kinds of requests you keep making that no skill handles, and quietly drafts a candidate for them. It is **off (paused) by default**, never spends on its own, and — importantly — **never approves anything**. It only ever puts drafts in the review queue. Control it with `/authoring resume | pause | off | status`, and see what it has been doing with `/audit authoring`.
+
+The rule is the same as self-improvement: Ubongo can propose, but nothing it authors becomes a usable capability without your explicit approval. The full safety design is in `docs/SECURITY.md` ("Self-authored skills").
 
 ---
 

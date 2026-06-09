@@ -1,34 +1,42 @@
+<p align="center">
+  <img src="docs/ubongo_plush_brain_bongos_pinegreen.svg" alt="Ubongo logo: a happy pink brain playing the bongos" width="360">
+</p>
+
 # Ubongo
 
-A personal, mood-aware AI mind that runs as a local CLI. *Ubongo* is Swahili for *brain* or *mind*.
+A personal, mood-aware AI mind that runs entirely on your own machine. *Ubongo* is Swahili for *brain*.
 
-v0.1 packs three things into one system, hand-rolled in plain Python:
+> Your own AI. It reads the room, remembers your history, governs its own risk, improves its own prompts, and even writes new skills for itself, and it never does anything irreversible without your say-so.
 
-- **A multi-agent orchestrator.** A Master Agent classifies each turn, plans a workflow, dispatches a fleet of worker agents (Research, Coding, Evaluator, Repair, Memory, Critic, Execution, Persona), and composes the response. Six execution modes are available: sequential, parallel, competitive, collaborative, debate, speculative.
-- **A self-improving runtime.** A continuous Genetic Programming loop evolves prompts, routing rules, tool chains, and retry strategies. Variants are evaluated against held-out conversation samples; lineage is tracked; promotions to production require explicit user approval via `/improvements`.
-- **A memory-centric local system.** SQLite is the canonical store. An Obsidian-compatible Markdown vault is projected from it. `sqlite-vec` indexes messages and vault notes for semantic recall. Vault links form a graph the Master Agent can traverse.
+## Why Ubongo
 
-A governance layer evaluates risk, confidence, and reversibility per turn and gates risky actions through user approval. Single user, single machine, single channel. No LangGraph, no Temporal, no Docker.
+Cloud assistants are rented, generic, and forgetful. Your conversations live on someone else's servers, the model is the same one everyone else gets, and tomorrow it has forgotten today. Ubongo is the opposite:
 
-## Status
+- **Yours and local.** It runs on hardware you own (a Raspberry Pi is enough). Your conversations live in a local SQLite database and an Obsidian vault you control. No account, no cloud lock-in.
+- **Mood-aware.** It reads the tone of each message and answers in the right voice: deep and architectural, terse and operational, or warm and casual.
+- **It remembers.** Every turn is persisted and semantically searchable. Ask "what did we decide about caching last week" and the relevant old turns come back, even after a restart.
+- **It improves itself, with you in control.** A background loop evolves its own prompts and routing and surfaces the winners; nothing changes until you approve it.
+- **It extends itself, with you in control.** It can draft brand-new skills for things you keep asking for; nothing becomes usable until you approve it.
+- **It is governed.** Every turn is scored for risk and reversibility. Anything destructive stops and asks first, and shell access is locked inside a sandbox.
 
-**v0.1 is complete — all 22 phases (0–21) merged to `main` and certified.** The CLI runs end-to-end: classify, plan, execute through the worker fleet, govern, compose, enqueue, persist. Ten worker agents are registered (Architect, Operator, Casual personas + Research, Memory, Evaluator, Critic, Coding, Execution, Repair); all six execution modes are live; the Repair Agent walks a full recovery ladder; the governance decision matrix gates risky turns through an interactive `y/n/why` approval flow over a hardened sandbox. The Genetic Programming loop is closed: it generates variants (of persona prompts *and* routing rules / tool chains / retry config), evaluates them against held-out samples, evolves generations autonomously, and proposes promotions that take effect via a live swap only after you approve them in `/improvements`. Semantic recall (`sqlite-vec`) augments recency, a vault-link graph is queryable, and a polling watcher ingests edits you make to vault notes (bidirectional sync) with a unified audit log. **723 / 723 tests green; ~11,255 LOC** (under the 15k soft target); the full cumulative smoke passes end-to-end.
+## What It Is
 
-The build ran across **22 phases in 6 tiers**. Each phase was implemented on its own branch, shipped a working system, and ended with a manual end-to-end smoke test before merging to `main`. See [STATUS.md](STATUS.md) for the phase-by-phase changelog and [UBONGO_BUILD.md](UBONGO_BUILD.md) for sub-phases and per-phase testing plans. Next is **v0.2 (Telegram)** — a new transport, additive on the existing event/queue seams.
+Three things in one package, hand-rolled in plain Python (no LangGraph, no Temporal, no Docker):
 
-## What Ubongo Is
+- **A multi-agent orchestrator.** A Master Agent classifies each turn, plans a workflow, dispatches a fleet of ten worker agents (three persona voices plus Research, Coding, Evaluator, Critic, Execution, Memory, Repair), and composes the response across six execution modes: sequential, parallel, competitive, collaborative, debate, speculative.
+- **A self-improving, self-extending runtime.** A continuous Genetic Programming loop evolves prompts, routing rules, tool chains, and retry strategies; a separate authoring loop drafts entirely new skills. Both run sandboxed, are fully traced, and promote nothing without your approval.
+- **A memory-centric local system.** SQLite is canonical; an Obsidian-compatible Markdown vault is projected from it; `sqlite-vec` indexes messages and notes for semantic recall; vault links form a graph the agents can traverse.
 
-- A multi-agent orchestration platform for one user, locally.
-- A self-improving runtime: GP loop with sandboxed evaluation, lineage tracking, human-approved promotions.
-- A CLI: REPL primary, one-shot for scripting.
-- A memory-centric system: SQLite canonical, Markdown vault projected, embeddings indexed, graph linked.
+Single user, single machine, accessed through a CLI (REPL primary, one-shot for scripting).
 
-## What Ubongo Is Not (v0.1)
+## What It Does
 
-- A multi-channel system. CLI only in v0.1; Telegram is v0.2; Slack/WhatsApp/Discord/web/voice are not on the roadmap.
-- A production system or SaaS product.
-- A multi-user or team tool.
-- A distributed system. Single process, single machine.
+- **Talks in three personas** and switches automatically by reading your tone, or on command (`/architect`, `/operator`, `/casual`).
+- **Runs a real agent fleet** per turn: research over your own history, code generation, an evaluator that scores confidence, a contrarian critic, sandboxed shell execution, and a repair agent that recovers failures on its own.
+- **Gates risk.** A destructive request like "delete the entire vault" triggers an `Approve? (y/n/why)` prompt; shell commands run in a locked-down sandbox (allowlist, no network, repo-root, 10s timeout).
+- **Improves its own prompts** (`/optimize`, `/evaluate`, `/improvements`) and **authors its own skills** (`/author`, `/skill-candidates`), both behind your explicit approval.
+- **Remembers and recalls** across restarts: recency plus semantic search (`/recall`), a browsable Obsidian journal, and bidirectional vault sync.
+- **Traces everything.** Every decision, agent run, governance call, repair, and evolution variant is persisted and auditable (`/trace`, `/decisions`, `/audit`).
 
 ## How It Works (one screen)
 
@@ -56,16 +64,39 @@ CLI input
    ▼  remember ─────► Memory Agent writes SQLite + vault + embeddings
 ```
 
-A continuous Genetic Programming loop runs in the background on its own asyncio task: generate variants of a target (prompt, routing rule, tool chain, retry strategy), evaluate them in a sandbox against held-out samples, score with a configurable fitness function, surface winners to the user via `/improvements` for approval. Nothing promotes to production without a human `approve`.
+Three background daemon threads run alongside that turn loop, all paused or off by default: the **Genetic Programming loop** (evolve a target, evaluate it in a sandbox against held-out samples, surface winners via `/improvements`), the **vault watcher** (ingest edits you make in Obsidian), and the **authoring daemon** (draft brand-new skills into quarantine for you to review). None of them changes anything live without your approval.
+
+For the full picture: a turn [flow + UML sequence diagram](docs/architecture/flow-and-sequence.md), the [agent fleet diagrams](docs/architecture/agents.md), and the [C4 architecture set](docs/architecture/).
+
+## Status
+
+**Current version: v0.1.2.** v0.1 (the 22-phase build) is complete, plus two post-v0.1 layers: the optional web UI (v0.1.1) and self-authored skills (v0.1.2). The v0.2 milestone is Telegram.
+
+**v0.1 is complete: all 22 phases (0–21) are merged to `main` and certified, and a post-v0.1 self-extension layer (self-authored skills) ships on top.** The CLI runs end to end: classify, plan, execute through the worker fleet, govern, compose, enqueue, persist. Ten worker agents are registered; all six execution modes are live; the Repair Agent walks a full recovery ladder; the governance decision matrix gates risky turns through an interactive `y/n/why` approval flow over a hardened sandbox. The Genetic Programming loop is closed: generate variants of persona prompts *and* routing / tool-chain / retry config, evaluate against held-out samples, evolve generations, and propose promotions that live-swap only after you approve them. Semantic recall (`sqlite-vec`) augments recency, a vault-link graph is queryable, and a polling watcher ingests your vault edits. Post-v0.1, Ubongo also drafts brand-new skills behind the same approval boundary (`/author`, `/skill-candidates`, and an autonomous authoring daemon). **~874 tests green; ~13,850 LOC**; the full cumulative smoke passes end to end.
+
+The v0.1 build ran across **22 phases in 6 tiers**, each on its own branch and smoke-tested before merge; the self-extension work added five more phases the same way. See [STATUS.md](STATUS.md) for the changelog, [STATE.md](STATE.md) for ground-truth state, and [UBONGO_BUILD.md](UBONGO_BUILD.md) for the v0.1 spec. Next is **v0.2 (Telegram)**, a new transport that is additive on the existing event/queue seams.
+
+## What Ubongo Is Not
+
+- A multi-channel system. The CLI is the primary channel; an optional self-hosted web UI shipped post-v0.1 for trusted-LAN use. Telegram is the v0.2 milestone; Slack/WhatsApp/Discord/voice are not on the roadmap.
+- A production system or SaaS product.
+- A multi-user or team tool.
+- A distributed system. Single process, single machine.
 
 ## Documentation Map
 
 - [README.md](README.md) — this file. Goal, setup, usage, roadmap, contributing.
 - [docs/system-architecture.md](docs/system-architecture.md) — current implementation architecture with Mermaid diagrams (runtime flow, events, data model).
+- [docs/architecture/](docs/architecture/) — C4 diagrams (context, container, component, dynamic-turn) with reading order.
+- [docs/adr/](docs/adr/) — architecture decision records (the load-bearing decisions, ADR-0001 … ADR-0013).
+- [CONTEXT.md](CONTEXT.md) — the domain glossary (canonical terms + words to avoid).
+- [docs/SECURITY.md](docs/SECURITY.md) — the v0.1 security model: governance gate, execution sandbox, self-authored skills, optional web UI.
+- [docs/USER_MANUAL.md](docs/USER_MANUAL.md) — end-user guide (install, commands, day-to-day use).
 - [UBONGO_BUILD.md](UBONGO_BUILD.md) — full v0.1 build specification, 22 phases with sub-phases and per-phase testing plans. Source of truth.
 - [UBONGO_VISION.md](UBONGO_VISION.md) — design exposition the v0.1 build realizes.
 - [CLAUDE.md](CLAUDE.md) — context for Claude Code sessions.
-- [STATUS.md](STATUS.md) — current phase tracker and acceptance-criteria checklist.
+- [STATUS.md](STATUS.md) — current phase tracker and acceptance-criteria checklist (incl. post-v0.1 work).
+- [STATE.md](STATE.md) — ground-truth state: what's built, drift from spec, decisions, what's parked.
 - [Plans/](Plans/) — archived plan-mode plans.
 - [tests/manual/smoke_test.md](tests/manual/smoke_test.md) — cumulative end-to-end manual playbook, populated phase by phase.
 
@@ -280,7 +311,7 @@ ubongo/
     manual/smoke_test.md           # cumulative end-to-end playbook
 ```
 
-Sub-trees that exist as scaffolding for later phases (`evolution/`, `governance/risk.py`, `governance/approval.py`, `memory/embeddings.py`, `memory/graph.py`) are not in the layout above; they ship in their respective phases. See [UBONGO_BUILD.md](UBONGO_BUILD.md) for the full architecture and the 22-phase plan, and [docs/system-architecture.md](docs/system-architecture.md) for the current implementation diagrams.
+The layout above is an early-v0.1 snapshot. Several sub-trees shown there as stubs are now fully built (the whole `evolution/` GP package, `governance/{risk,confidence,reversibility,approval}.py`, `memory/{embeddings,graph,vault_watch}.py`), and a post-v0.1 package was added: `src/ubongo/authoring/` — self-authored skills (Ubongo drafts new skills behind a human approval gate; [ADR-0013](docs/adr/0013-self-authored-skills-quarantine-and-approval.md)). For the current module map see [docs/architecture/](docs/architecture/) (the C4 diagrams) and [docs/system-architecture.md](docs/system-architecture.md); [UBONGO_BUILD.md](UBONGO_BUILD.md) remains the v0.1 build spec.
 
 ## Implementation Workflow
 

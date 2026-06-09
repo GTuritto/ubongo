@@ -30,6 +30,7 @@ C4Container
     Container(vault, "Vault Projector", "Python", "Projects conversations + memory into Markdown daily notes")
     Container(evoloop, "GP Self-Improvement Loop", "Python thread", "Tier 5 daemon: generate -> evaluate -> rank -> propose; paused by default")
     Container(vaultwatch, "Vault Watcher", "Python thread", "Tier 6 daemon: polls vault, ingests external edits, queues conflicts")
+    Container(authoring, "Skill Authoring", "Python (+ thread)", "Post-v0.1: drafts new skills -> quarantine -> human approval gate; AuthoringLoop daemon, paused by default")
     ContainerDb(db, "SQLite Database", "SQLite", "Canonical store: conversations, runs, governance, repair, queue, evolution, vec")
     ContainerDb(vaultfs, "Markdown Vault", "Filesystem", "Obsidian-compatible projection + audit log")
     ContainerDb(config, "Config", "YAML files", "routing, workflows, skills, personas, settings (secrets in .env only)")
@@ -60,6 +61,12 @@ C4Container
   Rel(cli, evoloop, "/improvements approve / reject; /evolve")
   Rel(vaultwatch, vaultfs, "Polls for external edits")
   Rel(vaultwatch, memstore, "Ingest edits, queue conflicts")
+  Rel(cli, authoring, "/author, /skill-candidates, /authoring")
+  Rel(authoring, llmgw, "Draft skill + judge")
+  Rel(authoring, sandbox, "validate_command + dry-run")
+  Rel(authoring, skills, "Materialize on approve; reload")
+  Rel(authoring, db, "authored_skills, authoring_runs/state", "sqlite3")
+  Rel(authoring, config, "Quarantine / live skills / backups dirs")
 
   UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
 ```
@@ -84,9 +91,9 @@ C4Container
 - **Single process, hand-rolled.** No LangGraph, Temporal, Ray, Docker, or
   Redis. Concurrency inside the Workflow Runner is plain `asyncio`.
 
-## Background daemons (Tiers 5–6, all built)
+## Background daemons (Tiers 5–6 + post-v0.1, all built)
 
-Two background daemon threads run alongside the synchronous turn loop, started
+Three background daemon threads run alongside the synchronous turn loop, started
 and stopped by the REPL:
 
 - **GP self-improvement loop** (`evolution.loop.EvolutionLoop`, Tier 5): the full
@@ -98,6 +105,11 @@ and stopped by the REPL:
 - **Vault watcher** (`memory.vault_watch.VaultWatcher`, Tier 6): a no-dependency
   poller that ingests external vault edits (re-embed into `vec_vault`) and queues
   conflicts. Off by default.
+- **Authoring daemon** (`authoring.loop.AuthoringLoop`, post-v0.1, [ADR-0013](../adr/0013-self-authored-skills-quarantine-and-approval.md)): the
+  `src/ubongo/authoring/` package — drafts brand-new skills from inferred capability
+  gaps into quarantine (`config/skills_candidates/`), scores them, and never
+  registers them; the human approves via `/skill-candidates`. Paused by default.
+  Detailed in [c4-components-authoring.md](c4-components-authoring.md).
 
 Semantic recall (`sqlite-vec` indexing of messages and vault notes) is wired into
 the turn path itself (`recall(query)`), best-effort and degrading to recency-only
