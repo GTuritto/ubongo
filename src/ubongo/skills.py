@@ -40,6 +40,12 @@ def set_skills_dir(path: Path | None) -> None:
     reload()
 
 
+def skills_dir() -> Path:
+    """The live skills directory currently in effect (honors set_skills_dir). The
+    authoring approval gate materializes an approved candidate into here."""
+    return _skills_dir
+
+
 def _split_frontmatter(text: str) -> tuple[dict, str]:
     if not text.startswith("---\n"):
         return {}, text
