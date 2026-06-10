@@ -95,6 +95,8 @@ The v0.1 build ran across **22 phases in 6 tiers**, each on its own branch and s
 - [UBONGO_BUILD.md](UBONGO_BUILD.md) — full v0.1 build specification, 22 phases with sub-phases and per-phase testing plans. Source of truth.
 - [UBONGO_VISION.md](UBONGO_VISION.md) — design exposition the v0.1 build realizes.
 - [CLAUDE.md](CLAUDE.md) — context for Claude Code sessions.
+- [VERSION](VERSION) — the current version, single line (the source of truth for the version number).
+- [CHANGELOG.md](CHANGELOG.md) — the versioning scheme (v0.MAJOR.PHASE) and what each version added.
 - [STATUS.md](STATUS.md) — current phase tracker and acceptance-criteria checklist (incl. post-v0.1 work).
 - [STATE.md](STATE.md) — ground-truth state: what's built, drift from spec, decisions, what's parked.
 - [Plans/](Plans/) — archived plan-mode plans.
