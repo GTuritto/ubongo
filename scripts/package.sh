@@ -11,9 +11,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# Bundle name tracks the project version so the artifact is self-identifying
-# (e.g. ubongo-v0.1.2). Derived from pyproject.toml so a version bump flows here.
-VERSION="$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)"
+# Bundle name tracks the project version (single source of truth: the root
+# VERSION file), so the artifact self-identifies (e.g. ubongo-v0.1.2). pyproject
+# is cross-checked so the two never drift silently.
+VERSION="$(tr -d '[:space:]' < VERSION)"
+PYPROJECT_VERSION="$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)"
+if [ "$VERSION" != "$PYPROJECT_VERSION" ]; then
+  echo "WARNING: VERSION ($VERSION) != pyproject.toml version ($PYPROJECT_VERSION); keep them in sync." >&2
+fi
 NAME="ubongo-v${VERSION}"
 OUT="dist/$NAME"
 
@@ -26,7 +31,7 @@ echo "==> Assembling $OUT"
 cp -R src config docs tests "$OUT/"
 
 # Top-level files needed to install / run / read.
-cp pyproject.toml uv.lock \
+cp pyproject.toml uv.lock VERSION CHANGELOG.md \
    README.md CONTEXT.md STATE.md STATUS.md UBONGO_BUILD.md UBONGO_VISION.md \
    install.sh start-ubongo.sh start-ubongo-web.sh .env.example \
    "$OUT/"
