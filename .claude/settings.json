@@ -39,10 +39,27 @@
       "Bash(sqlite3 -column data/ubongo.db \"SELECT id, action, approval_response FROM governance_decisions ORDER BY id;\")",
       "Bash(sqlite3 -column data/ubongo.db \"SELECT action, approval_response FROM governance_decisions;\")",
       "Bash(python3 /Users/giuseppe/.claude/skills/session-handoff/scripts/create_handoff.py \"phase-15-done-phase-16-next\")",
-      "Bash(python3 /Users/giuseppe/.claude/skills/session-handoff/scripts/validate_handoff.py .claude/handoffs/2026-05-16-215740-phase-15-done-phase-16-next.md)"
+      "Bash(python3 /Users/giuseppe/.claude/skills/session-handoff/scripts/validate_handoff.py .claude/handoffs/2026-05-16-215740-phase-15-done-phase-16-next.md)",
+      "Bash(sed -n '/evolution_lineage/,$p' src/ubongo/memory/schema.sql)",
+      "Bash(sed -n '/^evolution:/,/^[a-z]/p' config/settings.yaml)",
+      "Bash(OPENROUTER_API_KEY=test-key uv run pytest tests/test_authoring_candidate.py tests/test_authoring_validation.py tests/test_authoring_quarantine.py tests/test_authoring_manual.py tests/test_repl_authoring.py -q)",
+      "Bash(OPENROUTER_API_KEY=test-key uv run pytest -q)",
+      "Bash(gh auth *)",
+      "Bash(OPENROUTER_API_KEY=test-key uv run pytest tests/test_authoring_sandbox.py tests/test_authoring_fitness.py tests/test_authoring_manual.py tests/test_repl_authoring.py tests/test_authoring_candidate.py tests/test_authoring_validation.py tests/test_authoring_quarantine.py -q)",
+      "Bash(export UBONGO_DISABLE_VAULT_WATCH=1)",
+      "Bash(echo \"--- exit rc: $? ---\")",
+      "Bash(grep -iv \"^ubongo repl\\\\|auto routing\\\\|^>$\")",
+      "Bash(OPENROUTER_API_KEY=test-key uv run pytest tests/test_authoring_manual.py -q)",
+      "Bash(OPENROUTER_API_KEY=test-key uv run pytest tests/test_authoring_manual.py::test_author_skill_safe_at_info_logging -q)",
+      "Bash(OPENROUTER_API_KEY=test-key uv run pytest tests/test_authoring_promotion.py tests/test_repl_authoring.py -q)",
+      "Bash(awk '{print $5, $9}')",
+      "Bash(grep -v \"^$\")",
+      "Bash(OPENROUTER_API_KEY=test-key uv run pytest tests/test_authoring_gaps.py tests/test_authoring_loop.py tests/test_repl_authoring.py -q)",
+      "Bash(awk '{print $5}')"
     ],
     "additionalDirectories": [
-      "/Volumes/giuseppeM1mini-External/Coding/ubongo/Plans"
+      "/Volumes/giuseppeM1mini-External/Coding/ubongo/Plans",
+      "/Volumes/giuseppeM1mini-External/Coding/ubongo/src/ubongo/memory"
     ]
   }
 }
