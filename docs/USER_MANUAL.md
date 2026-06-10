@@ -12,8 +12,8 @@ This manual covers installing and running Ubongo on a Raspberry Pi 5 (or any Deb
 
 ## 1. What you need
 
-- A **Raspberry Pi 5** (or any Debian/Ubuntu box). 16 GB RAM is plenty; Ubongo is lightweight.
-- **Ubuntu** (or Raspberry Pi OS based on Debian). Python **3.11 or newer** (Ubuntu 24.04 ships 3.12).
+- **macOS or Linux** (a Raspberry Pi 5 or any Debian/Ubuntu box; macOS on Apple Silicon or Intel). 16 GB RAM is plenty; Ubongo is lightweight.
+- **Python 3.11 or newer** (Ubuntu 24.04 ships 3.12; on macOS: `brew install python` or python.org).
 - An **OpenRouter API key** — free to create at <https://openrouter.ai/keys>. Ubongo uses OpenRouter for all model calls (chat + embeddings). You pay OpenRouter per use; Ubongo itself is free.
 - An **internet connection** (for the model calls).
 
@@ -23,28 +23,31 @@ Ubongo is a single-user, single-machine, local app. No Docker, no database serve
 
 ## 2. Install
 
-1. Copy the bundle onto the Pi and unzip it:
+You are given two files: **`install-ubongo.sh`** and **`ubongo-v0.1.2.zip`**.
 
-   ```bash
-   unzip ubongo-v0.1.2.zip
-   cd ubongo-v0.1.2
-   ```
+### Easiest: the one-step installer (macOS + Linux)
 
-2. If Python or the venv tools are missing, install them once:
+Put both files in the same folder, then run:
 
-   ```bash
-   sudo apt update && sudo apt install -y python3 python3-venv python3-pip
-   ```
+```bash
+./install-ubongo.sh
+```
 
-3. Run the installer:
+It opens the zip, places the files where you choose (it asks; default `~/ubongo`), creates a private virtualenv, installs all dependencies, makes the `data/` and `vault/` folders, and asks for your OpenRouter API key. Add `--web` to also install the optional web UI, or `--dest DIR` to skip the location prompt. The first install takes a few minutes (it downloads the Python dependencies).
 
-   ```bash
-   ./install.sh
-   ```
+If Python is missing first: on Debian/Ubuntu `sudo apt update && sudo apt install -y python3 python3-venv python3-pip`; on macOS `brew install python` (or python.org).
 
-   It creates a private virtualenv (`.venv`), installs Ubongo and its dependencies, makes the `data/` and `vault/` folders, and asks for your OpenRouter API key (it saves it into `.env`). The first install on a Pi takes a few minutes.
+### Manual: unzip yourself
 
-That's it. The installer finishes by verifying a clean cold start.
+If you prefer, unzip the bundle and run the in-place installer:
+
+```bash
+unzip ubongo-v0.1.2.zip
+cd ubongo-v0.1.2
+./install.sh        # add --web for the web UI
+```
+
+Either way, the installer creates a private virtualenv (`.venv`), installs Ubongo and its dependencies, makes the `data/` and `vault/` folders, and saves your OpenRouter API key into `.env`. It finishes by verifying a clean cold start.
 
 > **Want the web UI too?** Run `./install.sh --web` instead. It additionally
 > installs the optional Streamlit chat page so you can talk to Ubongo from a

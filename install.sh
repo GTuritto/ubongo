@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 #
-# Ubongo v0.1 — installer for Debian / Ubuntu (incl. Raspberry Pi 5 / ARM64).
+# Ubongo installer — macOS + Linux (Debian/Ubuntu, incl. Raspberry Pi 5 / ARM64).
 #
 # Creates a local Python virtualenv (./.venv), installs Ubongo and its
 # dependencies, sets up the data + vault folders, and configures your
-# OpenRouter API key. Re-runnable (idempotent).
+# OpenRouter API key. Re-runnable (idempotent). Run in place after the bundle is
+# unzipped (the install-ubongo.sh bootstrap does the unzip + calls this).
 #
 #   ./install.sh
 #
@@ -13,9 +14,21 @@ set -euo pipefail
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$APP_DIR"
 
+OS="$(uname -s)"
+
 say()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m !!\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m xx\033[0m %s\n' "$*" >&2; exit 1; }
+
+# OS-aware hint for installing/repairing Python (macOS uses Homebrew/python.org;
+# Debian/Ubuntu uses apt).
+pyhint() {
+  if [ "$OS" = "Darwin" ]; then
+    echo "macOS: brew install python   (or download from https://www.python.org/downloads/)"
+  else
+    echo "Debian/Ubuntu: sudo apt update && sudo apt install -y python3 python3-venv python3-pip"
+  fi
+}
 
 # --web also installs the optional Streamlit web UI (the tablet chat page).
 WITH_WEB=0
@@ -32,17 +45,17 @@ say "Installing Ubongo into: $APP_DIR"
 
 # --- 1. Python >= 3.11 ------------------------------------------------------
 command -v python3 >/dev/null 2>&1 || \
-  die "python3 not found. Run:  sudo apt update && sudo apt install -y python3 python3-venv python3-pip"
+  die "python3 not found. Install Python 3.11+ first. $(pyhint)"
 
 PYV=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
 PYMAJ=${PYV%%.*}; PYMIN=${PYV##*.}
 if [ "$PYMAJ" -lt 3 ] || { [ "$PYMAJ" -eq 3 ] && [ "$PYMIN" -lt 11 ]; }; then
-  die "Python $PYV found; Ubongo needs >= 3.11. Try:  sudo apt install -y python3.12 python3.12-venv"
+  die "Python $PYV found; Ubongo needs >= 3.11. $(pyhint)"
 fi
-say "Python $PYV detected — OK"
+say "Python $PYV detected ($OS) — OK"
 
 python3 -c 'import venv' 2>/dev/null || \
-  die "The python3-venv module is missing. Run:  sudo apt install -y python3-venv"
+  die "The Python 'venv' module is missing. $(pyhint)"
 
 # --- 2. virtualenv ----------------------------------------------------------
 if [ ! -d .venv ]; then

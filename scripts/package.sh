@@ -51,7 +51,16 @@ chmod +x "$OUT/install.sh" "$OUT/start-ubongo.sh" "$OUT/start-ubongo-web.sh"
 echo "==> Zipping"
 ( cd dist && zip -rq "$NAME.zip" "$NAME" )
 
+# The bootstrap installer ships NEXT TO the zip (it opens the zip). Distribution
+# is exactly these two files: install-ubongo.sh + the zip.
+cp install-ubongo.sh dist/
+chmod +x dist/install-ubongo.sh
+
 echo
-echo "Bundle folder : $OUT"
+echo "Bootstrap     : dist/install-ubongo.sh   (run this on the target)"
 echo "Bundle zip    : dist/$NAME.zip  ($(du -h "dist/$NAME.zip" | cut -f1))"
+echo "Bundle folder : $OUT"
 echo "Files         : $(find "$OUT" -type f | wc -l | tr -d ' ')"
+echo
+echo "To deploy: copy dist/install-ubongo.sh + dist/$NAME.zip to the target (macOS or"
+echo "Linux), then run  ./install-ubongo.sh"
