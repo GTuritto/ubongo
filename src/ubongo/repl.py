@@ -61,14 +61,15 @@ def _parse_trace_command(line: str) -> int | None:
 
 _PROFILE_BREAKDOWNS = ("agents", "models", "modes")
 _PROFILE_CPU_ACTIONS = ("on", "off", "status")
+_PROFILE_MEM_ACTIONS = ("on", "off", "status")
 
 
 def _parse_profile_command(line: str) -> tuple[str, int | str | None] | None:
-    """Parses the `/profile` family (candidate 10).
+    """Parses the `/profile` family (candidates 10 + 11).
 
     Returns ("summary"|"agents"|"models"|"modes", N|None) where N is the
-    optional last-N-runs window (None = all runs), or ("cpu", "on"|"off"|"status").
-    None for malformed input."""
+    optional last-N-runs window (None = all runs), ("cpu", "on"|"off"|"status"),
+    or ("mem", "report"|"on"|"off"|"status"). None for malformed input."""
     raw = line.strip().lstrip("/")
     parts = raw.split()
     if not parts or parts[0].lower() != "profile":
@@ -79,6 +80,12 @@ def _parse_profile_command(line: str) -> tuple[str, int | str | None] | None:
     if args[0] == "cpu":
         if len(args) == 2 and args[1] in _PROFILE_CPU_ACTIONS:
             return ("cpu", args[1])
+        return None
+    if args[0] == "mem":
+        if len(args) == 1:
+            return ("mem", "report")
+        if len(args) == 2 and args[1] in _PROFILE_MEM_ACTIONS:
+            return ("mem", args[1])
         return None
     kind = "summary"
     rest = args
@@ -929,8 +936,8 @@ def _cmd_profile(line: str, state: ReplState) -> str | None:
     parsed = _parse_profile_command(line)
     if parsed is None:
         return (
-            "Usage: /profile [agents|models|modes] [N] | /profile cpu on|off|status. "
-            f"{_HELP_COMMANDS}"
+            "Usage: /profile [agents|models|modes] [N] | /profile cpu on|off|status"
+            f" | /profile mem [on|off|status]. {_HELP_COMMANDS}"
         )
     kind, arg = parsed
     if kind == "cpu":
@@ -944,6 +951,23 @@ def _cmd_profile(line: str, state: ReplState) -> str | None:
             state.cpu_profile = False
             return "CPU profiling off."
         return f"CPU profiling is {'on' if state.cpu_profile else 'off'}."
+    if kind == "mem":
+        if arg == "on":
+            profiling.mem_start()
+            return (
+                "Memory profiling armed: baseline snapshot taken. tracemalloc adds "
+                "per-allocation overhead while on; /profile mem shows growth, "
+                "/profile mem off disarms."
+            )
+        if arg == "off":
+            profiling.mem_stop()
+            return "Memory profiling off."
+        if arg == "status":
+            return f"Memory profiling is {'on' if profiling.mem_active() else 'off'}."
+        report = profiling.mem_report()
+        return report if report is not None else (
+            "Memory profiling is off. /profile mem on to take a baseline first."
+        )
     return _PROFILE_RENDERERS[kind](arg)
 
 
@@ -1235,7 +1259,7 @@ COMMANDS: dict[str, Command] = {
     "policy":       Command(_cmd_policy, "/policy"),
     "agents":       Command(_cmd_agents, "/agents"),
     "trace":        Command(_cmd_trace, "/trace [N]"),
-    "profile":      Command(_cmd_profile, "/profile [agents|models|modes|cpu] [N]"),
+    "profile":      Command(_cmd_profile, "/profile [agents|models|modes|cpu|mem] [N]"),
     "exec":         Command(_cmd_exec, "/exec <cmd>"),
     "mode":         Command(_cmd_mode, "/mode <workflow>"),
     "optimize":     Command(_cmd_optimize, "/optimize <target>"),

@@ -447,5 +447,7 @@ The local profiler (`ubongo.profiling`, [Plans/10-local-profiler.md](../../Plans
 | P.5 | CPU arm + turn | `/profile cpu on`; send a normal turn | the response prints as usual, then a `CPU profile written to data/profiles/turn-<ts>.prof` report with the top-25 cumulative table; `/profile cpu off` disarms; `/profile cpu status` reports the state. |
 | P.6 | One-shot CPU profile | `ubongo send --profile "hello"` | same report after the reply; a new `.prof` under `data/profiles/`. |
 | P.7 | Never breaks a turn | make `data/profiles/` unwritable (`chmod 444`); profiled turn | the turn still answers; the report degrades to a logged warning, no crash. Restore permissions after. |
-| P.8 | Bad args | `/profile bogus`, `/profile cpu maybe` | usage line, including in `/help`'s banner (`/profile [agents|models|modes|cpu] [N]`). |
-| P.9 | Pytest passes | `uv run pytest tests/` | all green (`tests/test_profiling.py` included). |
+| P.8 | Bad args | `/profile bogus`, `/profile cpu maybe`, `/profile mem maybe` | usage line, including in `/help`'s banner (`/profile [agents\|models\|modes\|cpu\|mem] [N]`). |
+| P.9 | Memory arm + report (candidate 11) | `/profile mem on`; send a turn or two; `/profile mem` | "Memory profiling armed" with the overhead warning; the report shows traced now/peak + process RSS and the top allocation-growth sites since the baseline (`file:line`, size and block deltas). |
+| P.10 | Memory disarm | `/profile mem off`; `/profile mem` | "Memory profiling off."; the bare report then answers "Memory profiling is off. /profile mem on to take a baseline first." `/profile mem status` tracks the armed state throughout. |
+| P.11 | Pytest passes | `uv run pytest tests/` | all green (`tests/test_profiling.py` included). |
