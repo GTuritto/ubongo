@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from ubongo import commands, context, events, master, memory, runner, skills  # noqa: F401  -- memory registers handlers
+from ubongo import commands, context, events, master, memory, profiling, runner, skills  # noqa: F401  -- memory registers handlers
 from ubongo.agents import personas
 from ubongo.commands import Command, ReplState
 from ubongo.config import load_config
@@ -57,6 +57,43 @@ def _parse_decisions_command(line: str) -> int | None:
 def _parse_trace_command(line: str) -> int | None:
     """Returns N from `/trace [N]`. Defaults to 1; returns None for malformed args."""
     return _parse_int_arg(line, "trace", 1)
+
+
+_PROFILE_BREAKDOWNS = ("agents", "models", "modes")
+_PROFILE_CPU_ACTIONS = ("on", "off", "status")
+
+
+def _parse_profile_command(line: str) -> tuple[str, int | str | None] | None:
+    """Parses the `/profile` family (candidate 10).
+
+    Returns ("summary"|"agents"|"models"|"modes", N|None) where N is the
+    optional last-N-runs window (None = all runs), or ("cpu", "on"|"off"|"status").
+    None for malformed input."""
+    raw = line.strip().lstrip("/")
+    parts = raw.split()
+    if not parts or parts[0].lower() != "profile":
+        return None
+    args = [p.lower() for p in parts[1:]]
+    if not args:
+        return ("summary", None)
+    if args[0] == "cpu":
+        if len(args) == 2 and args[1] in _PROFILE_CPU_ACTIONS:
+            return ("cpu", args[1])
+        return None
+    kind = "summary"
+    rest = args
+    if args[0] in _PROFILE_BREAKDOWNS:
+        kind = args[0]
+        rest = args[1:]
+    if not rest:
+        return (kind, None)
+    if len(rest) > 1:
+        return None
+    try:
+        n = int(rest[0])
+    except ValueError:
+        return None
+    return (kind, n) if n > 0 else None
 
 
 def _parse_exec_command(line: str) -> str | None:
@@ -880,6 +917,36 @@ def _cmd_exec(line: str, state: ReplState) -> str | None:
     return f"Usage: /exec <cmd>. {_HELP_COMMANDS}" if cmd is None else _render_exec(cmd)
 
 
+_PROFILE_RENDERERS = {
+    "summary": profiling.render_summary,
+    "agents": profiling.render_agents,
+    "models": profiling.render_models,
+    "modes": profiling.render_modes,
+}
+
+
+def _cmd_profile(line: str, state: ReplState) -> str | None:
+    parsed = _parse_profile_command(line)
+    if parsed is None:
+        return (
+            "Usage: /profile [agents|models|modes] [N] | /profile cpu on|off|status. "
+            f"{_HELP_COMMANDS}"
+        )
+    kind, arg = parsed
+    if kind == "cpu":
+        if arg == "on":
+            state.cpu_profile = True
+            return (
+                "CPU profiling on: each turn runs under cProfile "
+                f"(reports in {profiling.profiles_dir()})."
+            )
+        if arg == "off":
+            state.cpu_profile = False
+            return "CPU profiling off."
+        return f"CPU profiling is {'on' if state.cpu_profile else 'off'}."
+    return _PROFILE_RENDERERS[kind](arg)
+
+
 def _cmd_mode(line: str, state: ReplState) -> str | None:
     from ubongo import router as _router
     arg = _parse_mode_command(line)
@@ -1168,6 +1235,7 @@ COMMANDS: dict[str, Command] = {
     "policy":       Command(_cmd_policy, "/policy"),
     "agents":       Command(_cmd_agents, "/agents"),
     "trace":        Command(_cmd_trace, "/trace [N]"),
+    "profile":      Command(_cmd_profile, "/profile [agents|models|modes|cpu] [N]"),
     "exec":         Command(_cmd_exec, "/exec <cmd>"),
     "mode":         Command(_cmd_mode, "/mode <workflow>"),
     "optimize":     Command(_cmd_optimize, "/optimize <target>"),
@@ -1309,17 +1377,31 @@ def _repl_loop(persona, auto_mode, pending_skill, pending_workflow) -> int:
                 emit(result)
             continue
 
-        response = master.handle(
-            stripped, state.persona, state.auto_mode,
-            pending_skill=state.pending_skill,
-            pending_workflow=state.pending_workflow,
-        )
+        # Candidate 10: when armed via /profile cpu on, the turn runs under
+        # cProfile. master.handle is resolved at call time either way, so test
+        # patches on it keep working.
+        cpu_report: str | None = None
+        if state.cpu_profile:
+            response, cpu_report = profiling.profile_call(
+                master.handle,
+                stripped, state.persona, state.auto_mode,
+                pending_skill=state.pending_skill,
+                pending_workflow=state.pending_workflow,
+            )
+        else:
+            response = master.handle(
+                stripped, state.persona, state.auto_mode,
+                pending_skill=state.pending_skill,
+                pending_workflow=state.pending_workflow,
+            )
         state.pending_skill = None  # one-shot
         state.pending_workflow = None  # one-shot
         print(response.text)
         queue.flush_delivered(response.delivery_token)
         if state.auto_mode:
             state.persona = response.persona
+        if cpu_report:
+            emit(cpu_report)
 
         # Phase 13f: when Repair gave up, prompt for one-shot retry.
         if response.requires_user_decision:

@@ -433,3 +433,19 @@ The self-extension experiment ([ADR-0013](../../docs/adr/0013-self-authored-skil
 | A.12 | Daemon control | `/authoring pause`, `/authoring off`, `/authoring resume` | status flips and persists across restart (comes back in the persisted state, paused on first ever launch). |
 | A.13 | Audit | `/audit authoring` | rows under `[authoring]` for drafts and decisions. |
 | A.14 | Pytest passes | `uv run pytest` | all green (the six `test_authoring_*` suites included). |
+
+## Post-v0.1 — Local profiler (candidate 10)
+
+The local profiler (`ubongo.profiling`, [Plans/10-local-profiler.md](../../Plans/10-local-profiler.md)): `/profile` aggregates the `workflow_runs` / `agent_runs` rows every turn already persists into summary and per-agent / per-model / per-mode breakdowns — on demand, read-only, no new tables. `/profile cpu on` (or `ubongo send --profile`) wraps the turn's `master.handle` in stdlib `cProfile`, dumping `data/profiles/turn-<ts>.prof` plus a top-25 cumulative summary; profiling is best-effort and never breaks a turn. Zero overhead when off.
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| P.1 | Summary | `/profile` (after at least one turn) | turn count, avg + p95 latency ms, tokens in/out, slowest agent; on a fresh db: "No runs recorded yet." |
+| P.2 | Per-agent breakdown | `/profile agents` | a table with runs, avg/p95 ms, tokens, fail%, retried per agent, most expensive first. |
+| P.3 | Per-model / per-mode | `/profile models`, `/profile modes` | same shape grouped by model / execution mode (mode table: workflow wall latency, no token columns). |
+| P.4 | Last-N window | `/profile agents 1` | only agents from the most recent workflow run. |
+| P.5 | CPU arm + turn | `/profile cpu on`; send a normal turn | the response prints as usual, then a `CPU profile written to data/profiles/turn-<ts>.prof` report with the top-25 cumulative table; `/profile cpu off` disarms; `/profile cpu status` reports the state. |
+| P.6 | One-shot CPU profile | `ubongo send --profile "hello"` | same report after the reply; a new `.prof` under `data/profiles/`. |
+| P.7 | Never breaks a turn | make `data/profiles/` unwritable (`chmod 444`); profiled turn | the turn still answers; the report degrades to a logged warning, no crash. Restore permissions after. |
+| P.8 | Bad args | `/profile bogus`, `/profile cpu maybe` | usage line, including in `/help`'s banner (`/profile [agents|models|modes|cpu] [N]`). |
+| P.9 | Pytest passes | `uv run pytest tests/` | all green (`tests/test_profiling.py` included). |

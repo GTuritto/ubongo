@@ -29,6 +29,9 @@ class ReplState:
     pending_skill: str | None
     pending_workflow: str | None
     keep_going: bool = True
+    # Candidate 10: when True, each turn's master.handle runs under cProfile
+    # (/profile cpu on|off). Defaulted so existing constructions stay valid.
+    cpu_profile: bool = False
 
 
 # A handler takes the full (stripped) command line and the REPL state, may mutate
