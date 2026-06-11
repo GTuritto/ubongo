@@ -1,0 +1,37 @@
+# Ubongo web UI — systemd unit for the Pi / Ubuntu deployment.
+#
+# Install (user unit, recommended — survives reboots with lingering enabled):
+#   1. Edit WorkingDirectory and ExecStart below to your install path.
+#   2. mkdir -p ~/.config/systemd/user
+#      cp deploy/ubongo-web.service ~/.config/systemd/user/
+#   3. systemctl --user daemon-reload
+#      systemctl --user enable --now ubongo-web
+#      loginctl enable-linger $USER     # keep it running when logged out
+#   Status / logs:
+#      systemctl --user status ubongo-web
+#      journalctl --user -u ubongo-web -f
+#
+# (System-wide instead: cp to /etc/systemd/system/, add User=<you> under
+# [Service], then sudo systemctl enable --now ubongo-web.)
+#
+# This unit and ubongo-ctl.sh are alternatives: systemd here, the script
+# everywhere else. Do not run both at once.
+
+[Unit]
+Description=Ubongo web UI (Streamlit, home-LAN only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+# EDIT these two paths to your install location:
+WorkingDirectory=/home/pi/ubongo
+ExecStart=/home/pi/ubongo/start-ubongo-web.sh
+# Optional env (UBONGO_WEB_PORT, UBONGO_PROFILE, ...). The app also loads
+# .env itself via dotenv; this makes the same values visible to the launcher.
+EnvironmentFile=-/home/pi/ubongo/.env
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
