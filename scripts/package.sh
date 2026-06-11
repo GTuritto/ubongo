@@ -27,13 +27,13 @@ mkdir -p "$OUT"
 
 echo "==> Assembling $OUT"
 
-# Runtime code + config + docs + tests (for the smoke playbook).
-cp -R src config docs tests "$OUT/"
+# Runtime code + config + docs + tests (for the smoke playbook) + service unit.
+cp -R src config docs tests deploy "$OUT/"
 
 # Top-level files needed to install / run / read.
 cp pyproject.toml uv.lock VERSION CHANGELOG.md \
    README.md CONTEXT.md STATE.md STATUS.md UBONGO_BUILD.md UBONGO_VISION.md \
-   install.sh start-ubongo.sh start-ubongo-web.sh .env.example \
+   install.sh start-ubongo.sh start-ubongo-web.sh ubongo-ctl.sh .env.example \
    "$OUT/"
 
 # Empty runtime dirs (created clean; no user data shipped).

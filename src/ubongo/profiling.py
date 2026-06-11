@@ -334,6 +334,31 @@ def profile_call(fn, /, *args, **kwargs) -> tuple[object, str | None]:
     return result, report
 
 
+# ---------- startup switch (candidate 12) ----------
+
+STARTUP_PROFILE_VALUES = ("cpu", "mem", "all")
+
+
+def resolve_startup_profile(flag: str | None, env: str | None) -> str | None:
+    """One knob, resolved once at launch: 'cpu' | 'mem' | 'all' | None (off).
+
+    The flag wins over the env var. Flag values arrive pre-validated by
+    argparse choices ('off' means explicitly off, overriding the env). The env
+    value (UBONGO_PROFILE, typically from .env) is parsed leniently: empty /
+    'off' / '0' / 'false' mean off; anything unrecognized is logged and
+    ignored — an invalid env var must never block startup."""
+    if flag:
+        return None if flag == "off" else flag
+    if env:
+        value = env.strip().lower()
+        if value in ("", "off", "0", "false"):
+            return None
+        if value in STARTUP_PROFILE_VALUES:
+            return value
+        logger.warning("startup_profile_invalid", extra={"value": env})
+    return None
+
+
 # ---------- memory profiling (candidate 11) ----------
 #
 # tracemalloc baseline-and-diff for leak hunting in a long-lived session.

@@ -373,3 +373,87 @@ def test_cmd_profile_mem_toggle_and_report():
     assert profiling.mem_active() is False
     unarmed = _cmd_profile("/profile mem", state)
     assert "Memory profiling is off" in unarmed
+
+
+# ---------- startup switch (candidate 12) ----------
+
+
+def test_resolve_startup_profile_flag_wins_over_env():
+    assert profiling.resolve_startup_profile("mem", "cpu") == "mem"
+    assert profiling.resolve_startup_profile("off", "cpu") is None
+
+
+def test_resolve_startup_profile_env_fallback():
+    assert profiling.resolve_startup_profile(None, "cpu") == "cpu"
+    assert profiling.resolve_startup_profile(None, " ALL ") == "all"
+    assert profiling.resolve_startup_profile(None, None) is None
+
+
+def test_resolve_startup_profile_env_off_and_invalid():
+    for off in ("", "off", "0", "false", "OFF"):
+        assert profiling.resolve_startup_profile(None, off) is None
+    # invalid env never blocks startup — warned and ignored
+    assert profiling.resolve_startup_profile(None, "tracemalloc") is None
+
+
+def test_apply_startup_profile_arms_cpu_and_mem():
+    from ubongo.repl import _apply_startup_profile
+
+    state = _state()
+    assert _apply_startup_profile(None, state) is None
+    assert state.cpu_profile is False
+
+    notice = _apply_startup_profile("all", state)
+    assert state.cpu_profile is True
+    assert profiling.mem_active() is True
+    assert "Profiling armed at startup" in notice
+    assert "cpu" in notice and "mem" in notice
+
+
+def _stub_response(text="ok"):
+    from ubongo.master import Response
+
+    return Response(
+        text=text, ok=True, persona="architect",
+        skill_name=None, delivery_token=None,
+    )
+
+
+def test_oneshot_profile_mem_reports_and_stops(monkeypatch, capsys):
+    from ubongo import oneshot
+
+    monkeypatch.setattr(oneshot.master, "handle",
+                        lambda *a, **k: _stub_response("hi"))
+    monkeypatch.setattr(oneshot.queue, "enqueue_for_delivery",
+                        lambda *a, **k: None)
+    monkeypatch.setattr(oneshot.queue, "flush_delivered", lambda token: None)
+    assert oneshot.run("hello", "architect", profile="mem") == 0
+    out = capsys.readouterr().out
+    assert "Memory growth since baseline" in out
+    assert profiling.mem_active() is False  # stopped after the report
+
+
+def test_oneshot_profile_true_still_means_cpu(monkeypatch, capsys):
+    from ubongo import oneshot
+
+    monkeypatch.setattr(oneshot.master, "handle",
+                        lambda *a, **k: _stub_response("hi"))
+    monkeypatch.setattr(oneshot.queue, "enqueue_for_delivery",
+                        lambda *a, **k: None)
+    monkeypatch.setattr(oneshot.queue, "flush_delivered", lambda token: None)
+    assert oneshot.run("hello", "architect", profile=True) == 0
+    out = capsys.readouterr().out
+    assert "CPU profile written to" in out
+    assert list(profiling.profiles_dir().glob("turn-*.prof"))
+
+
+def test_web_run_turn_profiles_cpu_when_knob_set(monkeypatch):
+    from ubongo.web import turn
+
+    monkeypatch.setattr(turn, "_startup_profile", "cpu")
+    monkeypatch.setattr(turn.master, "handle",
+                        lambda *a, **k: _stub_response("hi"))
+    monkeypatch.setattr(turn.queue, "flush_delivered", lambda token: None)
+    response = turn.run_turn("hello", "architect", auto_mode=False)
+    assert response.text == "hi"
+    assert list(profiling.profiles_dir().glob("turn-*.prof"))

@@ -1326,7 +1326,26 @@ def _prompt_approval(request: dict) -> str:
         return "y" if choice == "y" else "n"
 
 
-def run(default_persona: str = DEFAULT_PERSONA) -> int:
+def _apply_startup_profile(value: str | None, state: ReplState) -> str | None:
+    """Candidate 12: arm the same toggles /profile cpu|mem on control, from the
+    --profile flag / UBONGO_PROFILE env knob. Returns the startup notice to
+    print, or None when nothing was armed."""
+    if value not in profiling.STARTUP_PROFILE_VALUES:
+        return None
+    armed = []
+    if value in ("cpu", "all"):
+        state.cpu_profile = True
+        armed.append("cpu (cProfile per turn)")
+    if value in ("mem", "all"):
+        profiling.mem_start()
+        armed.append("mem (tracemalloc baseline taken)")
+    return (
+        f"Profiling armed at startup: {', '.join(armed)}. "
+        "Disarm with /profile cpu off | /profile mem off."
+    )
+
+
+def run(default_persona: str = DEFAULT_PERSONA, *, startup_profile: str | None = None) -> int:
     session = store.get_session()
     if session and session.active_persona in VALID_PERSONAS:
         persona = session.active_persona
@@ -1359,18 +1378,25 @@ def run(default_persona: str = DEFAULT_PERSONA) -> int:
     _authoring_loop.start()
 
     try:
-        return _repl_loop(persona, auto_mode, pending_skill, pending_workflow)
+        return _repl_loop(
+            persona, auto_mode, pending_skill, pending_workflow,
+            startup_profile=startup_profile,
+        )
     finally:
         _evolution_loop.stop()
         _vault_watcher.stop()
         _authoring_loop.stop()
 
 
-def _repl_loop(persona, auto_mode, pending_skill, pending_workflow) -> int:
+def _repl_loop(persona, auto_mode, pending_skill, pending_workflow,
+               startup_profile: str | None = None) -> int:
     state = ReplState(
         persona=persona, auto_mode=auto_mode,
         pending_skill=pending_skill, pending_workflow=pending_workflow,
     )
+    startup_notice = _apply_startup_profile(startup_profile, state)
+    if startup_notice:
+        print(startup_notice)
     while True:
         try:
             line = input("> ")
