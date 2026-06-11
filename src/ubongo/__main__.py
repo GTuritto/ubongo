@@ -18,6 +18,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Persona to use for this turn (architect, operator, casual)",
     )
+    send.add_argument(
+        "--profile",
+        action="store_true",
+        help="Run the turn under cProfile; writes data/profiles/turn-<ts>.prof",
+    )
     return parser
 
 
@@ -35,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     log_startup(config)
 
     if args.command == "send":
-        return oneshot.run(args.message, args.persona)
+        return oneshot.run(args.message, args.persona, profile=args.profile)
     return repl.run()
 
 
