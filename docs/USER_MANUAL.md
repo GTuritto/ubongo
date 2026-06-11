@@ -93,7 +93,7 @@ Start with the profiler armed (for debugging a slow or leaky session):
 ```bash
 ./start-ubongo.sh --profile mem        # cpu | mem | all | off
 UBONGO_PROFILE=cpu ./start-ubongo.sh   # same via .env / environment; the flag wins
-./start-ubongo.sh send --profile "hello"   # one-shot turn under cProfile
+./start-ubongo.sh send "hello" --profile   # one-shot turn under cProfile
 ```
 
 Profiling is opt-in and free when off; disarm any time with `/profile cpu off` /

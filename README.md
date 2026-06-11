@@ -188,9 +188,11 @@ UBONGO_PROFILE=cpu ./start-ubongo.sh          # start a session with the profile
 ```
 
 Deployment bundles are published automatically: merging a `VERSION` bump to
-`main` makes the release pipeline run the tests, build the bundle
-(`scripts/package.sh`), and publish a GitHub Release `v<VERSION>` with
-`install-ubongo.sh` + the zip attached. To deploy, download both assets on the
+`main` makes the release pipeline run the tests **and the automated smoke gate**
+(`scripts/smoke.sh`; plus a small live-model subset when an API-key secret is
+configured), build the bundle (`scripts/package.sh`), and publish a GitHub
+Release `v<VERSION>` with `install-ubongo.sh` + the zip attached. The release
+is created only when every gate is green. To deploy, download both assets on the
 target and run `./install-ubongo.sh`. (CI also builds the bundle on every PR as
 a workflow artifact.)
 

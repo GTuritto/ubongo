@@ -26,11 +26,28 @@ jobs:
       - name: Pytest
         run: uv run pytest -q
 
+  smoke:
+    # The scriptable subset of the manual playbook (scripts/smoke.sh):
+    # cold start, command surfaces, sandbox refusals, profiler family,
+    # startup switch, /exec isolation, and the web service controller.
+    # Deterministic layer only — no model calls on PRs.
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install (locked, with the web extra for the ctl checks)
+        run: uv sync --frozen --extra web
+      - name: Smoke gate (deterministic layer)
+        run: bash scripts/smoke.sh
+
   package:
     # Build the same bundle the release publishes, so a broken package.sh is
     # caught on the PR, not at release time. Uploaded as a workflow artifact.
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, smoke]
     steps:
       - uses: actions/checkout@v4
       - name: Build deployment bundle

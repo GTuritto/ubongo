@@ -20,6 +20,9 @@ permissions:
 
 env:
   OPENROUTER_API_KEY: test-key
+  # Used only to decide whether the live smoke subset can run (secrets are not
+  # readable inside step `if:` expressions directly).
+  LIVE_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
 jobs:
   release:
@@ -50,8 +53,22 @@ jobs:
       - name: Pytest (release gate)
         if: steps.ver.outputs.new == 'true'
         run: |
-          uv sync --frozen
+          uv sync --frozen --extra web
           uv run pytest -q
+
+      - name: Smoke gate (deterministic layer)
+        if: steps.ver.outputs.new == 'true'
+        run: bash scripts/smoke.sh
+
+      # The live subset (3 real model calls: a persona turn, the governance
+      # gate, a profiled turn) runs only when a real OPENROUTER_API_KEY secret
+      # is configured on the repo. Without the secret the release still gates
+      # on the deterministic layer.
+      - name: Smoke gate (live subset)
+        if: steps.ver.outputs.new == 'true' && env.LIVE_KEY != ''
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: bash scripts/smoke.sh --live
 
       - name: Build deployment bundle
         if: steps.ver.outputs.new == 'true'

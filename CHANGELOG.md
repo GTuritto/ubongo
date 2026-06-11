@@ -44,10 +44,14 @@ shipped as this version.
   systemd alternative for the Pi. Both ship in the deployment bundle.
 - 41 new tests (`tests/test_profiling.py`); smoke playbook section P.1–P.16; the
   full cumulative smoke re-certified end-to-end with the profiler armed.
-- Distribution moves onto GitHub Actions: CI runs the suite + a bundle build
-  check on every PR, and merging a `VERSION` bump to `main` automatically
-  tags `v<VERSION>` and publishes a GitHub Release carrying the two
-  distribution files (`install-ubongo.sh` + the bundle zip), with that
+- Distribution moves onto GitHub Actions: CI runs the suite, the automated
+  smoke gate (`scripts/smoke.sh` — the scriptable subset of the manual
+  playbook: cold start, command surfaces, sandbox refusals, the profiler
+  family, the startup switch, web service control), and a bundle build check
+  on every PR. Merging a `VERSION` bump to `main` re-runs tests + smoke
+  (plus a small live-model subset when an `OPENROUTER_API_KEY` secret is
+  configured), then tags `v<VERSION>` and publishes a GitHub Release carrying
+  the two distribution files (`install-ubongo.sh` + the bundle zip), with that
   version's changelog section as the release notes. `package.sh` now fails
   hard on a VERSION/pyproject mismatch and marks `ubongo-ctl.sh` executable.
 
