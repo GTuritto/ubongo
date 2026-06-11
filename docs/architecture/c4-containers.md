@@ -94,7 +94,9 @@ C4Container
 ## Background daemons (Tiers 5–6 + post-v0.1, all built)
 
 Three background daemon threads run alongside the synchronous turn loop, started
-and stopped by the REPL:
+and stopped by the REPL. Since candidate 15 they share one lifecycle module
+(`ubongo.daemon`: thread + stop + per-cycle swallow + the budget/status/cron
+gate); each daemon is a cycle-only subclass:
 
 - **GP self-improvement loop** (`evolution.loop.EvolutionLoop`, Tier 5): the full
   `src/ubongo/evolution/` package — generation, sandboxed evaluation + fitness

@@ -165,7 +165,14 @@ unification. REPL start/stop call sites untouched.
 
 ---
 
-# Phase 16 — Type the repair read seam (ride-along)
+# Phase 16 — Type the repair read seam (ride-along) — DROPPED (2026-06-11)
+
+> **Drop note (recorded from Phase 15).** Verified against the tree:
+> `store.repair_runs_for_workflow` has ~10 dict-shaped assertion sites across
+> `test_runner.py` and `test_memory_store.py`; returning `RepairRunView`
+> rewrites them all — test churn without a bug, which the candidate-07
+> precedent rejects. The remainder (typing only the Master's summary dict) is
+> the bare typing cleanup 07 already declined. Dropped, not deferred.
 
 Default: a sub-phase of 14 or 15, NOT its own branch. Strength: **Worth
 exploring**, with the candidate-07 precedent standing against it as a

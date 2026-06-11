@@ -54,6 +54,10 @@ _Avoid_: API (this is a channel, not a REST surface), tool server (bare — say 
 The one turn envelope every channel shares: `bootstrap()` (config + logging once + the `UBONGO_PROFILE` knob; never starts daemons) and `run_turn(message, persona, ...) -> (Response, cpu_report)` (the optional cProfile wrap, `master.handle` resolved at call time, the `notification_queue` flush). The no-bypass rule (ADR-0002/0003) is this function, not a convention: REPL, one-shot, web, and MCP keep only presentation — printing/exit codes, rendering, dict shaping, prompts. A new channel (v0.2 Telegram) starts as a thin adapter over this seam.
 _Avoid_: transport layer (bare), pipeline (that's the Master's turn pipeline — the core wraps it, once).
 
+**Daemon loop** (`ubongo.daemon`, candidate 15):
+The one lifecycle behind the three background daemons (GP loop, authoring loop, vault watcher): `DaemonLoop` owns the thread, the stop event, the per-cycle exception swallow, the whole-thread crash guard, and both run styles (async for the budgeted loops, sync for the watcher — chosen by the injected sleep); `daemon.should_cycle` is the shared scheduling gate (status / rolling-hour budget / cron) that was once duplicated byte-for-byte. Each daemon subclasses it and keeps only its cycle work, enablement (config + `UBONGO_DISABLE_*` switch — evolution gained its switch here), status seeding, and interval. Started/stopped by the REPL, boots paused where a status row exists.
+_Avoid_: scheduler (bare), background job (bare), worker (that's a Worker Agent).
+
 ## Self-improvement (genetic programming)
 
 **Evolvable Target** (and its **kind**):

@@ -20,11 +20,12 @@ generation is re-evaluated rather than regenerated).
 from __future__ import annotations
 
 import asyncio
+import os
 import logging
-import threading
 from dataclasses import dataclass
 
 from ubongo import events
+from ubongo import daemon
 from ubongo.config import load_evolution
 from ubongo.evolution import fitness, generator, lineage, sandbox, selection
 from ubongo.evolution.sandbox import CallBudget
@@ -167,70 +168,41 @@ def run_one_cycle(
     )
 
 
-def _should_cycle(*, status: str, remaining: int, seconds_since_last: float | None, cron) -> bool:
-    """Pure gate: may the scheduler start a cycle right now?
-
-    - status must be "running";
-    - the rolling-hour budget must have room (remaining > 0);
-    - if `cron` (int seconds) is set, at least that many seconds must have
-      elapsed since the last cycle ended.
-    """
-    if status != "running":
-        return False
-    if remaining <= 0:
-        return False
-    if cron is not None and seconds_since_last is not None:
-        try:
-            if seconds_since_last < float(cron):
-                return False
-        except (TypeError, ValueError):
-            pass
-    return True
+# The pure scheduling gate lives in the shared daemon module (candidate 15);
+# this alias keeps the long-standing import/test surface.
+_should_cycle = daemon.should_cycle
 
 
-class EvolutionLoop:
-    """Thin scheduler: a daemon thread running an asyncio loop that drives
-    `run_one_cycle` when `_should_cycle` allows. Sleep + tick injectable so
-    tests never wait real time."""
+class EvolutionLoop(daemon.DaemonLoop):
+    """Thin scheduler: a daemon thread that drives `run_one_cycle` when the
+    shared gate allows. Lifecycle (thread, stop, per-cycle swallow) is the
+    DaemonLoop's; sleep + tick stay injectable so tests never wait real time.
+
+    Candidate 15 also adds the UBONGO_DISABLE_EVOLUTION off-switch, for parity
+    with the authoring loop and the vault watcher."""
+
+    name = "evolution"
+    log = logger
 
     def __init__(self, *, sleep=None, tick_seconds: float = _DEFAULT_TICK_SECONDS) -> None:
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._sleep = sleep or asyncio.sleep
-        self._tick = tick_seconds
+        super().__init__(sleep=sleep or asyncio.sleep, tick_seconds=tick_seconds)
 
-    def start(self) -> bool:
-        """Start the daemon thread if `evolution.enabled`. The loop comes up in
-        whatever status is persisted (default 'paused'), so it never auto-spends
-        on launch. Returns True if the thread was started."""
-        if not load_evolution().get("enabled", False):
+    def enabled(self) -> bool:
+        if os.environ.get("UBONGO_DISABLE_EVOLUTION") == "1":
             return False
-        # Seed the control row to 'paused' on first ever launch.
+        return bool(load_evolution().get("enabled", False))
+
+    def seed(self) -> None:
+        # Seed the control row to 'paused' on first ever launch, so the loop
+        # never auto-spends on launch.
         if store.get_evolution_status() not in ("running", "paused", "off"):
             store.set_evolution_status("paused")
-        self._thread = threading.Thread(target=self._thread_main, name="evolution-loop", daemon=True)
-        self._thread.start()
-        logger.info("evolution_loop_started", extra={"status": store.get_evolution_status()})
-        return True
 
-    def stop(self, timeout: float = 2.0) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout)
+    def start_extra(self) -> dict:
+        return {"status": store.get_evolution_status()}
 
-    def _thread_main(self) -> None:
-        try:
-            asyncio.run(self._run())
-        except Exception:  # daemon thread: never let it take down the process silently
-            logger.exception("evolution_loop_crashed")
-
-    async def _run(self) -> None:
-        while not self._stop.is_set():
-            try:
-                self._maybe_run_cycle()
-            except Exception:
-                logger.exception("evolution_cycle_error")
-            await self._sleep(self._tick)
+    def run_cycle(self) -> None:
+        self._maybe_run_cycle()
 
     def _maybe_run_cycle(self) -> None:
         evo = load_evolution()
