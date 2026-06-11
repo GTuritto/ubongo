@@ -53,7 +53,7 @@ jobs:
       - name: Pytest (release gate)
         if: steps.ver.outputs.new == 'true'
         run: |
-          uv sync --frozen --extra web
+          uv sync --frozen --all-extras
           uv run pytest -q
 
       - name: Smoke gate (deterministic layer)
