@@ -38,7 +38,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - name: Install (locked, all extras: web for the ctl checks, mcp for the handshake)
+      - name: Install (locked, all extras — web for ctl checks, mcp for the handshake)
         run: uv sync --frozen --all-extras
       - name: Smoke gate (deterministic layer)
         run: bash scripts/smoke.sh
