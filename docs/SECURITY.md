@@ -114,6 +114,27 @@ intended for a single user on a trusted home LAN. Consequences to be aware of:
   likewise in-process and local-only — no telemetry leaves the machine
   ([ADR-0014](adr/0014-local-only-observability-profiler.md)).
 
+## Optional MCP server (v0.1.4)
+
+The MCP channel ([ADR-0015](adr/0015-mcp-server-additive-channel.md)) is the
+**second unauthenticated LAN listener** when run with `--http`, and the same
+rules apply verbatim: no login, no TLS, home LAN only, never port-forwarded.
+Three properties bound what a caller can do:
+
+- **No bypass**: `ubongo_send` runs the same `master.handle` pipeline as a
+  typed turn — classifier risk scoring, the governance matrix, and the
+  Execution sandbox all apply unchanged.
+- **Gates cannot be approved over MCP.** A `require_approval` decision returns
+  the canned message with `gated=true`; the approval payload is withheld.
+  Destructive work still requires a human on the REPL or web channel.
+- **Reads are read-only**: `ubongo_recall` and the `ubongo://` resources have
+  no write path. Note that memory contents (conversation history, daily notes,
+  audit log) are readable by anyone who can reach the listener — LAN trust is
+  the boundary, as with the web page. stdio mode listens on nothing.
+
+An unattended caller can spend model tokens via `ubongo_send`; at this scale
+(one user, one LAN) the posture is accepted rather than rate-limited.
+
 ## Reporting
 
 This is a personal project with no external attack surface in the default CLI

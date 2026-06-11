@@ -37,6 +37,23 @@ def _build_parser() -> argparse.ArgumentParser:
     send.add_argument(
         "--profile", **{**_PROFILE_FLAG_KWARGS, "default": argparse.SUPPRESS}
     )
+    # Candidate 13: the MCP server channel. stdio unless --http (LAN posture).
+    mcp_cmd = subparsers.add_parser(
+        "mcp", help="Run the MCP server (stdio; --http serves the LAN)"
+    )
+    mcp_cmd.add_argument(
+        "--http", action="store_true",
+        help="Serve streamable HTTP instead of stdio (home-LAN only; no auth)",
+    )
+    mcp_cmd.add_argument(
+        "--port", type=int,
+        default=int(os.environ.get("UBONGO_MCP_PORT", "8765")),
+        help="HTTP port (default 8765, or UBONGO_MCP_PORT)",
+    )
+    mcp_cmd.add_argument(
+        "--addr", default=os.environ.get("UBONGO_MCP_ADDR", "0.0.0.0"),
+        help="HTTP bind address (default 0.0.0.0, or UBONGO_MCP_ADDR)",
+    )
     return parser
 
 
@@ -52,6 +69,19 @@ def main(argv: list[str] | None = None) -> int:
 
     setup_logging(config["logging"]["level"])
     log_startup(config)
+
+    if args.command == "mcp":
+        # Lazy import: the SDK is an optional extra; the core never loads it.
+        try:
+            from ubongo.mcp import server as mcp_server
+        except ImportError:
+            print("The MCP dependency is not installed.", file=sys.stderr)
+            print(
+                "Install it with:  ./install.sh --mcp   (or: uv sync --extra mcp)",
+                file=sys.stderr,
+            )
+            return 1
+        return mcp_server.run(http=args.http, port=args.port, addr=args.addr)
 
     startup_profile = profiling.resolve_startup_profile(
         getattr(args, "profile", None), os.environ.get("UBONGO_PROFILE")

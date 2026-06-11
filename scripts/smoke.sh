@@ -134,6 +134,40 @@ else
   skip "web service controller (streamlit not installed; install with --extra web)"
 fi
 
+# ---------- MCP server (needs the optional mcp extra) ----------
+if $PY -c "import mcp" >/dev/null 2>&1; then
+  # in-memory handshake: tools + resources listed, recall round-trips, no network
+  $PY - <<'EOF' >/dev/null 2>&1 && ok "mcp in-memory handshake (tools+resources)" || bad "mcp in-memory handshake"
+import asyncio
+from mcp.shared.memory import create_connected_server_and_client_session as cs
+from ubongo.mcp import server
+
+async def main():
+    app = server.build_server()
+    async with cs(app._mcp_server) as client:
+        tools = await client.list_tools()
+        resources = await client.list_resources()
+        assert {t.name for t in tools.tools} == {"ubongo_send", "ubongo_recall"}
+        assert len(resources.resources) == 2
+        result = await client.call_tool("ubongo_recall", {"query": ""})
+        assert result.isError is False
+
+asyncio.run(main())
+EOF
+  ./ubongo-ctl.sh start mcp >"$TMP/mcpctl.out" 2>&1 && sleep 4 \
+    && ./ubongo-ctl.sh status mcp >>"$TMP/mcpctl.out" 2>&1; rc=$?
+  expect_rc "ctl start + status (mcp)" 0 $rc
+  if command -v curl >/dev/null 2>&1; then
+    code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${UBONGO_MCP_PORT:-8765}/mcp" || echo 000)
+    # a bare GET is not a valid MCP request; any HTTP answer proves the listener
+    [ "$code" != "000" ] && ok "mcp HTTP listener answers ($code)" || bad "mcp HTTP listener unreachable"
+  fi
+  ./ubongo-ctl.sh stop mcp >>"$TMP/mcpctl.out" 2>&1
+  ./ubongo-ctl.sh status mcp >/dev/null 2>&1 && bad "ctl stop left mcp running" || ok "ctl stop + status rc=1 when down (mcp)"
+else
+  skip "mcp server checks (mcp extra not installed; uv sync --extra mcp)"
+fi
+
 # ---------- live subset (real model; ~3 calls) ----------
 if [ $LIVE -eq 1 ]; then
   $CMD send "Reply with exactly: smoke live ok" --persona casual >"$TMP/live1.out" 2>/dev/null; rc=$?

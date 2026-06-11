@@ -37,6 +37,7 @@ Single user, single machine, accessed through a CLI (REPL primary, one-shot for 
 - **Improves its own prompts** (`/optimize`, `/evaluate`, `/improvements`) and **authors its own skills** (`/author`, `/skill-candidates`), both behind your explicit approval.
 - **Remembers and recalls** across restarts: recency plus semantic search (`/recall`), a browsable Obsidian journal, and bidirectional vault sync.
 - **Traces everything.** Every decision, agent run, governance call, repair, and evolution variant is persisted and auditable (`/trace`, `/decisions`, `/audit`).
+- **Reachable by other agents.** An MCP server channel (`ubongo mcp`): external agents and tools (Claude Code, Compendium) can run a full governed turn or read memory over MCP, stdio or LAN HTTP ([ADR-0015](docs/adr/0015-mcp-server-additive-channel.md)).
 - **Profiles itself, locally.** On-demand performance breakdowns by agent/model/mode, opt-in CPU (cProfile) and memory (tracemalloc) profiling (`/profile`, `--profile`, `UBONGO_PROFILE`); nothing telemetric ever leaves the machine ([ADR-0014](docs/adr/0014-local-only-observability-profiler.md)).
 
 ## How It Works (one screen)
@@ -71,9 +72,9 @@ For the full picture: a turn [flow + UML sequence diagram](docs/architecture/flo
 
 ## Status
 
-**Current version: v0.1.3.** v0.1 (the 22-phase build) is complete, plus three post-v0.1 layers: the optional web UI (v0.1.1), self-authored skills (v0.1.2), and the local profiler + service control (v0.1.3). The v0.2 milestone is Telegram.
+**Current version: v0.1.4.** v0.1 (the 22-phase build) is complete, plus four post-v0.1 layers: the optional web UI (v0.1.1), self-authored skills (v0.1.2), the local profiler + service control (v0.1.3), and the MCP server channel (v0.1.4). The v0.2 milestone is Telegram.
 
-**v0.1 is complete: all 22 phases (0–21) are merged to `main` and certified, and a post-v0.1 self-extension layer (self-authored skills) ships on top.** The CLI runs end to end: classify, plan, execute through the worker fleet, govern, compose, enqueue, persist. Ten worker agents are registered; all six execution modes are live; the Repair Agent walks a full recovery ladder; the governance decision matrix gates risky turns through an interactive `y/n/why` approval flow over a hardened sandbox. The Genetic Programming loop is closed: generate variants of persona prompts *and* routing / tool-chain / retry config, evaluate against held-out samples, evolve generations, and propose promotions that live-swap only after you approve them. Semantic recall (`sqlite-vec`) augments recency, a vault-link graph is queryable, and a polling watcher ingests your vault edits. Post-v0.1, Ubongo also drafts brand-new skills behind the same approval boundary (`/author`, `/skill-candidates`, and an autonomous authoring daemon) and profiles itself locally (`/profile`; [ADR-0014](docs/adr/0014-local-only-observability-profiler.md)). **915 tests green; ~14,500 LOC**; the full cumulative smoke passes end to end (last re-certified 2026-06-11, with the profiler armed).
+**v0.1 is complete: all 22 phases (0–21) are merged to `main` and certified, and a post-v0.1 self-extension layer (self-authored skills) ships on top.** The CLI runs end to end: classify, plan, execute through the worker fleet, govern, compose, enqueue, persist. Ten worker agents are registered; all six execution modes are live; the Repair Agent walks a full recovery ladder; the governance decision matrix gates risky turns through an interactive `y/n/why` approval flow over a hardened sandbox. The Genetic Programming loop is closed: generate variants of persona prompts *and* routing / tool-chain / retry config, evaluate against held-out samples, evolve generations, and propose promotions that live-swap only after you approve them. Semantic recall (`sqlite-vec`) augments recency, a vault-link graph is queryable, and a polling watcher ingests your vault edits. Post-v0.1, Ubongo also drafts brand-new skills behind the same approval boundary (`/author`, `/skill-candidates`, and an autonomous authoring daemon) and profiles itself locally (`/profile`; [ADR-0014](docs/adr/0014-local-only-observability-profiler.md)). **929 tests green; ~14,700 LOC**; the full cumulative smoke passes end to end (last re-certified 2026-06-11, with the profiler armed).
 
 The v0.1 build ran across **22 phases in 6 tiers**, each on its own branch and smoke-tested before merge; the self-extension work added five more phases the same way. See [STATUS.md](STATUS.md) for the changelog, [STATE.md](STATE.md) for ground-truth state, and [UBONGO_BUILD.md](UBONGO_BUILD.md) for the v0.1 spec. Next is **v0.2 (Telegram)**, a new transport that is additive on the existing event/queue seams.
 
@@ -224,6 +225,39 @@ UBONGO_PROFILE=cpu ./start-ubongo.sh          # start a session with the profile
 ./start-ubongo.sh --profile mem               # same via flag; --profile off overrides the env
 ```
 
+### Connect via MCP (other agents calling Ubongo)
+
+With the optional extra installed (`./install.sh --mcp` or `uv sync --extra mcp`),
+Ubongo is an MCP server exposing `ubongo_send` (a full governed turn),
+`ubongo_recall` (read-only memory), and two read-only resources. A turn the
+governance gate holds returns `gated: true` and cannot be approved over MCP.
+
+For a local client that spawns its own server (e.g. Claude Code on the same
+machine), register the stdio form:
+
+```json
+{
+  "mcpServers": {
+    "ubongo": {
+      "command": "/path/to/ubongo/.venv/bin/python",
+      "args": ["-m", "ubongo", "mcp"]
+    }
+  }
+}
+```
+
+For services on your LAN (e.g. Compendium on another box), serve streamable
+HTTP and point the client at `http://<this-host>:8765/mcp`:
+
+```bash
+./start-ubongo-mcp.sh              # foreground
+./ubongo-ctl.sh start mcp          # background service (stop|restart|status mcp)
+# Pi/Ubuntu reboot-survival: deploy/ubongo-mcp.service
+```
+
+Same security posture as the web UI: no auth, no TLS, home LAN only
+([docs/SECURITY.md](docs/SECURITY.md)).
+
 Deployment bundles are published automatically: merging a `VERSION` bump to
 `main` makes the release pipeline run the tests **and the automated smoke gate**
 (`scripts/smoke.sh`; plus a small live-model subset when an API-key secret is
@@ -354,6 +388,7 @@ ubongo/
     config.py
     logging.py
     profiling.py                   # local profiler: stats over run tables + opt-in cProfile/tracemalloc (v0.1.3)
+    mcp/                           # MCP server channel: service.py (core) + server.py (SDK adapter) (v0.1.4)
     agents/
       base.py                      # Agent protocol; AgentInput / AgentResult / AgentDirectives
       llm_run.py                   # shared model-call envelope (run_agent_llm / call_model_or_none)

@@ -115,6 +115,18 @@ Semantic recall (`sqlite-vec` indexing of messages and vault notes) is wired int
 the turn path itself (`recall(query)`), best-effort and degrading to recency-only
 when embeddings are unavailable. Nothing in v0.1 is left unbuilt.
 
+## Channels beyond the CLI (v0.1.1 web, v0.1.4 MCP) — same seam, no new boxes
+
+The diagram shows the CLI as the user-facing container; the two later channels
+deliberately reuse its seam rather than adding orchestration boxes. The **web
+UI** (`src/ubongo/web/`, Streamlit) and the **MCP server** (`src/ubongo/mcp/`,
+the official SDK as an optional extra) both call the same `master.handle`
+entry the CLI uses — one human-facing, one machine-facing (tools
+`ubongo_send` / `ubongo_recall` + two read-only resources, stdio or
+streamable HTTP; [ADR-0015](../adr/0015-mcp-server-additive-channel.md)).
+Every channel turn flows through the identical pipeline and the Notification
+Queue; neither channel starts the background daemons.
+
 ## Observability + service control (v0.1.3) — container boxes unchanged
 
 The local profiler ([ADR-0014](../adr/0014-local-only-observability-profiler.md))
