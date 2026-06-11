@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from ubongo import commands, context, events, master, memory, profiling, runner, skills  # noqa: F401  -- memory registers handlers
+from ubongo import channel, commands, context, events, master, memory, profiling, runner, skills  # noqa: F401  -- memory registers handlers
 from ubongo.agents import personas
 from ubongo.commands import Command, ReplState
 from ubongo.config import load_config
@@ -1427,27 +1427,19 @@ def _repl_loop(persona, auto_mode, pending_skill, pending_workflow,
                 emit(result)
             continue
 
-        # Candidate 10: when armed via /profile cpu on, the turn runs under
-        # cProfile. master.handle is resolved at call time either way, so test
-        # patches on it keep working.
-        cpu_report: str | None = None
-        if state.cpu_profile:
-            response, cpu_report = profiling.profile_call(
-                master.handle,
-                stripped, state.persona, state.auto_mode,
-                pending_skill=state.pending_skill,
-                pending_workflow=state.pending_workflow,
-            )
-        else:
-            response = master.handle(
-                stripped, state.persona, state.auto_mode,
-                pending_skill=state.pending_skill,
-                pending_workflow=state.pending_workflow,
-            )
+        # Candidates 10 + 14: the turn envelope (optional cProfile wrap,
+        # master.handle resolved at call time, queue flush) is the channel
+        # core's. The REPL passes its per-session toggle and keeps only
+        # presentation: printing, the report emit, and the prompts below.
+        response, cpu_report = channel.run_turn(
+            stripped, state.persona, auto_mode=state.auto_mode,
+            pending_skill=state.pending_skill,
+            pending_workflow=state.pending_workflow,
+            profile_cpu=state.cpu_profile,
+        )
         state.pending_skill = None  # one-shot
         state.pending_workflow = None  # one-shot
         print(response.text)
-        queue.flush_delivered(response.delivery_token)
         if state.auto_mode:
             state.persona = response.persona
         if cpu_report:
@@ -1457,13 +1449,11 @@ def _repl_loop(persona, auto_mode, pending_skill, pending_workflow,
         if response.requires_user_decision:
             choice = _prompt_repair_retry()
             if choice == "y":
-                retry_response = master.handle(
-                    stripped, state.persona, state.auto_mode,
-                    pending_skill=None,
-                    pending_workflow=None,
+                retry_response, _ = channel.run_turn(
+                    stripped, state.persona, auto_mode=state.auto_mode,
+                    profile_cpu=False,
                 )
                 print(retry_response.text)
-                queue.flush_delivered(retry_response.delivery_token)
                 if state.auto_mode:
                     state.persona = retry_response.persona
             # On "n" (or anything else), just continue the loop. The user
@@ -1474,12 +1464,11 @@ def _repl_loop(persona, auto_mode, pending_skill, pending_workflow,
             choice = _prompt_approval(response.approval)
             store.update_governance_decision(response.approval["decision_id"], choice)
             if choice == "y":
-                approved_response = master.handle(
-                    stripped, state.persona, state.auto_mode,
-                    pending_skill=None, pending_workflow=None, approved=True,
+                approved_response, _ = channel.run_turn(
+                    stripped, state.persona, auto_mode=state.auto_mode,
+                    approved=True, profile_cpu=False,
                 )
                 print(approved_response.text)
-                queue.flush_delivered(approved_response.delivery_token)
                 if state.auto_mode:
                     state.persona = approved_response.persona
             else:

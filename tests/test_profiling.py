@@ -448,9 +448,10 @@ def test_oneshot_profile_true_still_means_cpu(monkeypatch, capsys):
 
 
 def test_web_run_turn_profiles_cpu_when_knob_set(monkeypatch):
+    from ubongo import channel
     from ubongo.web import turn
 
-    monkeypatch.setattr(turn, "_startup_profile", "cpu")
+    monkeypatch.setattr(channel, "_startup_profile", "cpu")
     monkeypatch.setattr(turn.master, "handle",
                         lambda *a, **k: _stub_response("hi"))
     monkeypatch.setattr(turn.queue, "flush_delivered", lambda token: None)

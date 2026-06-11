@@ -50,6 +50,10 @@ _Avoid_: metrics (this is a diagnostic view, not a telemetry pipeline), tracing 
 Ubongo as an MCP server — the fourth additive channel (REPL, one-shot, web, MCP), machine-facing where the others are human-facing. `service.py` is the channel-free core: `ubongo_send` calls the one orchestration seam (`master.handle`) exactly like one-shot, so an MCP-driven turn is governed and persisted like a typed one; a `require_approval` turn returns `gated=true` and is **never approvable over MCP** (approval needs a human channel). `ubongo_recall` and the `ubongo://` resources are read-only. `server.py` is the only module importing the optional `mcp` SDK; transports are stdio and streamable HTTP (LAN no-auth posture, ADR-0015). The MCP *client* direction (Ubongo consuming external servers) is a future layer, not this term.
 _Avoid_: API (this is a channel, not a REST surface), tool server (bare — say MCP server), integration (vague).
 
+**Channel core** (`ubongo.channel`, candidate 14):
+The one turn envelope every channel shares: `bootstrap()` (config + logging once + the `UBONGO_PROFILE` knob; never starts daemons) and `run_turn(message, persona, ...) -> (Response, cpu_report)` (the optional cProfile wrap, `master.handle` resolved at call time, the `notification_queue` flush). The no-bypass rule (ADR-0002/0003) is this function, not a convention: REPL, one-shot, web, and MCP keep only presentation — printing/exit codes, rendering, dict shaping, prompts. A new channel (v0.2 Telegram) starts as a thin adapter over this seam.
+_Avoid_: transport layer (bare), pipeline (that's the Master's turn pipeline — the core wraps it, once).
+
 ## Self-improvement (genetic programming)
 
 **Evolvable Target** (and its **kind**):
