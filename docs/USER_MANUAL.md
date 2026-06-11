@@ -119,6 +119,20 @@ use the service controller: `./ubongo-ctl.sh start|stop|restart|status` (logs to
 systemd unit in `deploy/ubongo-web.service` instead (install steps in its
 comments) — use one or the other, not both.
 
+### MCP server (optional — let other agents call Ubongo)
+
+If you installed with `./install.sh --mcp`, other AI tools can talk to Ubongo
+over MCP. A local tool that launches its own server (Claude Code on this
+machine) should run `python -m ubongo mcp` (stdio). For tools on other
+machines, start the network form — `./start-ubongo-mcp.sh`, or as a background
+service with `./ubongo-ctl.sh start mcp` — and point them at
+`http://<this-machine-ip>:8765/mcp`. Callers get two tools (`ubongo_send`: a
+full normal turn, exactly as if you had typed it; `ubongo_recall`: read-only
+memory search) and two read-only resources (today's note, the audit log).
+Anything the governance gate would stop still gets stopped — and a gated turn
+**cannot be approved over MCP**; approving stays here (REPL `y/n/why`) or on
+the web page (Approve/Deny). Same home-network-only rule as the web page.
+
 It is the same Ubongo — the web page runs every turn through the exact same
 pipeline as the REPL (classify → plan → execute → govern → compose → remember),
 sharing the same database and vault.

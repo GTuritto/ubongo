@@ -30,18 +30,22 @@ pyhint() {
   fi
 }
 
-# --web also installs the optional Streamlit web UI (the tablet chat page).
+# --web also installs the optional Streamlit web UI (the tablet chat page);
+# --mcp the optional MCP server (lets other agents call Ubongo).
 WITH_WEB=0
+WITH_MCP=0
 for arg in "$@"; do
   case "$arg" in
     --web) WITH_WEB=1 ;;
-    -h|--help) echo "Usage: ./install.sh [--web]"; exit 0 ;;
-    *) die "Unknown option: $arg (try --web)" ;;
+    --mcp) WITH_MCP=1 ;;
+    -h|--help) echo "Usage: ./install.sh [--web] [--mcp]"; exit 0 ;;
+    *) die "Unknown option: $arg (try --web / --mcp)" ;;
   esac
 done
 
 say "Installing Ubongo into: $APP_DIR"
 [ "$WITH_WEB" -eq 1 ] && say "Including the optional web UI (Streamlit)."
+[ "$WITH_MCP" -eq 1 ] && say "Including the optional MCP server."
 
 # --- 1. Python >= 3.11 ------------------------------------------------------
 command -v python3 >/dev/null 2>&1 || \
@@ -68,8 +72,11 @@ source .venv/bin/activate
 # --- 3. dependencies --------------------------------------------------------
 say "Installing dependencies (a few minutes on a Pi the first time)…"
 python -m pip install --upgrade pip wheel >/dev/null
-if [ "$WITH_WEB" -eq 1 ]; then
-  python -m pip install -e ".[web]"
+EXTRAS=""
+[ "$WITH_WEB" -eq 1 ] && EXTRAS="web"
+[ "$WITH_MCP" -eq 1 ] && EXTRAS="${EXTRAS:+$EXTRAS,}mcp"
+if [ -n "$EXTRAS" ]; then
+  python -m pip install -e ".[$EXTRAS]"
 else
   python -m pip install -e .
 fi
@@ -131,6 +138,11 @@ if [ "$WITH_WEB" -eq 1 ]; then
 else
   echo "    Web UI (tablet):  re-run ./install.sh --web, then ./start-ubongo-web.sh"
 fi
-echo "    Web service ctl:  ./ubongo-ctl.sh start|stop|restart|status"
+if [ "$WITH_MCP" -eq 1 ]; then
+  echo "    MCP server:       ./start-ubongo-mcp.sh   (HTTP)  or  python -m ubongo mcp  (stdio)"
+else
+  echo "    MCP server:       re-run ./install.sh --mcp, then ./start-ubongo-mcp.sh"
+fi
+echo "    Service control:  ./ubongo-ctl.sh start|stop|restart|status [web|mcp]"
 echo "    Profiler:         /profile in the REPL (or UBONGO_PROFILE=cpu|mem|all in .env)"
 echo "    User manual:      docs/USER_MANUAL.md"

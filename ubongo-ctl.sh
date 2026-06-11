@@ -1,23 +1,31 @@
 #!/usr/bin/env bash
 #
-# Ubongo — web service control. Manages the Streamlit web UI as a background
-# service with a pidfile and a log file (the interactive REPL stays foreground;
-# you leave it with /exit).
+# Ubongo — background service control. Manages the long-running channels as
+# background services with a pidfile and a log file each (the interactive REPL
+# stays foreground; you leave it with /exit).
 #
-#   ./ubongo-ctl.sh start     # background the web UI (start-ubongo-web.sh)
-#   ./ubongo-ctl.sh stop      # TERM, wait up to 10s, KILL fallback
-#   ./ubongo-ctl.sh restart
-#   ./ubongo-ctl.sh status    # exit 0 when running, 1 when not
+#   ./ubongo-ctl.sh start [web|mcp]     # background a service (default: web)
+#   ./ubongo-ctl.sh stop [web|mcp]      # TERM, wait up to 10s, KILL fallback
+#   ./ubongo-ctl.sh restart [web|mcp]
+#   ./ubongo-ctl.sh status [web|mcp]    # exit 0 when running, 1 when not
 #
-# For reboot-survival on the Pi/Ubuntu box, prefer the systemd unit in
-# deploy/ubongo-web.service; this script is the everywhere-else alternative.
+# Services: web (Streamlit chat page, start-ubongo-web.sh) and mcp (the MCP
+# server over streamable HTTP, start-ubongo-mcp.sh). For reboot-survival on
+# the Pi/Ubuntu box, prefer the systemd units in deploy/; this script is the
+# everywhere-else alternative.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
-PIDFILE="data/ubongo-web.pid"
-LOGFILE="data/ubongo-web.log"
+SVC="${2:-web}"
+case "$SVC" in
+  web|mcp) ;;
+  *) echo "Unknown service: $SVC (web|mcp)" >&2; exit 2 ;;
+esac
+LAUNCHER="./start-ubongo-$SVC.sh"
+PIDFILE="data/ubongo-$SVC.pid"
+LOGFILE="data/ubongo-$SVC.log"
 
 pid() { cat "$PIDFILE" 2>/dev/null || true; }
 
@@ -34,8 +42,8 @@ start() {
   fi
   rm -f "$PIDFILE"
   mkdir -p data
-  # start-ubongo-web.sh execs streamlit, so $! is the server's pid.
-  nohup ./start-ubongo-web.sh >> "$LOGFILE" 2>&1 &
+  # the launchers exec the server process, so $! is the server's pid.
+  nohup "$LAUNCHER" >> "$LOGFILE" 2>&1 &
   echo $! > "$PIDFILE"
   sleep 2
   if is_running; then
@@ -90,7 +98,7 @@ case "${1:-}" in
   restart) stop; start ;;
   status)  status ;;
   *)
-    echo "Usage: $0 start|stop|restart|status" >&2
+    echo "Usage: $0 start|stop|restart|status [web|mcp]" >&2
     exit 2
     ;;
 esac

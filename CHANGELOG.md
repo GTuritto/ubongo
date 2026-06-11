@@ -18,6 +18,30 @@ entry below records what that version added. Newest first.
 
 ---
 
+## v0.1.4 — MCP server channel
+
+Date: 2026-06-11
+
+Ubongo becomes reachable by other agents ([ADR-0015](docs/adr/0015-mcp-server-additive-channel.md)):
+an MCP server as the fourth additive channel, shipped as candidate 13.
+
+- Tools: `ubongo_send` runs one full governed turn through `master.handle`
+  (exactly like one-shot — same pipeline, same governance, same memory write);
+  a turn the gate holds returns `gated=true` and **cannot be approved over
+  MCP**. `ubongo_recall` is read-only recall (summary + recency + semantic).
+- Resources (read-only): `ubongo://vault/daily/today` and `ubongo://audit`.
+- Transports: stdio (`python -m ubongo mcp`, for clients that spawn the
+  server) and streamable HTTP (`./start-ubongo-mcp.sh` or `ubongo mcp --http`,
+  port 8765) with the same home-LAN, no-auth posture as the web UI.
+- The official `mcp` SDK is an optional extra (`./install.sh --mcp` /
+  `uv sync --extra mcp`); the core never imports it. `ubongo-ctl.sh`
+  generalizes to `start|stop|restart|status [web|mcp]` (default `web`,
+  backward compatible) and `deploy/ubongo-mcp.service` mirrors the web unit.
+- 14 new tests (929 total); smoke gate gains an in-memory MCP handshake and
+  an HTTP service cycle; playbook section M.1–M.8.
+- The client half (Ubongo consuming external MCP servers like Compendium) is
+  the next layer (v0.1.5), not this one.
+
 ## v0.1.3 — Local profiler + service control
 
 Date: 2026-06-11

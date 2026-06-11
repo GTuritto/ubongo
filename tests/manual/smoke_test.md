@@ -456,3 +456,18 @@ The local profiler (`ubongo.profiling`, [Plans/10-local-profiler.md](../../Plans
 | P.14 | Service control | `./ubongo-ctl.sh start`, then `status`, `restart`, `stop` | start backgrounds the web UI (pid in `data/ubongo-web.pid`, log `data/ubongo-web.log`); status exits 0 with the pid; restart swaps the pid; stop terminates and removes the pidfile; a second `stop` reports "Not running.". |
 | P.15 | systemd (Pi only) | follow the comments in `deploy/ubongo-web.service` | unit starts the web UI, survives reboot with lingering enabled; `journalctl --user -u ubongo-web -f` shows the app log. |
 | P.16 | Pytest passes | `uv run pytest tests/` | all green (`tests/test_profiling.py` included). |
+
+## Post-v0.1 — MCP server channel (candidate 13, v0.1.4)
+
+The MCP channel ([Plans/13-mcp-server.md](../../Plans/13-mcp-server.md), ADR-0015): Ubongo as an MCP server, the fourth additive channel. Tools `ubongo_send` (a full governed turn through `master.handle`, exactly like one-shot; a gated turn returns `gated=true` and is never approvable over MCP) and `ubongo_recall` (read-only); resources `ubongo://vault/daily/today` and `ubongo://audit` (read-only). Transports: stdio (`python -m ubongo mcp`) and streamable HTTP (`./start-ubongo-mcp.sh`, LAN no-auth posture like the web UI). Optional extra: `./install.sh --mcp` / `uv sync --extra mcp`.
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| M.1 | Missing extra is friendly | (without the extra) `python -m ubongo mcp` | rc 1; "The MCP dependency is not installed." with the install hint; no traceback. |
+| M.2 | stdio handshake | add to a local client (e.g. Claude Code): `{"command": "<repo>/.venv/bin/python", "args": ["-m", "ubongo", "mcp"]}`; list tools | client shows `ubongo_send` + `ubongo_recall` and the two `ubongo://` resources. |
+| M.3 | HTTP service | `./ubongo-ctl.sh start mcp`; point an MCP client at `http://<host>:8765/mcp` | tools/resources listed; `./ubongo-ctl.sh status mcp` exits 0; `stop mcp` terminates. |
+| M.4 | Full governed turn | call `ubongo_send` with `{"message": "say hello", "persona": "casual"}` | a real composed response; the turn shows up in `/trace`, the queue, and the daily note exactly like a typed turn. |
+| M.5 | Gate is not approvable | call `ubongo_send` with `{"message": "delete the entire vault"}` | the canned approval-required text with `gated: true`; no approval payload; `governance_decisions` row `require_approval` persisted. |
+| M.6 | Read-only memory | call `ubongo_recall` `{"query": "<topic>"}`; read both resources | recency + semantic rows; the daily note and audit tail render; nothing is written (`messages` count unchanged). |
+| M.7 | systemd (Pi only) | follow the comments in `deploy/ubongo-mcp.service` | unit serves the LAN and survives reboot; do not run it and `ubongo-ctl.sh ... mcp` together. |
+| M.8 | Pytest passes | `uv run pytest tests/` | all green (`test_mcp_service.py` + `test_mcp_server.py` included; the server suite skips without the extra). |

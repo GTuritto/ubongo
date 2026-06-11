@@ -1,6 +1,6 @@
 [project]
 name = "ubongo"
-version = "0.1.3"
+version = "0.1.4"
 description = "A personal, mood-aware AI mind. Multi-agent, self-improving, self-extending CLI."
 requires-python = ">=3.11"
 readme = "README.md"
@@ -19,6 +19,9 @@ dependencies = [
 # core deps so the CLI stays lean: install with `uv sync --extra web`.
 web = [
     "streamlit>=1.30",
+]
+mcp = [
+    "mcp>=1.2",
 ]
 
 [dependency-groups]

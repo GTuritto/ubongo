@@ -9,9 +9,10 @@ If STATE.md and the spec disagree, the code is the source of truth and STATE.md 
 
 ## Snapshot
 
-- **Current version: v0.1.3.** v0.1 (the 22-phase build) plus the optional web UI (v0.1.1),
-  self-authored skills (v0.1.2), and the local profiler + service control (v0.1.3,
-  [ADR-0014](docs/adr/0014-local-only-observability-profiler.md)). Not yet v0.2 (Telegram).
+- **Current version: v0.1.4.** v0.1 (the 22-phase build) plus the optional web UI (v0.1.1),
+  self-authored skills (v0.1.2), the local profiler + service control (v0.1.3,
+  [ADR-0014](docs/adr/0014-local-only-observability-profiler.md)), and the MCP server channel
+  (v0.1.4, [ADR-0015](docs/adr/0015-mcp-server-additive-channel.md)). Not yet v0.2 (Telegram).
 - **v0.1 is complete and merged to `main`.** All 22 phases (0–21) landed, each on its own
   `phase-N-<name>` branch, merged after review (16 phase PRs).
 - **Plus a post-v0.1 layer that is also on `main`**: six architecture-deepening refactors
@@ -19,11 +20,12 @@ If STATE.md and the spec disagree, the code is the source of truth and STATE.md 
   the **self-authored-skills** experiment (the `authoring/` package, ADR-0013), and the
   **local profiler + service control** layer (PRs #32, #33, #34: `profiling.py`, the `/profile`
   family, the `--profile`/`UBONGO_PROFILE` startup switch, `ubongo-ctl.sh`, the systemd unit —
-  ADR-0014). These are *not* in the v0.1 spec; see Drift below.
-- **Size:** ~14,500 LOC under `src/` (11,255 at v0.1 certification; the deepening + web layer
-  added ~800; the authoring package ~1,285; the profiler layer ~650). Still under the ~15,000
-  soft target, with little headroom — the next layer should be lean or v0.2.
-- **Tests:** 915 pytest, green (874 + 41 profiler). The spec's `tests/` layout listed ~16 files; the actual suite
+  ADR-0014), and the **MCP server channel** (PR #37: the `mcp/` package, `ubongo mcp` stdio/HTTP,
+  ctl + systemd + installer support — ADR-0015). These are *not* in the v0.1 spec; see Drift below.
+- **Size:** ~14,700 LOC under `src/` (11,255 at v0.1 certification; deepening + web ~800;
+  authoring ~1,285; profiler ~650; MCP channel ~235). Effectively at the ~15,000 soft target —
+  the next layer should be v0.2, or something must shrink.
+- **Tests:** 929 pytest, green (874 + 41 profiler + 14 MCP). The spec's `tests/` layout listed ~16 files; the actual suite
   is far broader (one test module per real module, plus REPL, live-swap, recovery, evaluation,
   sync, audit, and the six authoring suites).
 - **Stack matches spec:** Python 3.11+, LiteLLM over OpenRouter, stdlib SQLite, `sqlite-vec`,

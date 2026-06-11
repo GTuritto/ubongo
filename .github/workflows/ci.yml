@@ -21,8 +21,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - name: Install (locked)
-        run: uv sync --frozen
+      - name: Install (locked, all extras so the MCP suite runs)
+        run: uv sync --frozen --all-extras
       - name: Pytest
         run: uv run pytest -q
 
@@ -38,8 +38,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - name: Install (locked, with the web extra for the ctl checks)
-        run: uv sync --frozen --extra web
+      - name: Install (locked, all extras — web for ctl checks, mcp for the handshake)
+        run: uv sync --frozen --all-extras
       - name: Smoke gate (deterministic layer)
         run: bash scripts/smoke.sh
 

@@ -34,7 +34,7 @@ cp -R src config docs tests deploy "$OUT/"
 # Top-level files needed to install / run / read.
 cp pyproject.toml uv.lock VERSION CHANGELOG.md \
    README.md CONTEXT.md STATE.md STATUS.md UBONGO_BUILD.md UBONGO_VISION.md \
-   install.sh start-ubongo.sh start-ubongo-web.sh ubongo-ctl.sh .env.example \
+   install.sh start-ubongo.sh start-ubongo-web.sh start-ubongo-mcp.sh ubongo-ctl.sh .env.example \
    "$OUT/"
 
 # Empty runtime dirs (created clean; no user data shipped).
@@ -47,7 +47,7 @@ find "$OUT" -name '*.py[co]' -delete 2>/dev/null || true
 find "$OUT" -name '.DS_Store' -delete 2>/dev/null || true
 rm -rf "$OUT/.pytest_cache" "$OUT"/**/.pytest_cache 2>/dev/null || true
 
-chmod +x "$OUT/install.sh" "$OUT/start-ubongo.sh" "$OUT/start-ubongo-web.sh" "$OUT/ubongo-ctl.sh"
+chmod +x "$OUT/install.sh" "$OUT/start-ubongo.sh" "$OUT/start-ubongo-web.sh" "$OUT/start-ubongo-mcp.sh" "$OUT/ubongo-ctl.sh"
 
 echo "==> Zipping"
 ( cd dist && zip -rq "$NAME.zip" "$NAME" )

@@ -1,0 +1,27 @@
+# Ubongo MCP server — systemd unit for the Pi / Ubuntu deployment.
+#
+# Same install recipe as deploy/ubongo-web.service (edit the two paths, copy to
+# ~/.config/systemd/user/, daemon-reload, enable --now, enable-linger). This
+# unit and `ubongo-ctl.sh ... mcp` are alternatives; do not run both at once.
+#
+# The MCP server exposes ubongo_send / ubongo_recall + read-only resources
+# over streamable HTTP with no auth — home LAN only (ADR-0015, SECURITY.md).
+
+[Unit]
+Description=Ubongo MCP server (streamable HTTP, home-LAN only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+# EDIT these two paths to your install location:
+WorkingDirectory=/home/pi/ubongo
+ExecStart=/home/pi/ubongo/start-ubongo-mcp.sh
+# Optional env (UBONGO_MCP_PORT, UBONGO_PROFILE, ...). The app also loads
+# .env itself via dotenv; this makes the same values visible to the launcher.
+EnvironmentFile=-/home/pi/ubongo/.env
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
