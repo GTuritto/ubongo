@@ -23,7 +23,10 @@ import cProfile
 import io
 import logging
 import pstats
+import resource
+import sys
 import time
+import tracemalloc
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -329,3 +332,90 @@ def profile_call(fn, /, *args, **kwargs) -> tuple[object, str | None]:
         logger.warning("cpu_profile_report_failed", exc_info=True)
         report = None
     return result, report
+
+
+# ---------- memory profiling (candidate 11) ----------
+#
+# tracemalloc baseline-and-diff for leak hunting in a long-lived session.
+# Process-global by nature (tracemalloc traces the whole interpreter), so the
+# armed state lives here, not on ReplState. Opt-in: tracing is never started
+# unless /profile mem on armed it, and it adds per-allocation overhead while on.
+
+MEM_TOP_N = 15
+
+_mem_baseline: "tracemalloc.Snapshot | None" = None
+
+
+def _mem_filter(snapshot: "tracemalloc.Snapshot") -> "tracemalloc.Snapshot":
+    """Drop tracemalloc's own frames and this module from the diff so the
+    profiler does not report itself."""
+    return snapshot.filter_traces((
+        tracemalloc.Filter(False, tracemalloc.__file__),
+        tracemalloc.Filter(False, __file__),
+    ))
+
+
+def _rss_bytes() -> int:
+    """Peak RSS of this process. ru_maxrss is bytes on macOS, KB on Linux."""
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak if sys.platform == "darwin" else peak * 1024
+
+
+def _fmt_bytes(n: int) -> str:
+    value = float(n)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if abs(value) < 1024.0:
+            return f"{value:.1f} {unit}"
+        value /= 1024.0
+    return f"{value:.1f} TiB"
+
+
+def mem_active() -> bool:
+    return _mem_baseline is not None and tracemalloc.is_tracing()
+
+
+def mem_start() -> None:
+    """Arm: start tracing and take the baseline. Re-arming replaces it."""
+    global _mem_baseline
+    if not tracemalloc.is_tracing():
+        tracemalloc.start()
+    _mem_baseline = _mem_filter(tracemalloc.take_snapshot())
+
+
+def mem_stop() -> None:
+    """Disarm: stop tracing and drop the baseline."""
+    global _mem_baseline
+    _mem_baseline = None
+    if tracemalloc.is_tracing():
+        tracemalloc.stop()
+
+
+def mem_report(top_n: int = MEM_TOP_N) -> str | None:
+    """Top allocation-growth sites since the baseline; None when not armed.
+
+    Best-effort like the CPU half: an assembly failure degrades to a logged
+    warning and a one-line message, never an exception into the loop."""
+    if not mem_active():
+        return None
+    try:
+        snapshot = _mem_filter(tracemalloc.take_snapshot())
+        diffs = snapshot.compare_to(_mem_baseline, "lineno")
+        current, peak = tracemalloc.get_traced_memory()
+        lines = [
+            "Memory growth since baseline "
+            f"(traced now {_fmt_bytes(current)}, traced peak {_fmt_bytes(peak)}, "
+            f"process peak RSS {_fmt_bytes(_rss_bytes())}):",
+        ]
+        grown = [d for d in diffs if d.size_diff > 0][:top_n]
+        if not grown:
+            lines.append("  no allocation growth recorded.")
+        for d in grown:
+            frame = d.traceback[0]
+            lines.append(
+                f"  {_fmt_bytes(d.size_diff):>10}  (+{d.count_diff} blocks)  "
+                f"{frame.filename}:{frame.lineno}"
+            )
+        return "\n".join(lines)
+    except Exception:
+        logger.warning("mem_profile_report_failed", exc_info=True)
+        return "Memory report failed; see logs."

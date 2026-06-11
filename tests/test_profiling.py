@@ -291,3 +291,85 @@ def test_profile_call_same_second_collision_gets_suffix(monkeypatch):
 
 def test_profiles_dir_is_sibling_of_db(tmp_path: Path):
     assert profiling.profiles_dir() == store.get_db_path().parent / "profiles"
+
+
+# ---------- memory profiling (candidate 11) ----------
+
+
+@pytest.fixture(autouse=True)
+def _mem_disarmed():
+    yield
+    profiling.mem_stop()
+
+
+def test_parse_profile_mem_actions():
+    assert _parse_profile_command("/profile mem") == ("mem", "report")
+    assert _parse_profile_command("/profile mem on") == ("mem", "on")
+    assert _parse_profile_command("/profile mem off") == ("mem", "off")
+    assert _parse_profile_command("/profile mem status") == ("mem", "status")
+
+
+def test_parse_profile_mem_rejects_garbage():
+    assert _parse_profile_command("/profile mem maybe") is None
+    assert _parse_profile_command("/profile mem on extra") is None
+
+
+def test_mem_report_none_when_unarmed():
+    assert profiling.mem_active() is False
+    assert profiling.mem_report() is None
+
+
+def test_mem_arm_report_detects_growth():
+    profiling.mem_start()
+    assert profiling.mem_active() is True
+    hoard = [bytearray(1024) for _ in range(2000)]  # ~2 MiB allocated here
+    report = profiling.mem_report()
+    assert report is not None
+    assert "Memory growth since baseline" in report
+    assert "test_profiling.py" in report  # this file is the growth site
+    del hoard
+
+
+def test_mem_stop_clears_baseline_and_tracing():
+    profiling.mem_start()
+    profiling.mem_stop()
+    assert profiling.mem_active() is False
+    assert profiling.mem_report() is None
+    import tracemalloc
+    assert tracemalloc.is_tracing() is False
+
+
+def test_mem_rearm_replaces_baseline():
+    profiling.mem_start()
+    hoard = [bytearray(1024) for _ in range(2000)]
+    profiling.mem_start()  # re-arm: new baseline includes the hoard
+    report = profiling.mem_report()
+    assert report is not None
+    # the hoard predates the new baseline, so no growth from this line
+    assert "no allocation growth recorded" in report or "test_profiling.py" not in report
+    del hoard
+
+
+def test_mem_report_failure_swallowed(monkeypatch):
+    profiling.mem_start()
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("snapshot says no")
+
+    monkeypatch.setattr(profiling.tracemalloc, "take_snapshot", boom)
+    assert profiling.mem_report() == "Memory report failed; see logs."
+
+
+def test_cmd_profile_mem_toggle_and_report():
+    state = _state()
+    on_msg = _cmd_profile("/profile mem on", state)
+    assert "Memory profiling armed" in on_msg
+    assert profiling.mem_active() is True
+    assert "on" in _cmd_profile("/profile mem status", state)
+    report = _cmd_profile("/profile mem", state)
+    assert "Memory growth since baseline" in report
+    off_msg = _cmd_profile("/profile mem off", state)
+    assert "off" in off_msg
+    assert profiling.mem_active() is False
+    unarmed = _cmd_profile("/profile mem", state)
+    assert "Memory profiling is off" in unarmed
