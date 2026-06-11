@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from ubongo import master, memory, profiling  # noqa: F401  -- registers after_llm seam
+from ubongo import channel, master, memory, profiling  # noqa: F401  -- registers after_llm seam
 from ubongo.delivery import queue
 from ubongo.repl import DEFAULT_PERSONA, VALID_PERSONAS
 
@@ -21,19 +21,18 @@ def run(message: str, persona: str | None = None,
         )
         return 1
 
-    # Candidates 10 + 12: `ubongo send --profile[=cpu|mem|all]` (or the
-    # UBONGO_PROFILE env knob). True normalizes to "cpu" so candidate-10
-    # callers are unchanged.
+    # Candidates 10 + 12 + 14: `ubongo send --profile[=cpu|mem|all]` (or the
+    # UBONGO_PROFILE env knob, resolved by __main__). True normalizes to "cpu"
+    # so candidate-10 callers are unchanged. The turn envelope (cProfile wrap,
+    # master.handle, queue flush) lives in the channel core; one-shot keeps
+    # only presentation: printing, the mem-report flow, and exit codes.
     if profile is True:
         profile = "cpu"
     if profile in ("mem", "all"):
         profiling.mem_start()
-    if profile in ("cpu", "all"):
-        response, cpu_report = profiling.profile_call(
-            master.handle, message, chosen, auto_mode=False
-        )
-    else:
-        response, cpu_report = master.handle(message, chosen, auto_mode=False), None
+    response, cpu_report = channel.run_turn(
+        message, chosen, profile_cpu=profile in ("cpu", "all")
+    )
     print(response.text)
     reports = [r for r in (cpu_report,) if r]
     if profile in ("mem", "all"):
@@ -49,7 +48,6 @@ def run(message: str, persona: str | None = None,
         )
         print(report)
         queue.flush_delivered(token)
-    queue.flush_delivered(response.delivery_token)
     # Phase 15: one-shot is non-interactive — a turn held for approval cannot
     # be approved here. Print the gated message and exit non-zero; the user
     # re-runs (or uses the REPL to approve).

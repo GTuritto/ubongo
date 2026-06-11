@@ -18,14 +18,11 @@ Two MCP-specific rules live here:
 from __future__ import annotations
 
 import logging
-import os
 from datetime import date
 from typing import TypedDict
 
-from ubongo import master, memory, profiling  # noqa: F401  -- registers after_llm seam
-from ubongo.config import load_config
-from ubongo.delivery import queue
-from ubongo.logging import setup_logging
+from ubongo import channel, master, memory  # noqa: F401  -- memory registers the after_llm seam; master is the test patch target
+from ubongo.delivery import queue  # noqa: F401  -- test patch target (shared module attr)
 from ubongo.memory import store, vault
 from ubongo.repl import DEFAULT_PERSONA, VALID_PERSONAS
 
@@ -49,26 +46,11 @@ class RecallResult(TypedDict):
     semantic: list[str]
 
 
-_bootstrapped = False
-# Resolved once at bootstrap from UBONGO_PROFILE; only "cpu" applies on this
-# channel (mem is REPL-only — no report surface here), mirroring web/turn.py.
-_startup_profile: str | None = None
-
-
 def bootstrap() -> dict:
     """Load config + configure logging once. Starts NO background daemons —
-    like one-shot and web, this is the turn path only. Idempotent."""
-    global _bootstrapped, _startup_profile
-    config = load_config()
-    if not _bootstrapped:
-        setup_logging(config["logging"]["level"])
-        _startup_profile = profiling.resolve_startup_profile(
-            None, os.environ.get("UBONGO_PROFILE")
-        )
-        if _startup_profile in ("cpu", "all"):
-            logger.info("mcp_cpu_profiling_on")
-        _bootstrapped = True
-    return config
+    like one-shot and web, this is the turn path only. Delegates to the
+    channel core, which also resolves the UBONGO_PROFILE knob."""
+    return channel.bootstrap("mcp")
 
 
 def send_turn(message: str, persona: str | None = None, auto: bool = False) -> SendResult:
@@ -82,16 +64,9 @@ def send_turn(message: str, persona: str | None = None, auto: bool = False) -> S
             "ok": False, "persona": chosen, "gated": False,
             "requires_user_decision": False,
         }
-    if _startup_profile in ("cpu", "all"):
-        response, cpu_report = profiling.profile_call(
-            master.handle, message, chosen, auto_mode=auto
-        )
-        if cpu_report:
-            logger.info("mcp_turn_cpu_profile",
-                        extra={"report": cpu_report.splitlines()[0]})
-    else:
-        response = master.handle(message, chosen, auto_mode=auto)
-    queue.flush_delivered(response.delivery_token)
+    # The envelope (cProfile wrap behind the knob, master.handle, queue
+    # flush) is the channel core's; this module keeps the MCP shaping only.
+    response, _cpu_report = channel.run_turn(message, chosen, auto_mode=auto)
     return {
         "text": response.text,
         "ok": response.ok,
