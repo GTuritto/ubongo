@@ -187,6 +187,13 @@ UBONGO_PROFILE=cpu ./start-ubongo.sh          # start a session with the profile
 ./start-ubongo.sh --profile mem               # same via flag; --profile off overrides the env
 ```
 
+Deployment bundles are published automatically: merging a `VERSION` bump to
+`main` makes the release pipeline run the tests, build the bundle
+(`scripts/package.sh`), and publish a GitHub Release `v<VERSION>` with
+`install-ubongo.sh` + the zip attached. To deploy, download both assets on the
+target and run `./install-ubongo.sh`. (CI also builds the bundle on every PR as
+a workflow artifact.)
+
 ## Usage
 
 In REPL mode, type messages naturally. Ubongo classifies intent and tone, plans a workflow, runs the agents, gates the result through governance, composes a response in the chosen persona, and writes everything to memory.

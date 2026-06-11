@@ -17,7 +17,8 @@ cd "$ROOT"
 VERSION="$(tr -d '[:space:]' < VERSION)"
 PYPROJECT_VERSION="$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)"
 if [ "$VERSION" != "$PYPROJECT_VERSION" ]; then
-  echo "WARNING: VERSION ($VERSION) != pyproject.toml version ($PYPROJECT_VERSION); keep them in sync." >&2
+  echo "ERROR: VERSION ($VERSION) != pyproject.toml version ($PYPROJECT_VERSION); sync them before packaging." >&2
+  exit 1
 fi
 NAME="ubongo-v${VERSION}"
 OUT="dist/$NAME"
@@ -46,7 +47,7 @@ find "$OUT" -name '*.py[co]' -delete 2>/dev/null || true
 find "$OUT" -name '.DS_Store' -delete 2>/dev/null || true
 rm -rf "$OUT/.pytest_cache" "$OUT"/**/.pytest_cache 2>/dev/null || true
 
-chmod +x "$OUT/install.sh" "$OUT/start-ubongo.sh" "$OUT/start-ubongo-web.sh"
+chmod +x "$OUT/install.sh" "$OUT/start-ubongo.sh" "$OUT/start-ubongo-web.sh" "$OUT/ubongo-ctl.sh"
 
 echo "==> Zipping"
 ( cd dist && zip -rq "$NAME.zip" "$NAME" )
