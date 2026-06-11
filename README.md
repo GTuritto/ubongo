@@ -118,10 +118,47 @@ No FastAPI, Redis, Docker, LangGraph, Temporal, Ray, or Kubernetes. `python-tele
 ## Prerequisites
 
 - Python 3.11 or newer
-- [uv](https://docs.astral.sh/uv/) installed
+- [uv](https://docs.astral.sh/uv/) installed (from-source setup only — the release installer needs just Python)
 - An [OpenRouter](https://openrouter.ai/) API key
 
-## Setup
+## Download & Install (from a Release)
+
+The distribution lives on the GitHub Releases page:
+**<https://github.com/GTuritto/ubongo/releases>** (latest:
+[github.com/GTuritto/ubongo/releases/latest](https://github.com/GTuritto/ubongo/releases/latest)).
+Every release is published automatically by the pipeline once all gates are
+green, and carries exactly two assets: the bootstrap installer
+(`install-ubongo.sh`) and the bundle (`ubongo-v<version>.zip`).
+
+On the target machine (macOS or Linux, including a Raspberry Pi — only
+Python 3.11+ required, no git/uv):
+
+```bash
+# 1. Download both assets into the same directory
+curl -LO https://github.com/GTuritto/ubongo/releases/latest/download/install-ubongo.sh
+curl -LO "$(curl -s https://api.github.com/repos/GTuritto/ubongo/releases/latest \
+  | grep browser_download_url | grep -o 'https://[^"]*\.zip')"
+# (or just download both files from the Releases page in a browser)
+
+# 2. Run the installer — it unpacks the bundle, installs dependencies into a
+#    private venv, and asks for your OpenRouter API key and install location
+chmod +x install-ubongo.sh
+./install-ubongo.sh                  # add --web for the tablet UI, --dest DIR to skip the prompt
+
+# 3. Start it (the bundle unpacks into a versioned folder under your --dest)
+cd ~/ubongo/ubongo-v0.1.3            # the installer prints the exact path
+./start-ubongo.sh                    # REPL
+./start-ubongo-web.sh                # web UI (if installed with --web)
+./ubongo-ctl.sh start                # web UI as a background service
+```
+
+Upgrades are side-by-side: installing a newer release unpacks
+`ubongo-v<new>/` next to the old folder, which stays untouched. Your state
+(`data/`, `vault/`, `.env`) lives inside each versioned folder — copy those
+three into the new folder to migrate, then retire the old one. Full first-run
+guidance lives in [docs/USER_MANUAL.md](docs/USER_MANUAL.md).
+
+## Setup (from source)
 
 ```bash
 git clone <repo-url> ubongo
@@ -153,7 +190,7 @@ uv run python -m ubongo
 
 # One-shot
 uv run python -m ubongo send "draft a migration plan"
-uv run python -m ubongo send --persona casual --mode parallel "what should I cook tonight"
+uv run python -m ubongo send "what should I cook tonight" --persona casual
 ```
 
 A one-shot continues an ongoing REPL session if you're inside the 30-minute session window. If launching produces nothing, check that `OPENROUTER_API_KEY` is set in `.env` and that `.env` is being loaded.
