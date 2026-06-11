@@ -108,6 +108,11 @@ intended for a single user on a trusted home LAN. Consequences to be aware of:
 - **Do not expose it beyond your LAN.** No port-forwarding, no reverse proxy to
   the internet. Authentication/TLS are explicitly out of v0.1 scope. The channel
   is off unless you install (`./install.sh --web`) and start it.
+- **Service control changes none of this.** `ubongo-ctl.sh` and the systemd unit
+  (`deploy/ubongo-web.service`, v0.1.3) only background the same launcher; they
+  add no new listener, privilege, or security boundary. The local profiler is
+  likewise in-process and local-only — no telemetry leaves the machine
+  ([ADR-0014](adr/0014-local-only-observability-profiler.md)).
 
 ## Reporting
 

@@ -88,6 +88,17 @@ One-shot (run a single message and exit — good for scripts):
 
 To leave the REPL: type `/exit`, or press **Ctrl-D**.
 
+Start with the profiler armed (for debugging a slow or leaky session):
+
+```bash
+./start-ubongo.sh --profile mem        # cpu | mem | all | off
+UBONGO_PROFILE=cpu ./start-ubongo.sh   # same via .env / environment; the flag wins
+./start-ubongo.sh send --profile "hello"   # one-shot turn under cProfile
+```
+
+Profiling is opt-in and free when off; disarm any time with `/profile cpu off` /
+`/profile mem off`. See the `/profile` rows in the command reference (section 7).
+
 ### Web UI (optional — talk to Ubongo from your tablet)
 
 If you installed with `./install.sh --web`, you can run a local chat page that
@@ -101,6 +112,12 @@ It prints the address to use, e.g. `http://192.168.1.20:8501`. Open that on your
 tablet. The page has a chat box, a persona selector, and an auto-route toggle;
 when a turn needs approval you get **Approve / Deny** buttons instead of the
 `y/n` prompt. Change the port with `UBONGO_WEB_PORT=9000 ./start-ubongo-web.sh`.
+
+To keep the web page running in the background (instead of holding a terminal),
+use the service controller: `./ubongo-ctl.sh start|stop|restart|status` (logs to
+`data/ubongo-web.log`). On a Pi/Ubuntu box that should survive reboots, use the
+systemd unit in `deploy/ubongo-web.service` instead (install steps in its
+comments) — use one or the other, not both.
 
 It is the same Ubongo — the web page runs every turn through the exact same
 pipeline as the REPL (classify → plan → execute → govern → compose → remember),
@@ -170,6 +187,9 @@ All commands start with `/`. (One-shot mode uses CLI flags instead.)
 | `/policy` | Print the live governance decision matrix |
 | `/queue [N]` | The outbound message queue |
 | `/exec <cmd>` | Run one command through the constrained sandbox (debug; e.g. `/exec echo hi`) |
+| `/profile [agents\|models\|modes] [N]` | Performance summary or breakdowns (latency, tokens, failure rates) over the recorded runs |
+| `/profile cpu on\|off\|status` | Arm/disarm CPU profiling: each turn writes a `.prof` under `data/profiles/` plus a top-25 summary |
+| `/profile mem [on\|off\|status]` | Arm memory profiling (baseline); bare `/profile mem` shows allocation growth since the baseline |
 
 ### Memory
 | Command | What it does |

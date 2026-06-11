@@ -114,3 +114,13 @@ and stopped by the REPL:
 Semantic recall (`sqlite-vec` indexing of messages and vault notes) is wired into
 the turn path itself (`recall(query)`), best-effort and degrading to recency-only
 when embeddings are unavailable. Nothing in v0.1 is left unbuilt.
+
+## Observability + service control (v0.1.3) — container boxes unchanged
+
+The local profiler ([ADR-0014](../adr/0014-local-only-observability-profiler.md))
+is an in-process library inside the CLI container, not a new container or daemon:
+`/profile` reads the run tables the turn already persists, and the opt-in
+cProfile/tracemalloc wraps live around the turn call. `ubongo-ctl.sh` and the
+systemd unit (`deploy/ubongo-web.service`) are operational tooling that
+background the existing Web UI container — no new listener, boundary, or box at
+this level.

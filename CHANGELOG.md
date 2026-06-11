@@ -18,6 +18,33 @@ entry below records what that version added. Newest first.
 
 ---
 
+## v0.1.3 — Local profiler + service control
+
+Date: 2026-06-11
+
+Local-only observability ([ADR-0014](docs/adr/0014-local-only-observability-profiler.md))
+and operational control for the web service. Built as three candidates (10–12),
+shipped as this version.
+
+- `/profile [agents|models|modes] [N]` aggregates the latency/token/outcome data
+  every turn already persists (`workflow_runs` / `agent_runs`) into on-demand,
+  read-only summaries and breakdowns — no new tables, no event handlers, the
+  single-writer rule untouched.
+- `/profile cpu on|off|status` (and `ubongo send --profile`) wraps the turn's
+  `master.handle` in stdlib `cProfile`: a `.prof` artifact under `data/profiles/`
+  plus a top-25 cumulative summary. `/profile mem on|off|status` + `/profile mem`
+  is the tracemalloc half: baseline on arm, allocation-growth report on demand,
+  for leak hunting across a long-lived session. Profiling is opt-in, zero
+  overhead when off, and can never break a turn.
+- A startup switch: `--profile [cpu|mem|all|off]` on launch or `UBONGO_PROFILE`
+  in `.env` (flag wins) arms the same toggles from boot; the web turn path arms
+  CPU the same way.
+- `ubongo-ctl.sh start|stop|restart|status` manages the web UI as a background
+  service (pidfile + log under `data/`); `deploy/ubongo-web.service` is the
+  systemd alternative for the Pi. Both ship in the deployment bundle.
+- 41 new tests (`tests/test_profiling.py`); smoke playbook section P.1–P.16; the
+  full cumulative smoke re-certified end-to-end with the profiler armed.
+
 ## v0.1.2 — Self-authored skills
 
 Date: 2026-06-10
