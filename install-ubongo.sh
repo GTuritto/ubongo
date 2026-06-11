@@ -74,7 +74,7 @@ APP="$(ls -d "$DEST"/ubongo-v*/ 2>/dev/null | sort | tail -1 || true)"
 APP="${APP%/}"
 
 # --- run the in-bundle installer (deps + config prompts) --------------------
-chmod +x "$APP"/install.sh "$APP"/start-ubongo.sh "$APP"/start-ubongo-web.sh 2>/dev/null || true
+chmod +x "$APP"/install.sh "$APP"/start-ubongo.sh "$APP"/start-ubongo-web.sh "$APP"/ubongo-ctl.sh 2>/dev/null || true
 say "Setting up Ubongo in $APP"
 ( cd "$APP" && ./install.sh ${INNER_ARGS[@]+"${INNER_ARGS[@]}"} )
 
