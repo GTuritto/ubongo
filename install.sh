@@ -131,4 +131,6 @@ if [ "$WITH_WEB" -eq 1 ]; then
 else
   echo "    Web UI (tablet):  re-run ./install.sh --web, then ./start-ubongo-web.sh"
 fi
+echo "    Web service ctl:  ./ubongo-ctl.sh start|stop|restart|status"
+echo "    Profiler:         /profile in the REPL (or UBONGO_PROFILE=cpu|mem|all in .env)"
 echo "    User manual:      docs/USER_MANUAL.md"

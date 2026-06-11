@@ -29,8 +29,11 @@ C4Component
   Component(fleet, "Worker Agent Fleet", "Python", "Research, Coding, Evaluator, Critic, Execution, Persona")
   Component(envelope, "Model-call Envelope", "agents/llm_run", "run_agent_llm / call_model_or_none: timer, model resolve, error->AgentResult, logging")
   Component(bus, "Event Bus", "Python", "before_*/after_* hooks")
+  Component(profiler, "Profiler", "ubongo.profiling", "/profile: read-only stats over the run tables; opt-in cProfile/tracemalloc around the turn (ADR-0014)")
 
   Rel(cli, pipeline, "handle(turn)")
+  Rel(cli, profiler, "/profile [agents|models|modes|cpu|mem]")
+  Rel(profiler, db, "Read-only SELECTs", "sqlite3")
   Rel(pipeline, classifier, "1. Classify")
   Rel(pipeline, router, "2. plan_workflow -> WorkflowPlan (master adds model + skill)")
   Rel(pipeline, dispatch, "3. Execute")
@@ -112,6 +115,16 @@ The runner hands each agent a frozen `AgentDirectives` on `AgentInput.directives
 `skill`, `exec_command`) — a typed control surface, not the old untyped
 `metadata` dict. `AgentInput.metadata` remains a dict only for the Memory agent's
 commit payload.
+
+## Profiler (v0.1.3, ADR-0014)
+
+The **Profiler** (`ubongo.profiling`) is a diagnostic component, not a pipeline
+stage: `/profile` aggregates the `workflow_runs` / `agent_runs` rows the Run
+Committer already persists — on demand and read-only, so the single-writer rule
+is untouched. When armed (`/profile cpu|mem on`, or from boot via `--profile` /
+`UBONGO_PROFILE`), the CLI wraps the Turn Pipeline call in cProfile and/or holds
+a tracemalloc baseline; profiling is best-effort and never breaks a turn.
+Nothing telemetric leaves the machine.
 
 ## Repair
 

@@ -1,0 +1,101 @@
+# Release — version-driven continuous delivery of the deployment bundle.
+#
+# Trigger: every push to main. If the VERSION file names a version that has no
+# git tag yet (i.e. a version bump just merged), this workflow re-runs the test
+# suite, builds the bundle with scripts/package.sh, and publishes a GitHub
+# Release `v<VERSION>` with exactly the two distribution files attached
+# (install-ubongo.sh + the zip), using that version's CHANGELOG.md section as
+# the release notes. Merges that do not bump VERSION are a no-op.
+#
+# Deploying to the Pi then becomes: download both assets from the Release,
+# run ./install-ubongo.sh on the target.
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+env:
+  OPENROUTER_API_KEY: test-key
+  # Used only to decide whether the live smoke subset can run (secrets are not
+  # readable inside step `if:` expressions directly).
+  LIVE_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # need tags to detect an already-released version
+
+      - name: Detect version bump
+        id: ver
+        run: |
+          VER="$(tr -d '[:space:]' < VERSION)"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          if git rev-parse "v$VER" >/dev/null 2>&1; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+            echo "v$VER already tagged — nothing to release."
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+            echo "v$VER is unreleased — building."
+          fi
+
+      - uses: astral-sh/setup-uv@v6
+        if: steps.ver.outputs.new == 'true'
+        with:
+          enable-cache: true
+
+      - name: Pytest (release gate)
+        if: steps.ver.outputs.new == 'true'
+        run: |
+          uv sync --frozen --extra web
+          uv run pytest -q
+
+      - name: Smoke gate (deterministic layer)
+        if: steps.ver.outputs.new == 'true'
+        run: bash scripts/smoke.sh
+
+      # The live subset (3 real model calls: a persona turn, the governance
+      # gate, a profiled turn) runs only when a real OPENROUTER_API_KEY secret
+      # is configured on the repo. Without the secret the release still gates
+      # on the deterministic layer.
+      - name: Smoke gate (live subset)
+        if: steps.ver.outputs.new == 'true' && env.LIVE_KEY != ''
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: bash scripts/smoke.sh --live
+
+      - name: Build deployment bundle
+        if: steps.ver.outputs.new == 'true'
+        run: bash scripts/package.sh
+
+      - name: Extract release notes from CHANGELOG
+        if: steps.ver.outputs.new == 'true'
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          awk -v ver="$VER" '
+            $0 ~ ("^## v" ver) { p = 1; next }
+            /^## v/            { p = 0 }
+            p
+          ' CHANGELOG.md > release-notes.md
+          if ! [ -s release-notes.md ]; then
+            echo "No CHANGELOG section found for v$VER" > release-notes.md
+          fi
+          cat release-notes.md
+
+      - name: Publish GitHub Release
+        if: steps.ver.outputs.new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          gh release create "v$VER" \
+            "dist/ubongo-v$VER.zip" \
+            "dist/install-ubongo.sh" \
+            --title "Ubongo v$VER" \
+            --notes-file release-notes.md

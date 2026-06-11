@@ -17,11 +17,14 @@ Load-bearing decisions for Ubongo v0.1, in [Nygard format](https://cognitect.com
 | [0011](0011-vault-sync-polling-and-conflict-queue.md) | Vault sync via polling + conflict queue + unified audit | Accepted |
 | [0012](0012-agent-envelope-directives-and-router-planning.md) | Model-call envelope, typed agent directives, router-owned workflow planning | Accepted |
 | [0013](0013-self-authored-skills-quarantine-and-approval.md) | Self-authored skills: quarantine + human approval boundary | Accepted |
+| [0014](0014-local-only-observability-profiler.md) | Local-only observability: in-process profiler over the run tables, no telemetry export | Accepted |
 
 ADRs 0001–0011 reflect the v0.1 build. **0012** records the post-v0.1
 architecture-deepening refactors (candidates 05/06/08; PRs #26/#27/#28); it is the
 one ADR that revises earlier documented wording (the CONTEXT.md "Model call" entry).
 **0013** records the post-v0.1 self-extension experiment — the `authoring/` package,
 where Ubongo drafts brand-new skills behind a quarantine + human-approval boundary.
+**0014** records the v0.1.3 observability posture: the local profiler reads the run
+tables in-process and nothing telemetric ever leaves the machine.
 
 New decisions get the next number. Supersede rather than rewrite: set the old ADR's status to `Superseded by NNNN`.

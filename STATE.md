@@ -1,6 +1,6 @@
 # Ubongo — State of the Build
 
-A ground-truth read of what is actually in the tree as of 2026-06-09, checked against
+A ground-truth read of what is actually in the tree as of 2026-06-11, checked against
 [UBONGO_BUILD.md](UBONGO_BUILD.md) (the v0.1 spec). [STATUS.md](STATUS.md) is the
 phase-by-phase changelog; this file is the complement: where the code stands, where it
 drifted from the spec, the decisions that produced the drift, and what is parked.
@@ -9,17 +9,21 @@ If STATE.md and the spec disagree, the code is the source of truth and STATE.md 
 
 ## Snapshot
 
-- **Current version: v0.1.2.** v0.1 (the 22-phase build) plus the optional web UI (v0.1.1)
-  and self-authored skills (v0.1.2). Not yet v0.2 (Telegram).
+- **Current version: v0.1.3.** v0.1 (the 22-phase build) plus the optional web UI (v0.1.1),
+  self-authored skills (v0.1.2), and the local profiler + service control (v0.1.3,
+  [ADR-0014](docs/adr/0014-local-only-observability-profiler.md)). Not yet v0.2 (Telegram).
 - **v0.1 is complete and merged to `main`.** All 22 phases (0–21) landed, each on its own
   `phase-N-<name>` branch, merged after review (16 phase PRs).
 - **Plus a post-v0.1 layer that is also on `main`**: six architecture-deepening refactors
   (PRs #20, #22, #24, #25, #26, #27, #28), an optional web channel (PRs #29, #30, #31), and
-  the **self-authored-skills** experiment (the `authoring/` package, ADR-0013 — see "What is
-  actually built" and STATUS.md). These are *not* in the v0.1 spec; see Drift below.
-- **Size:** ~13,850 LOC under `src/` (11,255 at v0.1 certification; the deepening + web layer
-  added ~800; the authoring package ~1,285). Still under the ~15,000 soft target.
-- **Tests:** ~874 pytest, green. The spec's `tests/` layout listed ~16 files; the actual suite
+  the **self-authored-skills** experiment (the `authoring/` package, ADR-0013), and the
+  **local profiler + service control** layer (PRs #32, #33, #34: `profiling.py`, the `/profile`
+  family, the `--profile`/`UBONGO_PROFILE` startup switch, `ubongo-ctl.sh`, the systemd unit —
+  ADR-0014). These are *not* in the v0.1 spec; see Drift below.
+- **Size:** ~14,500 LOC under `src/` (11,255 at v0.1 certification; the deepening + web layer
+  added ~800; the authoring package ~1,285; the profiler layer ~650). Still under the ~15,000
+  soft target, with little headroom — the next layer should be lean or v0.2.
+- **Tests:** 915 pytest, green (874 + 41 profiler). The spec's `tests/` layout listed ~16 files; the actual suite
   is far broader (one test module per real module, plus REPL, live-swap, recovery, evaluation,
   sync, audit, and the six authoring suites).
 - **Stack matches spec:** Python 3.11+, LiteLLM over OpenRouter, stdlib SQLite, `sqlite-vec`,

@@ -37,6 +37,7 @@ Single user, single machine, accessed through a CLI (REPL primary, one-shot for 
 - **Improves its own prompts** (`/optimize`, `/evaluate`, `/improvements`) and **authors its own skills** (`/author`, `/skill-candidates`), both behind your explicit approval.
 - **Remembers and recalls** across restarts: recency plus semantic search (`/recall`), a browsable Obsidian journal, and bidirectional vault sync.
 - **Traces everything.** Every decision, agent run, governance call, repair, and evolution variant is persisted and auditable (`/trace`, `/decisions`, `/audit`).
+- **Profiles itself, locally.** On-demand performance breakdowns by agent/model/mode, opt-in CPU (cProfile) and memory (tracemalloc) profiling (`/profile`, `--profile`, `UBONGO_PROFILE`); nothing telemetric ever leaves the machine ([ADR-0014](docs/adr/0014-local-only-observability-profiler.md)).
 
 ## How It Works (one screen)
 
@@ -70,9 +71,9 @@ For the full picture: a turn [flow + UML sequence diagram](docs/architecture/flo
 
 ## Status
 
-**Current version: v0.1.2.** v0.1 (the 22-phase build) is complete, plus two post-v0.1 layers: the optional web UI (v0.1.1) and self-authored skills (v0.1.2). The v0.2 milestone is Telegram.
+**Current version: v0.1.3.** v0.1 (the 22-phase build) is complete, plus three post-v0.1 layers: the optional web UI (v0.1.1), self-authored skills (v0.1.2), and the local profiler + service control (v0.1.3). The v0.2 milestone is Telegram.
 
-**v0.1 is complete: all 22 phases (0–21) are merged to `main` and certified, and a post-v0.1 self-extension layer (self-authored skills) ships on top.** The CLI runs end to end: classify, plan, execute through the worker fleet, govern, compose, enqueue, persist. Ten worker agents are registered; all six execution modes are live; the Repair Agent walks a full recovery ladder; the governance decision matrix gates risky turns through an interactive `y/n/why` approval flow over a hardened sandbox. The Genetic Programming loop is closed: generate variants of persona prompts *and* routing / tool-chain / retry config, evaluate against held-out samples, evolve generations, and propose promotions that live-swap only after you approve them. Semantic recall (`sqlite-vec`) augments recency, a vault-link graph is queryable, and a polling watcher ingests your vault edits. Post-v0.1, Ubongo also drafts brand-new skills behind the same approval boundary (`/author`, `/skill-candidates`, and an autonomous authoring daemon). **~874 tests green; ~13,850 LOC**; the full cumulative smoke passes end to end.
+**v0.1 is complete: all 22 phases (0–21) are merged to `main` and certified, and a post-v0.1 self-extension layer (self-authored skills) ships on top.** The CLI runs end to end: classify, plan, execute through the worker fleet, govern, compose, enqueue, persist. Ten worker agents are registered; all six execution modes are live; the Repair Agent walks a full recovery ladder; the governance decision matrix gates risky turns through an interactive `y/n/why` approval flow over a hardened sandbox. The Genetic Programming loop is closed: generate variants of persona prompts *and* routing / tool-chain / retry config, evaluate against held-out samples, evolve generations, and propose promotions that live-swap only after you approve them. Semantic recall (`sqlite-vec`) augments recency, a vault-link graph is queryable, and a polling watcher ingests your vault edits. Post-v0.1, Ubongo also drafts brand-new skills behind the same approval boundary (`/author`, `/skill-candidates`, and an autonomous authoring daemon) and profiles itself locally (`/profile`; [ADR-0014](docs/adr/0014-local-only-observability-profiler.md)). **915 tests green; ~14,500 LOC**; the full cumulative smoke passes end to end (last re-certified 2026-06-11, with the profiler armed).
 
 The v0.1 build ran across **22 phases in 6 tiers**, each on its own branch and smoke-tested before merge; the self-extension work added five more phases the same way. See [STATUS.md](STATUS.md) for the changelog, [STATE.md](STATE.md) for ground-truth state, and [UBONGO_BUILD.md](UBONGO_BUILD.md) for the v0.1 spec. Next is **v0.2 (Telegram)**, a new transport that is additive on the existing event/queue seams.
 
@@ -175,6 +176,26 @@ uv sync --extra web          # install Streamlit once
 only. Anyone who can reach the page can drive the agent. Do not port-forward it or
 expose it to the internet.
 
+### Service control + startup profiling
+
+For a long-running web deployment (e.g. the Pi):
+
+```bash
+./ubongo-ctl.sh start|stop|restart|status    # background the web UI (pidfile + log under data/)
+# or, for reboot survival on the Pi: deploy/ubongo-web.service (install steps in its comments)
+UBONGO_PROFILE=cpu ./start-ubongo.sh          # start a session with the profiler armed (cpu | mem | all)
+./start-ubongo.sh --profile mem               # same via flag; --profile off overrides the env
+```
+
+Deployment bundles are published automatically: merging a `VERSION` bump to
+`main` makes the release pipeline run the tests **and the automated smoke gate**
+(`scripts/smoke.sh`; plus a small live-model subset when an API-key secret is
+configured), build the bundle (`scripts/package.sh`), and publish a GitHub
+Release `v<VERSION>` with `install-ubongo.sh` + the zip attached. The release
+is created only when every gate is green. To deploy, download both assets on the
+target and run `./install-ubongo.sh`. (CI also builds the bundle on every PR as
+a workflow artifact.)
+
 ## Usage
 
 In REPL mode, type messages naturally. Ubongo classifies intent and tone, plans a workflow, runs the agents, gates the result through governance, composes a response in the chosen persona, and writes everything to memory.
@@ -220,6 +241,13 @@ Beyond tuning existing prompts/config, Ubongo can author brand-new skills behind
 - `/audit [category] [N]` — tail the unified governance + evolution + sync audit log
 - `/conflicts [resolve <id> <keep-mine|keep-theirs|merge>]` — review/resolve external vault-edit collisions
 
+### Diagnostics (local profiler)
+
+- `/profile [N]` — summary over the run history: turns, avg + p95 latency, tokens, slowest agent
+- `/profile agents|models|modes [N]` — breakdowns by agent / model / execution mode
+- `/profile cpu on|off|status` — arm cProfile around each turn (`.prof` under `data/profiles/` + a top-25 summary); also `ubongo send --profile`
+- `/profile mem [on|off|status]` — tracemalloc baseline on arm; bare `/profile mem` reports allocation growth since the baseline
+
 ### Skills
 
 - `/skill <name>` — pin a skill for the next turn (one-shot)
@@ -230,9 +258,6 @@ Beyond tuning existing prompts/config, Ubongo can author brand-new skills behind
 - `/reload` — hot-reload settings, `UBONGO.md`, personas, skills, and routing
 - `/exit` — exit the REPL
 
-Planned (later phases):
-
-- `/mode <workflow>` — force a specific execution mode (Phase 12 brings parallel / competitive / collaborative / debate / speculative)
 - `/recall` — what was recalled for the last turn (Phase 20: semantic recall + vault graph)
 - `/policy`, `/audit` — governance rules and unified audit log (Phases 14, 21)
 - `/optimize <target>`, `/evaluate <target>`, `/improvements`, `/evolution status|pause|resume|off` — GP loop control (Phases 16 through 19)
@@ -291,6 +316,7 @@ ubongo/
     llm.py
     config.py
     logging.py
+    profiling.py                   # local profiler: stats over run tables + opt-in cProfile/tracemalloc (v0.1.3)
     agents/
       base.py                      # Agent protocol; AgentInput / AgentResult / AgentDirectives
       llm_run.py                   # shared model-call envelope (run_agent_llm / call_model_or_none)
@@ -313,7 +339,7 @@ ubongo/
     manual/smoke_test.md           # cumulative end-to-end playbook
 ```
 
-The layout above is an early-v0.1 snapshot. Several sub-trees shown there as stubs are now fully built (the whole `evolution/` GP package, `governance/{risk,confidence,reversibility,approval}.py`, `memory/{embeddings,graph,vault_watch}.py`), and a post-v0.1 package was added: `src/ubongo/authoring/` — self-authored skills (Ubongo drafts new skills behind a human approval gate; [ADR-0013](docs/adr/0013-self-authored-skills-quarantine-and-approval.md)). For the current module map see [docs/architecture/](docs/architecture/) (the C4 diagrams) and [docs/system-architecture.md](docs/system-architecture.md); [UBONGO_BUILD.md](UBONGO_BUILD.md) remains the v0.1 build spec.
+The layout above is an early-v0.1 snapshot. Several sub-trees shown there as stubs are now fully built (the whole `evolution/` GP package, `governance/{risk,confidence,reversibility,approval}.py`, `memory/{embeddings,graph,vault_watch}.py`), and post-v0.1 additions landed: `src/ubongo/web/` (the optional Streamlit channel, v0.1.1), `src/ubongo/authoring/` — self-authored skills behind a human approval gate ([ADR-0013](docs/adr/0013-self-authored-skills-quarantine-and-approval.md), v0.1.2) — and `src/ubongo/profiling.py` plus `ubongo-ctl.sh`/`deploy/` — the local profiler and web service control ([ADR-0014](docs/adr/0014-local-only-observability-profiler.md), v0.1.3). For the current module map see [docs/architecture/](docs/architecture/) (the C4 diagrams) and [docs/system-architecture.md](docs/system-architecture.md); [UBONGO_BUILD.md](UBONGO_BUILD.md) remains the v0.1 build spec.
 
 ## Implementation Workflow
 
