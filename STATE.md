@@ -25,7 +25,7 @@ If STATE.md and the spec disagree, the code is the source of truth and STATE.md 
 - **Size:** ~14,700 LOC under `src/` (11,255 at v0.1 certification; deepening + web ~800;
   authoring ~1,285; profiler ~650; MCP channel ~235). Effectively at the ~15,000 soft target —
   the next layer should be v0.2, or something must shrink.
-- **Tests:** 928 pytest, green (874 + 41 profiler + 14 MCP). The spec's `tests/` layout listed ~16 files; the actual suite
+- **Tests:** 929 pytest, green (874 + 41 profiler + 14 MCP). The spec's `tests/` layout listed ~16 files; the actual suite
   is far broader (one test module per real module, plus REPL, live-swap, recovery, evaluation,
   sync, audit, and the six authoring suites).
 - **Stack matches spec:** Python 3.11+, LiteLLM over OpenRouter, stdlib SQLite, `sqlite-vec`,
