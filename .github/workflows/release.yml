@@ -18,6 +18,13 @@ on:
 permissions:
   contents: write
 
+# Two merges in quick succession each trigger a run; without serialization
+# both can see the VERSION as untagged and race to publish (observed
+# 2026-06-12: the loser fails with "release already exists"). Queue them.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 env:
   OPENROUTER_API_KEY: test-key
   # Used only to decide whether the live smoke subset can run (secrets are not
@@ -94,6 +101,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VER="${{ steps.ver.outputs.version }}"
+          # Belt and braces for the race above: a parallel run may have
+          # published while this one was testing. Skipping is success.
+          if gh release view "v$VER" >/dev/null 2>&1; then
+            echo "v$VER already published — nothing to do."
+            exit 0
+          fi
           gh release create "v$VER" \
             "dist/ubongo-v$VER.zip" \
             "dist/install-ubongo.sh" \
