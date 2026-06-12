@@ -13,7 +13,8 @@ from ubongo.agents import memory as _agents_memory  # noqa: E402
 from ubongo.classifier import Classification  # noqa: E402
 from ubongo.llm import CompletionResult, LLMError  # noqa: E402
 from ubongo.master import Context, MasterAgent, Workflow, WorkflowResult  # noqa: E402
-from ubongo.memory import store, vault  # noqa: E402
+from ubongo.memory import store
+from ubongo.memory import trace, vault  # noqa: E402
 
 
 def _completion(text: str = "ok") -> CompletionResult:
@@ -505,7 +506,7 @@ def test_handle_workflow_run_outcome_repaired_when_recovery_succeeded():
     def execute_with_repair_row(self, workflow, ctx, message, workflow_run_id=None):
         result = real_execute(self, workflow, ctx, message, workflow_run_id=workflow_run_id)
         if workflow_run_id is not None:
-            store.append_repair_run(
+            trace.append_repair_run(
                 workflow_run_id=workflow_run_id,
                 agent="architect", failure_kind="model_error",
                 original_error="persona_llm_error",

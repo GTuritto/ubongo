@@ -7,6 +7,7 @@ import pytest
 
 from ubongo import repl
 from ubongo.memory import store
+from ubongo.memory import trace
 
 _REQUEST = {
     "decision_id": 7,
@@ -54,7 +55,7 @@ def test_prompt_approval_why_is_case_insensitive(capsys):
     assert _REQUEST["why"] in capsys.readouterr().out
 
 
-# --- store.update_governance_decision ---
+# --- trace.update_governance_decision ---
 
 
 @pytest.fixture(autouse=True)
@@ -68,12 +69,12 @@ def _isolated_db(tmp_path: Path):
 def _seed_governance_row() -> int:
     cid = store.start_conversation("casual")
     msg_id = store.append_message(cid, "user", "x", persona="casual")
-    wf_id = store.append_workflow_run(
+    wf_id = trace.append_workflow_run(
         conversation_id=cid, message_id=msg_id,
         classification={"intent": "other"}, workflow={"persona": "casual"},
         execution_mode="sequential", outcome="success", started_at=store.now_iso(),
     )
-    return store.append_governance_decision(
+    return trace.append_governance_decision(
         workflow_run_id=wf_id, intent="other", risk="destructive",
         confidence=1.0, reversibility="reversible", action="require_approval",
     )
@@ -86,7 +87,7 @@ def test_update_governance_decision_persists_approval_response():
     ).fetchone()[0]
     assert before is None
 
-    store.update_governance_decision(decision_id, "y")
+    trace.update_governance_decision(decision_id, "y")
     after = store.connection().execute(
         "SELECT approval_response FROM governance_decisions WHERE id = ?", (decision_id,)
     ).fetchone()[0]
@@ -95,7 +96,7 @@ def test_update_governance_decision_persists_approval_response():
 
 def test_update_governance_decision_can_record_decline():
     decision_id = _seed_governance_row()
-    store.update_governance_decision(decision_id, "n")
+    trace.update_governance_decision(decision_id, "n")
     row = store.connection().execute(
         "SELECT approval_response FROM governance_decisions WHERE id = ?", (decision_id,)
     ).fetchone()

@@ -10,7 +10,8 @@ os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 from ubongo import context, events, skills  # noqa: E402
 from ubongo.agents.base import AgentInput, AgentResult  # noqa: E402
 from ubongo.master import Context, Workflow  # noqa: E402
-from ubongo.memory import store, vault  # noqa: E402
+from ubongo.memory import store
+from ubongo.memory import trace, vault  # noqa: E402
 from ubongo.agents.repair import RepairAgent  # noqa: E402
 from ubongo.runner import WorkflowRunner  # noqa: E402
 
@@ -69,7 +70,7 @@ def _wf(agents: tuple[str, ...]) -> Workflow:
 def _seed_workflow_run() -> int:
     conv_id = store.current_or_new_conversation("architect")
     msg_id = store.append_message(conv_id, "user", "hi", persona="architect")
-    return store.append_workflow_run(
+    return trace.append_workflow_run(
         conversation_id=conv_id,
         message_id=msg_id,
         classification={"intent": "technical"},
@@ -579,7 +580,7 @@ def test_repair_runs_persisted_on_successful_recovery():
     runner = WorkflowRunner({"critic": critic, "architect": peer, "repair": repair})
     wf_run_id = _seed_workflow_run()
     runner.execute(_wf(("critic",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
-    rows = store.repair_runs_for_workflow(wf_run_id)
+    rows = trace.repair_runs_for_workflow(wf_run_id)
     assert len(rows) == 1
     assert rows[0]["agent"] == "critic"
     assert rows[0]["failure_kind"] == "precondition_missing"
@@ -597,7 +598,7 @@ def test_repair_runs_persisted_with_abort_on_ladder_exhausted():
     runner = WorkflowRunner({"architect": agent, "repair": repair})
     wf_run_id = _seed_workflow_run()
     runner.execute(_wf(("architect",)), _ctx(1), "hi", workflow_run_id=wf_run_id)
-    rows = store.repair_runs_for_workflow(wf_run_id)
+    rows = trace.repair_runs_for_workflow(wf_run_id)
     assert len(rows) == 1
     assert rows[0]["strategy_attempted"] == "abort"
     assert rows[0]["outcome"] == "aborted"
@@ -1030,7 +1031,7 @@ def test_competitive_peer_replaces_failed_candidate():
     seen = [(r["agent"], r["outcome"], r["retried"]) for r in rows]
     assert ("coding", "failure", 0) in seen
     assert ("architect", "success", 1) in seen  # ran as coding's peer
-    repair_rows = store.repair_runs_for_workflow(wf_run_id)
+    repair_rows = trace.repair_runs_for_workflow(wf_run_id)
     assert len(repair_rows) == 1
     assert repair_rows[0]["strategy_attempted"] == "replace_with_peer"
     assert repair_rows[0]["peer_agent"] == "architect"
@@ -1061,7 +1062,7 @@ def test_competitive_unrecoverable_candidate_not_replaced():
     assert result.text == "architect text"
     # Only the survivor competed; no peer was dispatched.
     assert [n for n, _ in evaluator.calls[0]["candidates"]] == ["architect"]
-    assert store.repair_runs_for_workflow(wf_run_id) == []
+    assert trace.repair_runs_for_workflow(wf_run_id) == []
 
 
 # --- Phase 12c: Collaborative mode ---
@@ -1256,7 +1257,7 @@ def test_debate_peer_replaces_failed_debater():
     assert any("casual rescued the debate" in pf for pf in synth_prior)
     assert len(operator.calls) == 1   # failed once
     assert len(casual.calls) == 1     # ran once as operator's peer
-    repair_rows = store.repair_runs_for_workflow(wf_run_id)
+    repair_rows = trace.repair_runs_for_workflow(wf_run_id)
     assert len(repair_rows) == 1
     assert repair_rows[0]["strategy_attempted"] == "replace_with_peer"
     assert repair_rows[0]["peer_agent"] == "casual"
@@ -1399,7 +1400,7 @@ def test_speculative_peer_replaces_failed_leader():
     )
     assert result.ok is True
     assert result.text == "architect rescued the leader"
-    repair_rows = store.repair_runs_for_workflow(wf_run_id)
+    repair_rows = trace.repair_runs_for_workflow(wf_run_id)
     assert len(repair_rows) == 1
     assert repair_rows[0]["strategy_attempted"] == "replace_with_peer"
     assert repair_rows[0]["peer_agent"] == "architect"
@@ -1429,7 +1430,7 @@ def test_speculative_non_leader_failure_not_replaced():
     assert result.ok is True
     assert result.text == "quick answer"
     assert repair.calls == []  # Repair never consulted; leader succeeded
-    assert store.repair_runs_for_workflow(wf_run_id) == []
+    assert trace.repair_runs_for_workflow(wf_run_id) == []
 
 
 def test_speculative_unrecoverable_leader_falls_back_to_strong():
@@ -1448,7 +1449,7 @@ def test_speculative_unrecoverable_leader_falls_back_to_strong():
     )
     assert result.ok is True
     assert result.text == "thorough answer"
-    assert store.repair_runs_for_workflow(wf_run_id) == []
+    assert trace.repair_runs_for_workflow(wf_run_id) == []
 
 
 def test_collaborative_runs_trailing_evaluator_sequentially_after_merge():

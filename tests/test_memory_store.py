@@ -7,7 +7,8 @@ import pytest
 
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
-from ubongo.memory import store  # noqa: E402
+from ubongo.memory import store
+from ubongo.memory import trace  # noqa: E402
 
 
 @pytest.fixture
@@ -215,7 +216,7 @@ def test_current_or_new_conversation_starts_new_after_timeout(db, monkeypatch) -
 def test_workflow_run_and_governance_decision_round_trip(db) -> None:
     cid = store.start_conversation("architect")
     msg_id = store.append_message(cid, "user", "design a circuit breaker", persona="architect")
-    wf_id = store.append_workflow_run(
+    wf_id = trace.append_workflow_run(
         conversation_id=cid,
         message_id=msg_id,
         classification={"intent": "technical", "confidence": 0.9},
@@ -226,7 +227,7 @@ def test_workflow_run_and_governance_decision_round_trip(db) -> None:
         ended_at=store.now_iso(),
     )
     assert isinstance(wf_id, int)
-    gd_id = store.append_governance_decision(
+    gd_id = trace.append_governance_decision(
         workflow_run_id=wf_id,
         intent="technical",
         risk="low",
@@ -236,7 +237,7 @@ def test_workflow_run_and_governance_decision_round_trip(db) -> None:
     )
     assert isinstance(gd_id, int)
 
-    decisions = store.last_n_governance_decisions(10)
+    decisions = trace.last_n_governance_decisions(10)
     assert len(decisions) == 1
     d = decisions[0]
     assert d["id"] == gd_id
@@ -252,7 +253,7 @@ def test_last_n_governance_decisions_returns_newest_first(db) -> None:
     msg_id = store.append_message(cid, "user", "x")
     ids = []
     for _ in range(3):
-        wf_id = store.append_workflow_run(
+        wf_id = trace.append_workflow_run(
             conversation_id=cid,
             message_id=msg_id,
             classification={"intent": "casual"},
@@ -261,7 +262,7 @@ def test_last_n_governance_decisions_returns_newest_first(db) -> None:
             outcome="success",
             started_at=store.now_iso(),
         )
-        gd_id = store.append_governance_decision(
+        gd_id = trace.append_governance_decision(
             workflow_run_id=wf_id,
             intent="casual",
             risk="low",
@@ -270,12 +271,12 @@ def test_last_n_governance_decisions_returns_newest_first(db) -> None:
             action="auto",
         )
         ids.append(gd_id)
-    out = store.last_n_governance_decisions(2)
+    out = trace.last_n_governance_decisions(2)
     assert [d["id"] for d in out] == [ids[2], ids[1]]
 
 
 def test_last_n_governance_decisions_empty(db) -> None:
-    assert store.last_n_governance_decisions(10) == []
+    assert trace.last_n_governance_decisions(10) == []
 
 
 # --- Phase 13e: repair_runs ---
@@ -284,7 +285,7 @@ def test_last_n_governance_decisions_empty(db) -> None:
 def _seed_workflow(db) -> int:
     cid = store.start_conversation("architect")
     msg_id = store.append_message(cid, "user", "trigger", persona="architect")
-    return store.append_workflow_run(
+    return trace.append_workflow_run(
         conversation_id=cid,
         message_id=msg_id,
         classification={"intent": "technical"},
@@ -297,7 +298,7 @@ def _seed_workflow(db) -> int:
 
 def test_append_repair_run_round_trips(db) -> None:
     wf_id = _seed_workflow(db)
-    rr_id = store.append_repair_run(
+    rr_id = trace.append_repair_run(
         workflow_run_id=wf_id,
         agent="evaluator",
         failure_kind="parse_error",
@@ -312,7 +313,7 @@ def test_append_repair_run_round_trips(db) -> None:
     )
     assert isinstance(rr_id, int)
 
-    rows = store.repair_runs_for_workflow(wf_id)
+    rows = trace.repair_runs_for_workflow(wf_id)
     assert len(rows) == 1
     assert rows[0]["id"] == rr_id
     assert rows[0]["failure_kind"] == "parse_error"
@@ -327,7 +328,7 @@ def test_repair_runs_for_workflow_orders_by_id(db) -> None:
         "retry_different_model_same_prompt",
         "replace_with_peer",
     ]):
-        store.append_repair_run(
+        trace.append_repair_run(
             workflow_run_id=wf_id,
             agent="evaluator",
             failure_kind="parse_error",
@@ -340,13 +341,13 @@ def test_repair_runs_for_workflow_orders_by_id(db) -> None:
             started_at=store.now_iso(),
             ended_at=store.now_iso(),
         )
-    rows = store.repair_runs_for_workflow(wf_id)
+    rows = trace.repair_runs_for_workflow(wf_id)
     assert [r["attempt_index"] for r in rows] == [0, 1, 2]
     assert rows[2]["peer_agent"] == "research"
 
 
 def _seed_agent_run(wf_id: int, agent: str, outcome: str) -> int:
-    return store.append_agent_run(
+    return trace.append_agent_run(
         wf_id,
         agent=agent,
         model="m",
@@ -368,7 +369,7 @@ def test_last_n_workflow_runs_attaches_repair_to_failing_agent(db) -> None:
     wf_id = _seed_workflow(db)
     _seed_agent_run(wf_id, "critic", "failure")
     _seed_agent_run(wf_id, "architect", "success")  # the peer that replaced it
-    store.append_repair_run(
+    trace.append_repair_run(
         workflow_run_id=wf_id,
         agent="critic",
         failure_kind="precondition_missing",
@@ -381,7 +382,7 @@ def test_last_n_workflow_runs_attaches_repair_to_failing_agent(db) -> None:
         started_at=store.now_iso(),
         ended_at=store.now_iso(),
     )
-    rows = store.last_n_workflow_runs(1)
+    rows = trace.last_n_workflow_runs(1)
     assert len(rows) == 1
     by_agent = {ar.agent: ar for ar in rows[0].agent_runs}
     # Repair attached to the failing critic row...

@@ -11,6 +11,7 @@ from ubongo.context import build_system_prompt
 from ubongo.delivery import queue
 from ubongo.llm import LLMError, complete
 from ubongo.memory import store
+from ubongo.memory import trace
 from ubongo.authoring import commands as authoring_commands
 from ubongo.evolution import commands as evolution_commands
 from ubongo.memory import commands as memory_commands
@@ -206,7 +207,7 @@ def _render_policy() -> str:
 
 
 def _render_decisions_table(n: int = 10) -> str:
-    rows = store.last_n_governance_decisions(n)
+    rows = trace.last_n_governance_decisions(n)
     if not rows:
         return "No decisions yet."
     lines = [f"Recent decisions (last {n}):"]
@@ -308,7 +309,7 @@ def _render_exec(cmd: str) -> str:
 
 
 def _render_trace(n: int = 1) -> str:
-    traces = store.last_n_workflow_runs(n)
+    traces = trace.last_n_workflow_runs(n)
     if not traces:
         return "No traces yet."
     blocks: list[str] = [f"Recent traces (last {n}):"]
@@ -862,7 +863,7 @@ def _repl_loop(persona, auto_mode, pending_skill, pending_workflow,
         # Phase 15: when governance held the turn for approval, prompt y/n/why.
         if response.approval is not None:
             choice = _prompt_approval(response.approval)
-            store.update_governance_decision(response.approval["decision_id"], choice)
+            trace.update_governance_decision(response.approval["decision_id"], choice)
             if choice == "y":
                 approved_response, _ = channel.run_turn(
                     stripped, state.persona, auto_mode=state.auto_mode,

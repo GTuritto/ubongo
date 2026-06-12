@@ -25,6 +25,7 @@ from ubongo.governance import approval as governance_approval
 from ubongo.delivery import queue
 from ubongo.governance.decision import Action, Decision, decide as governance_decide
 from ubongo.memory import store
+from ubongo.memory import trace
 from ubongo.memory.write_buffer import workflow_buffer
 
 logger = logging.getLogger("ubongo.master")
@@ -151,7 +152,7 @@ class MasterAgent:
         if workflow_run_id is None:
             return None
         try:
-            repairs = store.repair_runs_for_workflow(workflow_run_id)
+            repairs = trace.repair_runs_for_workflow(workflow_run_id)
         except Exception:
             return None
         if not repairs:
@@ -335,7 +336,7 @@ class MasterAgent:
 
         # Phase 9e: INSERT workflow_runs with outcome='in_progress' before the
         # runner so it can FK-link agent_runs immediately. Patch outcome after.
-        workflow_run_id = store.append_workflow_run(
+        workflow_run_id = trace.append_workflow_run(
             conversation_id=conv_id,
             message_id=user_msg_id,
             classification=asdict(classification),
@@ -466,7 +467,7 @@ class MasterAgent:
             committed = buf.commit()
             assistant_msg_id = committed[0] if committed else None
             mem_elapsed_ms = int((time.monotonic() - mem_t0) * 1000)
-            store.append_agent_run(
+            trace.append_agent_run(
                 workflow_run_id=workflow_run_id,
                 agent="memory",
                 model=None,
@@ -500,13 +501,13 @@ class MasterAgent:
         repair_outcome = "success" if result.ok else "failure"
         if result.ok:
             try:
-                repairs = store.repair_runs_for_workflow(workflow_run_id)
+                repairs = trace.repair_runs_for_workflow(workflow_run_id)
                 if any(r["outcome"] == "recovered" for r in repairs):
                     repair_outcome = "repaired"
             except Exception:
                 # Defensive: don't let trace bookkeeping fail the turn.
                 pass
-        store.update_workflow_run_outcome(
+        trace.update_workflow_run_outcome(
             workflow_run_id,
             outcome=repair_outcome,
             ended_at=ts_now,
@@ -522,7 +523,7 @@ class MasterAgent:
             if result.evaluator_confidence is not None
             else classification.confidence
         )
-        decision_id = store.append_governance_decision(
+        decision_id = trace.append_governance_decision(
             workflow_run_id=workflow_run_id,
             intent=classification.intent,
             risk=decision.risk or classification.risk,
