@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/ubongo_plush_brain_bongos_pinegreen.svg" alt="Ubongo logo: a happy pink brain playing the bongos" width="360">
+  <img src="docs/Ubongo.png" alt="Ubongo logo: an armored brain with a terminal-prompt face and a governance shield" width="360">
 </p>
 
 # Ubongo
