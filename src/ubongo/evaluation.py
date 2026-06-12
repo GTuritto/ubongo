@@ -1,15 +1,12 @@
-"""Evaluation-common helpers shared by the two side-effect-free sandboxes
-(v0.5 phase 02, candidate 3 of the 2026-06-12 architecture review).
+"""Evaluation-common helpers shared by the two side-effect-free sandboxes.
 
-`evolution/sandbox.py` (cohort fitness over held-out samples) and
-`authoring/sandbox.py` (single-candidate quality over generated probes) are
-genuinely different evaluators and stay separate; what they shared by
-duplication — the LLM-judge plumbing — lives here once: the call budget, the
-tolerant judgment-JSON parsing (judges sometimes wrap the JSON in prose or a
-code fence despite the rubric), and the unified-diff preview both approval
-surfaces render. Distinct from `agents/evaluator.py`, whose judgment shape
-(confidence/issues) belongs to the Evaluator worker, not the sandboxes.
-"""
+evolution/sandbox.py (cohort fitness over held-out samples) and
+authoring/sandbox.py (single-candidate quality over generated probes) stay
+separate evaluators; the LLM-judge plumbing they share lives here once: the
+call budget, the tolerant judgment-JSON parsing (judges sometimes wrap the
+JSON in prose or a code fence despite the rubric), and the unified-diff
+preview both approval surfaces render. Distinct from agents/evaluator.py,
+whose judgment shape (confidence/issues) belongs to the Evaluator worker."""
 
 from __future__ import annotations
 

@@ -111,10 +111,6 @@ class WorkflowTrace:
     def cls_confidence(self):
         return self.classification.get("confidence")
 
-# --- persistence: the four trace tables (moved from store.py, v0.5 phase 02) ---
-# The builders join workflow_runs + agent_runs + governance_decisions +
-# repair_runs into the views above. Connection/bootstrap stay in store.
-
 from ubongo.memory.store import connection, now_iso  # noqa: E402
 
 def append_workflow_run(

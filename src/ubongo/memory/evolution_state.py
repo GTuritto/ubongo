@@ -1,11 +1,8 @@
-"""Evolution state — the GP layer's tables (moved from store.py, v0.5 phase 02).
-
-Owns evolution_lineage, evolution_evaluations, evolution_runs, evolution_state,
-pending_promotions, and active_evolutions. Pure CRUD over store.connection();
-the loop/selection/promotion logic lives in ubongo.evolution.*, and the live-swap
-read paths (context.build_system_prompt, router.route_workflow) consult
-active_evolution() here. Connection/bootstrap stay in store (single DB, ADR-0002).
-"""
+"""Evolution state: evolution_lineage / _evaluations / _runs / _state,
+pending_promotions, active_evolutions. Pure CRUD over store.connection();
+loop/selection/promotion logic lives in ubongo.evolution.*; the live-swap read
+paths (context.build_system_prompt, router.route_workflow) consult
+active_evolution() here."""
 
 from __future__ import annotations
 

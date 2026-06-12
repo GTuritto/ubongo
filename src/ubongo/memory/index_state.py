@@ -1,12 +1,8 @@
-"""Index state — projection/idempotency metadata for the memory indexers
-(moved from store.py, v0.5 phase 02).
-
-Owns embedding_meta (the text-hash sidecar that keeps re-embedding idempotent),
-vault_links (the [[wikilink]] graph rows), and vault_state / vault_conflicts
-(the watcher's echo-suppression hashes and conflict queue). Pure CRUD over
-store.connection(); the indexers themselves live in memory/embeddings.py,
-memory/graph.py, memory/vault.py and memory/vault_watch.py.
-"""
+"""Index state: embedding_meta (the text-hash sidecar that keeps re-embedding
+idempotent), vault_links (the [[wikilink]] graph rows), and vault_state /
+vault_conflicts (the watcher's echo-suppression hashes and conflict queue).
+Pure CRUD over store.connection(); the indexers themselves live in
+embeddings.py, graph.py, vault.py and vault_watch.py."""
 
 from __future__ import annotations
 

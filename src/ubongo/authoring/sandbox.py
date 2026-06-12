@@ -4,7 +4,7 @@ This is NOT the shell sandbox (`ubongo.sandbox`) nor the GP harness
 (`ubongo.evolution.sandbox`) — it is the authoring equivalent: it scores ONE
 drafted candidate so the approval gate has a quality number, and it writes
 nothing durable (no skills registered, no DB rows; the caller persists the
-`quality` it returns). It reuses `evolution.sandbox.CallBudget` so the budget
+`quality` it returns). It reuses `ubongo.evaluation.CallBudget` so the budget
 discipline is identical.
 
 For a candidate it:

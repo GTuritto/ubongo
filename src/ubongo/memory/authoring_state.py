@@ -1,9 +1,7 @@
-"""Authoring state — the self-extension tables (moved from store.py, v0.5 phase 02).
-
-Owns authored_skills (the quarantine ledger) and authoring_runs / authoring_state
-(the daemon's budget and control rows). Pure CRUD over store.connection(); the
-drafting/validation/promotion logic lives in ubongo.authoring.* (ADR-0013).
-"""
+"""Authoring state: authored_skills (the quarantine ledger) and authoring_runs /
+authoring_state (the daemon's budget and control rows). Pure CRUD over
+store.connection(); drafting/validation/promotion logic lives in
+ubongo.authoring.* (ADR-0013)."""
 
 from __future__ import annotations
 
