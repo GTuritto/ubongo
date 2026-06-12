@@ -1,0 +1,34 @@
+# Ubongo web UI — Podman Quadlet (rootless, runs as the dedicated `ubongo` user).
+#
+# Install (as the ubongo user; full recipe in deploy/envelope/INSTALL.md):
+#   mkdir -p ~/.config/containers/systemd
+#   cp deploy/envelope/ubongo-web.container ~/.config/containers/systemd/
+#   systemctl --user daemon-reload && systemctl --user start ubongo-web
+#
+# Replaces deploy/ubongo-web.service on enveloped hosts — do not run both.
+# .env is mounted READ-ONLY; data/ and vault/ are the only writable mounts.
+
+[Unit]
+Description=Ubongo web UI (Streamlit, enveloped — home-LAN only)
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=localhost/ubongo:latest
+ContainerName=ubongo-web
+# EDIT %h paths if the repo lives elsewhere than ~/ubongo on the host.
+Volume=%h/ubongo/.env:/app/.env:ro,Z
+Volume=%h/ubongo/data:/app/data:Z
+Volume=%h/ubongo/vault:/app/vault:Z
+PublishPort=8501:8501
+Environment=UBONGO_WEB_PORT=8501
+# Keep the host UID inside the container so files in data/ and vault/ stay
+# owned by the ubongo user (and the nftables skuid match holds for all I/O).
+UserNS=keep-id
+
+[Service]
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

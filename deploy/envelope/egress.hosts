@@ -1,0 +1,9 @@
+# /etc/ubongo/egress.hosts — the enumerable answer to "what can leave the
+# machine" (ADR-0017). One hostname per line. refresh-egress.sh resolves
+# these into the nftables allowlist on a 15-minute timer.
+#
+# Add each MCP server's host here when you enable it in settings.yaml —
+# deliberately and visibly, in the same change. Loopback never needs a line.
+
+# Every model and embedding call (LiteLLM → OpenRouter):
+openrouter.ai

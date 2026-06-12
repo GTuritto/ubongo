@@ -1,0 +1,30 @@
+# Ubongo MCP server — Podman Quadlet (rootless, runs as the dedicated `ubongo` user).
+#
+# Same install recipe as ubongo-web.container (see deploy/envelope/INSTALL.md).
+# Replaces deploy/ubongo-mcp.service on enveloped hosts — do not run both.
+# Streamable HTTP, no auth — home LAN only (ADR-0015); the envelope bounds
+# what the process can reach OUT to, not who can reach IN (SECURITY.md).
+
+[Unit]
+Description=Ubongo MCP server (streamable HTTP, enveloped — home-LAN only)
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=localhost/ubongo:latest
+ContainerName=ubongo-mcp
+# EDIT %h paths if the repo lives elsewhere than ~/ubongo on the host.
+Volume=%h/ubongo/.env:/app/.env:ro,Z
+Volume=%h/ubongo/data:/app/data:Z
+Volume=%h/ubongo/vault:/app/vault:Z
+PublishPort=8765:8765
+Environment=UBONGO_MCP_PORT=8765 UBONGO_MCP_ADDR=0.0.0.0
+Exec=/app/start-ubongo-mcp.sh
+UserNS=keep-id
+
+[Service]
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
