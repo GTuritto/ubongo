@@ -10,6 +10,7 @@ os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo.agents import personas  # noqa: E402
 from ubongo.evolution import sandbox  # noqa: E402
+from ubongo.memory import evolution_state
 from ubongo.memory import store  # noqa: E402
 from ubongo.repl import (  # noqa: E402
     _HELP_COMMANDS,
@@ -51,7 +52,7 @@ def fake_llm(monkeypatch):
 
 def _seed_generation(target: str, n: int, strategy: str = "paraphrase") -> None:
     for i in range(n):
-        store.append_lineage_variant(
+        evolution_state.append_lineage_variant(
             target=target, parent_id=None, generation=1,
             variant_text=f"variant {i} body", variant_metadata={"strategy": strategy},
         )
@@ -96,7 +97,7 @@ def test_evaluate_produces_leaderboard_and_persists(db, fake_llm) -> None:
     out = _render_evaluate("persona:architect")
     assert "Leaderboard for persona:architect" in out
     assert "fitness=" in out
-    rows = store.evaluations_for_target("persona:architect")
+    rows = evolution_state.evaluations_for_target("persona:architect")
     assert len(rows) == 3  # one evaluation row per variant
     # Leaderboard order matches fitness desc.
     fits = [r["fitness"] for r in rows]
@@ -114,7 +115,7 @@ def test_evaluate_budget_partial_results(db, fake_llm, monkeypatch):
     out = _render_evaluate("persona:architect")
     # 10 calls / (5 samples * 2) = exactly 1 variant scored, 2 skipped.
     assert "skipped" in out
-    rows = store.evaluations_for_target("persona:architect")
+    rows = evolution_state.evaluations_for_target("persona:architect")
     assert 1 <= len(rows) < 3
 
 

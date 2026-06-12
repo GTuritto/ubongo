@@ -9,6 +9,7 @@ os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo.agents import personas  # noqa: E402
 from ubongo.evolution import selection  # noqa: E402
+from ubongo.memory import evolution_state
 from ubongo.memory import store  # noqa: E402
 
 
@@ -22,8 +23,8 @@ def db(tmp_path: Path):
 
 
 def _run(target: str, gen: int, ended_at: str) -> None:
-    rid = store.start_evolution_run(target=target, generation=gen)
-    store.finish_evolution_run(rid, calls_spent=10, outcome="completed", ended_at=ended_at)
+    rid = evolution_state.start_evolution_run(target=target, generation=gen)
+    evolution_state.finish_evolution_run(rid, calls_spent=10, outcome="completed", ended_at=ended_at)
 
 
 def test_next_target_no_runs_is_registry_order(db) -> None:
@@ -51,11 +52,11 @@ def test_next_target_oldest_among_all_run(db, monkeypatch) -> None:
 def test_survivors_top_k_by_fitness(db) -> None:
     ids = []
     for i, fit in enumerate([0.5, 0.9, 0.7]):
-        lid = store.append_lineage_variant(
+        lid = evolution_state.append_lineage_variant(
             target="persona:casual", parent_id=None, generation=1,
             variant_text=f"v{i}", variant_metadata={"strategy": "paraphrase"},
         )
-        store.append_evaluation(
+        evolution_state.append_evaluation(
             lineage_id=lid, sample_set="s", success_rate=fit, cost=1, latency_ms=1,
             hallucination_rate=0, user_correction_rate=0, fitness=fit,
         )
@@ -67,7 +68,7 @@ def test_survivors_top_k_by_fitness(db) -> None:
 
 
 def test_survivors_empty_when_unevaluated(db) -> None:
-    store.append_lineage_variant(
+    evolution_state.append_lineage_variant(
         target="persona:casual", parent_id=None, generation=1,
         variant_text="v", variant_metadata={"strategy": "paraphrase"},
     )

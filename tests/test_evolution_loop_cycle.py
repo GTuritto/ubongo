@@ -12,6 +12,7 @@ from ubongo import events  # noqa: E402
 from ubongo.agents import personas  # noqa: E402
 from ubongo.evolution import generator, loop, sandbox, selection, targets  # noqa: E402
 from ubongo.evolution.sandbox import CallBudget  # noqa: E402
+from ubongo.memory import evolution_state
 from ubongo.memory import store  # noqa: E402
 
 
@@ -46,10 +47,10 @@ def test_cycle1_generates_from_base(db) -> None:
     assert r.action == "generated"
     assert r.generation == 1
     assert r.evaluated > 0
-    rows = store.lineage_for_target(r.target, generation=1)
+    rows = evolution_state.lineage_for_target(r.target, generation=1)
     assert rows and all(row["parent_id"] is None for row in rows)
     # an evolution_runs row was recorded
-    assert store.evolution_runs_recent(1)[0]["outcome"] in ("completed", "partial")
+    assert evolution_state.evolution_runs_recent(1)[0]["outcome"] in ("completed", "partial")
 
 
 def test_cycle_round_robins_targets(db, monkeypatch) -> None:
@@ -69,7 +70,7 @@ def test_cycle2_seeds_from_survivor(db, monkeypatch) -> None:
     loop.run_one_cycle(budget=CallBudget(200))
     r2 = loop.run_one_cycle(budget=CallBudget(200))
     assert r2.generation == 2
-    gen2 = store.lineage_for_target("persona:architect", generation=2)
+    gen2 = evolution_state.lineage_for_target("persona:architect", generation=2)
     parents = {row["parent_id"] for row in gen2}
     assert parents and None not in parents  # cross-generation lineage
 
@@ -99,7 +100,7 @@ def test_idle_when_no_targets(db, monkeypatch) -> None:
 def test_cycle_proposes_promotion_when_champion_beats_baseline(db, monkeypatch) -> None:
     # Phase 19: a generated+evaluated cohort enqueues a pending promotion (the
     # first generation beats the 0.0 baseline by the margin).
-    from ubongo.memory import store as _store
+    from ubongo.memory import evolution_state as _store
     monkeypatch.setattr(selection, "next_target", lambda: "persona:architect")
     loop.run_one_cycle(budget=CallBudget(200))
     assert len(_store.open_pending_promotions()) >= 1

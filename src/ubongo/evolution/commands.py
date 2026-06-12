@@ -96,7 +96,7 @@ def _parse_evaluate_command(line: str) -> str | None:
 def _render_evaluate_targets() -> str:
     """Phase 17e: list targets that have at least one generated variant."""
     from ubongo.evolution import targets as _targets
-    from ubongo.memory import store as _store
+    from ubongo.memory import evolution_state as _store
 
     names = [t for t in _targets.evolvable_targets() if _store.max_lineage_generation(t) > 0]
     if not names:
@@ -170,7 +170,7 @@ def _render_evolution_status() -> str:
     """Phase 18d: render loop control state + per-target progress + throttle."""
     from ubongo.config import load_evolution
     from ubongo.evolution import targets as _targets
-    from ubongo.memory import store as _store
+    from ubongo.memory import evolution_state as _store
 
     evo = load_evolution()
     enabled = bool(evo.get("enabled", False))
@@ -210,7 +210,7 @@ def _render_evolution_control(sub: str) -> str:
     """Phase 18e: apply pause/resume/off and report. resume warns if the loop
     is disabled in settings (the thread never started)."""
     from ubongo.config import load_evolution
-    from ubongo.memory import store as _store
+    from ubongo.memory import evolution_state as _store
 
     if sub == "resume":
         _store.set_evolution_status("running")
@@ -267,7 +267,7 @@ def _diff_preview(base: str, variant: str, *, context: int = 2) -> list[str]:
 def _render_improvements_list() -> str:
     """Phase 19e: list open pending promotions with fitness delta + a diff."""
     from ubongo.evolution import promotion, targets
-    from ubongo.memory import store as _store
+    from ubongo.memory import evolution_state as _store
 
     pending = _store.open_pending_promotions()
     if not pending:

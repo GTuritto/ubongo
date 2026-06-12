@@ -57,11 +57,12 @@ _toolchain_override: dict[str, list] | None = None
 
 def _promoted_config(target: str) -> Any | None:
     """Parsed promoted config for a target, or None (unpromoted / no DB)."""
+    from ubongo.memory import evolution_state
     from ubongo.memory import store
 
     if not store.is_connected():
         return None
-    active = store.active_evolution(target)
+    active = evolution_state.active_evolution(target)
     if not active:
         return None
     try:

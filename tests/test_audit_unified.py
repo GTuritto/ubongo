@@ -9,6 +9,7 @@ os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo.agents import personas  # noqa: E402
 from ubongo.evolution import promotion  # noqa: E402
+from ubongo.memory import evolution_state
 from ubongo.memory import store, vault  # noqa: E402
 
 
@@ -47,11 +48,11 @@ def test_tail_limit(db) -> None:
 
 def test_phase19_append_audit_redirects_to_unified(db) -> None:
     # the back-compat shim routes evolution promotion rows into audit.md
-    lid = store.append_lineage_variant(
+    lid = evolution_state.append_lineage_variant(
         target="persona:casual", parent_id=None, generation=1,
         variant_text="body", variant_metadata={"strategy": "prune"},
     )
-    store.append_evaluation(lineage_id=lid, sample_set="s", success_rate=0.9, cost=1,
+    evolution_state.append_evaluation(lineage_id=lid, sample_set="s", success_rate=0.9, cost=1,
                             latency_ms=1, hallucination_rate=0, user_correction_rate=0, fitness=0.9)
     pid = promotion.propose_if_better("persona:casual", 1)
     promotion.approve(pid)

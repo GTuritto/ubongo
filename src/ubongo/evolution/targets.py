@@ -24,6 +24,7 @@ from typing import Any
 import yaml
 
 from ubongo.agents import personas
+from ubongo.memory import evolution_state
 from ubongo.memory import store
 
 PROMPT = "prompt"
@@ -139,9 +140,9 @@ def resolve_base(target: str) -> str:
     """The base text the generator mutates from: the promoted active variant
     when one exists, else the live base (persona body or serialized config)."""
     _require(target)
-    active_id = store.active_lineage_id(target)
+    active_id = evolution_state.active_lineage_id(target)
     if active_id is not None:
-        row = store.lineage_row(active_id)
+        row = evolution_state.lineage_row(active_id)
         if row is not None:
             return row["variant_text"]
     if target_kind(target) == PROMPT:

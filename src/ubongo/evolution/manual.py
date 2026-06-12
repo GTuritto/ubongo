@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from ubongo.config import load_evolution
 from ubongo.evolution import generator, lineage, loop, sandbox
 from ubongo.evolution.targets import UnknownTargetError, is_target
+from ubongo.memory import evolution_state
 from ubongo.memory import store
 
 
@@ -73,11 +74,11 @@ def score_latest_generation(target: str) -> CohortOutcome:
     """
     if not is_target(target):
         raise UnknownTargetError(target)
-    generation = store.max_lineage_generation(target)
+    generation = evolution_state.max_lineage_generation(target)
     if generation == 0:
         raise NoVariantsError(target)
 
-    variant_rows = store.lineage_for_target(target, generation=generation)
+    variant_rows = evolution_state.lineage_for_target(target, generation=generation)
     strategy_by_id = {
         r["id"]: (r["variant_metadata"] or {}).get("strategy") for r in variant_rows
     }

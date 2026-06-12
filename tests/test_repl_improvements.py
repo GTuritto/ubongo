@@ -9,6 +9,7 @@ os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo.agents import personas  # noqa: E402
 from ubongo.evolution import promotion  # noqa: E402
+from ubongo.memory import evolution_state
 from ubongo.memory import store, vault  # noqa: E402
 from ubongo.repl import (  # noqa: E402
     _HELP_COMMANDS,
@@ -30,11 +31,11 @@ def db(tmp_path: Path):
 
 
 def _seed_and_propose(target="persona:casual", fit=0.9) -> int:
-    lid = store.append_lineage_variant(
+    lid = evolution_state.append_lineage_variant(
         target=target, parent_id=None, generation=1,
         variant_text="candidate body for the variant", variant_metadata={"strategy": "prune", "kind": "prompt"},
     )
-    store.append_evaluation(
+    evolution_state.append_evaluation(
         lineage_id=lid, sample_set="s", success_rate=fit, cost=1, latency_ms=1,
         hallucination_rate=0, user_correction_rate=0, fitness=fit,
     )
@@ -85,14 +86,14 @@ def test_approve_action(db) -> None:
     pid = _seed_and_propose()
     out = _render_improvements_action("approve", pid)
     assert "Approved" in out and "Live swap" in out
-    assert store.active_evolution("persona:casual") is not None
+    assert evolution_state.active_evolution("persona:casual") is not None
 
 
 def test_reject_action(db) -> None:
     pid = _seed_and_propose()
     out = _render_improvements_action("reject", pid)
     assert "Rejected" in out
-    assert store.open_pending_promotions() == []
+    assert evolution_state.open_pending_promotions() == []
 
 
 def test_rollback_action(db) -> None:
@@ -100,7 +101,7 @@ def test_rollback_action(db) -> None:
     promotion.approve(pid)
     out = _render_improvements_action("rollback", "persona:casual")
     assert "Rolled back" in out
-    assert store.active_evolution("persona:casual") is None
+    assert evolution_state.active_evolution("persona:casual") is None
 
 
 def test_approve_unknown(db) -> None:

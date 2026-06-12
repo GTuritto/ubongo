@@ -8,6 +8,7 @@ import pytest
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo.evolution.loop import _should_cycle  # noqa: E402
+from ubongo.memory import evolution_state
 from ubongo.memory import store  # noqa: E402
 
 
@@ -21,8 +22,8 @@ def db(tmp_path: Path, monkeypatch):
 
 
 def _cycle(target, gen, calls, ended_at):
-    rid = store.start_evolution_run(target=target, generation=gen)
-    store.finish_evolution_run(rid, calls_spent=calls, outcome="completed", ended_at=ended_at)
+    rid = evolution_state.start_evolution_run(target=target, generation=gen)
+    evolution_state.finish_evolution_run(rid, calls_spent=calls, outcome="completed", ended_at=ended_at)
 
 
 def test_calls_in_last_hour_window(db, monkeypatch) -> None:
@@ -30,18 +31,18 @@ def test_calls_in_last_hour_window(db, monkeypatch) -> None:
     _cycle("persona:architect", 1, 10, "2026-06-01T11:30:00.000Z")  # within hour
     _cycle("persona:operator", 1, 7, "2026-06-01T11:55:00.000Z")    # within hour
     _cycle("persona:casual", 1, 99, "2026-06-01T10:30:00.000Z")     # >1h ago, excluded
-    assert store.calls_in_last_hour() == 17
+    assert evolution_state.calls_in_last_hour() == 17
 
 
 def test_calls_in_last_hour_empty(db) -> None:
-    assert store.calls_in_last_hour() == 0
+    assert evolution_state.calls_in_last_hour() == 0
 
 
 def test_seconds_since_last_cycle(db, monkeypatch) -> None:
     monkeypatch.setenv("UBONGO_FAKE_NOW", "2026-06-01T12:00:00+00:00")
-    assert store.seconds_since_last_cycle() is None
+    assert evolution_state.seconds_since_last_cycle() is None
     _cycle("persona:architect", 1, 1, "2026-06-01T11:55:00.000Z")
-    assert abs(store.seconds_since_last_cycle() - 300.0) < 1.0
+    assert abs(evolution_state.seconds_since_last_cycle() - 300.0) < 1.0
 
 
 def test_should_cycle_gate() -> None:

@@ -12,6 +12,7 @@ seeds for the next generation (cross-generation lineage).
 from __future__ import annotations
 
 from ubongo.evolution import targets
+from ubongo.memory import evolution_state
 from ubongo.memory import store
 
 
@@ -30,7 +31,7 @@ def next_target() -> str | None:
 
     def staleness_key(index_target: tuple[int, str]) -> tuple[int, str, int]:
         index, target = index_target
-        last = store.last_cycle_at(target)
+        last = evolution_state.last_cycle_at(target)
         # never-run (None) sorts before any timestamp; then oldest timestamp;
         # then registry order (index) as the deterministic tiebreak.
         return (0 if last is None else 1, last or "", index)
@@ -47,5 +48,5 @@ def survivors(target: str, generation: int, k: int) -> list[dict]:
     unevaluated."""
     if k <= 0:
         return []
-    rows = store.evaluations_for_target(target, generation=generation)
+    rows = evolution_state.evaluations_for_target(target, generation=generation)
     return rows[:k]
