@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import logging
 import os
-import threading
 import time
 
+from ubongo import daemon
 from ubongo.config import load_config
 
 logger = logging.getLogger("ubongo.memory.vault_watch")
@@ -72,39 +72,27 @@ def scan_once() -> dict:
     return result
 
 
-class VaultWatcher:
-    """Daemon thread that calls `scan_once()` on a timer. Injectable sleep/tick
-    for tests; started/stopped by the REPL."""
+class VaultWatcher(daemon.DaemonLoop):
+    """Daemon thread that calls `scan_once()` on a timer. Lifecycle is the
+    DaemonLoop's (sync run style — the default sleep is `time.sleep`);
+    injectable sleep/tick for tests; started/stopped by the REPL."""
+
+    name = "vault_watcher"
+    log = logger
+    thread_name = "vault-watcher"
+    started_event = "vault_watcher_started"
+    cycle_error_event = "vault_scan_error"
 
     def __init__(self, *, sleep=None, tick_seconds: float | None = None) -> None:
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._sleep = sleep or time.sleep
-        self._tick = tick_seconds
+        super().__init__(sleep=sleep or time.sleep, tick_seconds=tick_seconds)
 
-    def _interval(self) -> float:
+    def enabled(self) -> bool:
+        return enabled()
+
+    def interval(self) -> float:
         if self._tick is not None:
             return self._tick
         return float((load_config().get("vault", {}).get("sync", {}) or {}).get("poll_interval_s", _DEFAULT_POLL_S))
 
-    def start(self) -> bool:
-        if not enabled():
-            return False
-        self._thread = threading.Thread(target=self._run, name="vault-watcher", daemon=True)
-        self._thread.start()
-        logger.info("vault_watcher_started")
-        return True
-
-    def stop(self, timeout: float = 2.0) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout)
-
-    def _run(self) -> None:
-        interval = self._interval()
-        while not self._stop.is_set():
-            try:
-                scan_once()
-            except Exception:
-                logger.exception("vault_scan_error")
-            self._sleep(interval)
+    def run_cycle(self) -> None:
+        scan_once()

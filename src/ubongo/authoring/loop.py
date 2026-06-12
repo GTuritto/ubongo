@@ -20,11 +20,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import threading
 from dataclasses import dataclass
 
 from ubongo.authoring import fitness, gaps, manual, sandbox
 from ubongo.authoring.candidate import SkillCandidate
+from ubongo import daemon
 from ubongo.config import load_authoring
 from ubongo.evolution.sandbox import CallBudget
 from ubongo.memory import store
@@ -98,64 +98,35 @@ def run_one_cycle(*, budget: CallBudget | None = None) -> AuthoringCycleResult:
                                 gap=gap.intent, quality=outcome.quality, calls_spent=calls)
 
 
-def _should_cycle(*, status: str, remaining: int, seconds_since_last: float | None, cron) -> bool:
-    """Pure gate: status must be 'running', the rolling-hour budget must have
-    room, and any `authoring.cron` interval must have elapsed."""
-    if status != "running":
-        return False
-    if remaining <= 0:
-        return False
-    if cron is not None and seconds_since_last is not None:
-        try:
-            if seconds_since_last < float(cron):
-                return False
-        except (TypeError, ValueError):
-            pass
-    return True
+# Shared gate (candidate 15); the alias keeps the import/test surface.
+_should_cycle = daemon.should_cycle
 
 
-class AuthoringLoop:
-    """Daemon-thread scheduler. Boots paused; runs `run_one_cycle` when
-    `_should_cycle` allows. Sleep + tick injectable for tests."""
+class AuthoringLoop(daemon.DaemonLoop):
+    """Daemon-thread scheduler. Boots paused; runs `run_one_cycle` when the
+    shared gate allows. Lifecycle is the DaemonLoop's; sleep + tick stay
+    injectable for tests."""
+
+    name = "authoring"
+    log = logger
 
     def __init__(self, *, sleep=None, tick_seconds: float = _DEFAULT_TICK_SECONDS) -> None:
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._sleep = sleep or asyncio.sleep
-        self._tick = tick_seconds
+        super().__init__(sleep=sleep or asyncio.sleep, tick_seconds=tick_seconds)
 
-    def start(self) -> bool:
-        """Start the daemon if authoring.enabled and not disabled by the test
-        off-switch. Comes up in the persisted status (default 'paused')."""
+    def enabled(self) -> bool:
         if os.environ.get("UBONGO_DISABLE_AUTHORING") == "1":
             return False
-        if not load_authoring().get("enabled", False):
-            return False
+        return bool(load_authoring().get("enabled", False))
+
+    def seed(self) -> None:
         if store.get_authoring_status() not in ("running", "paused", "off"):
             store.set_authoring_status("paused")
-        self._thread = threading.Thread(target=self._thread_main, name="authoring-loop", daemon=True)
-        self._thread.start()
-        logger.info("authoring_loop_started", extra={"status": store.get_authoring_status()})
-        return True
 
-    def stop(self, timeout: float = 2.0) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout)
+    def start_extra(self) -> dict:
+        return {"status": store.get_authoring_status()}
 
-    def _thread_main(self) -> None:
-        try:
-            asyncio.run(self._run())
-        except Exception:
-            logger.exception("authoring_loop_crashed")
-
-    async def _run(self) -> None:
-        while not self._stop.is_set():
-            try:
-                self._maybe_run_cycle()
-            except Exception:
-                logger.exception("authoring_cycle_error")
-            await self._sleep(self._tick)
+    def run_cycle(self) -> None:
+        self._maybe_run_cycle()
 
     def _maybe_run_cycle(self) -> None:
         cfg = load_authoring()
