@@ -496,6 +496,20 @@ Bookkeeping only ([Plans/v0.5-trust-protocol.md](../../Plans/v0.5-trust-protocol
 | L.2 | Change is archived intact | `ls openspec/changes/archive/2026-06-12-complete-fanout-peer-replacement/` | `proposal.md design.md tasks.md specs/ .openspec.yaml` all present; `tasks.md` has no unchecked `- [ ]` boxes. |
 | L.3 | Spec synced | `head -1 openspec/specs/fanout-peer-replacement/spec.md` | the capability spec title (not `## ADDED Requirements`). |
 | L.4 | Docstrings state the asymmetry | `grep -c "may revisit" src/ubongo/runner.py` | `0`; the module docstring lists all six modes as shipped and names the accepted fan-out asymmetry. |
-| L.5 | STATE.md count honest | `grep -o "Sixteen ADRs" STATE.md && ls docs/adr/0*.md \| wc -l` | "Sixteen ADRs" found; 16 numbered ADR files. |
+| L.5 | STATE.md count honest | `grep -oE "[A-Z][a-z]+ ADRs" STATE.md && ls docs/adr/0*.md \| wc -l` | the spelled-out count in STATE.md matches the number of numbered ADR files (17 as of Phase 01 / ADR-0017). |
 | L.6 | Recovery really is everywhere | `uv run pytest tests/test_runner.py -q -k "peer"` | all peer-replacement tests green across sequential, parallel, collaborative, competitive, debate, speculative. |
 | L.7 | Pytest passes | `uv run pytest` | 960 passed. |
+
+## v0.5 Phase 01 — The outer envelope (Pi/Linux only)
+
+Deployment infrastructure, zero `src/` change ([Plans/v0.5-01-outer-envelope.md](../../Plans/v0.5-01-outer-envelope.md), [ADR-0017](../../docs/adr/0017-deployment-envelope-podman-nftables.md)): a dedicated `ubongo` user, rootless Podman quadlets with `.env` mounted read-only, and a UID-keyed nftables egress allowlist (`/etc/ubongo/egress.hosts`, default `openrouter.ai`). **These steps run on the enveloped Linux host only** (like P.15/M.7); on macOS this section is N/A by design. Full recipe: [deploy/envelope/INSTALL.md](../../deploy/envelope/INSTALL.md).
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| E.1 | Allowlisted egress works | `podman exec ubongo-web python -m ubongo send "say hello" --persona casual` | a real composed response — the OpenRouter path is open; the turn is governed and persisted as usual. |
+| E.2 | Non-allowlisted egress dies at the network layer | `podman exec ubongo-web python -c "import urllib.request;urllib.request.urlopen('https://example.com', timeout=5)"`; then `sudo nft list chain inet ubongo_egress output \| grep counter` | non-zero rc with a connection error (nft reject), not an HTTP error; the reject counter advanced. |
+| E.3 | Connector bounded by the envelope | enable a scratch MCP server at an https host NOT in `egress.hosts`; `/mode connector_session`, any message | the tool call fails with `connector_mcp_error` (connection refused), the turn still answers via peer replacement, `/audit mcp` records the attempt. |
+| E.4 | Secrets mount is read-only | `podman exec ubongo-web sh -c 'touch /app/.env'` | non-zero rc: `Read-only file system`. |
+| E.5 | Refresh fails closed | append `no-such-host.invalid` to `/etc/ubongo/egress.hosts`; `systemctl start ubongo-egress-refresh`; `nft list set inet ubongo_egress allow4`; remove the line | the unit exits non-zero and logs the unresolved host; the previously resolved addresses are still in the set (never fail open, never drop the known-good). |
+| E.6 | Quadlets replace the bare units | `systemctl --user status ubongo-web ubongo-mcp` (as the ubongo user) | both active (running); the old `deploy/ubongo-*.service` units are disabled on this host. |
+| E.7 | Pytest passes (regression only) | `uv run pytest` | 960 passed — this phase ships no Python. |

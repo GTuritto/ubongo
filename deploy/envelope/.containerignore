@@ -1,0 +1,11 @@
+# Keep runtime state and secrets out of the image. data/ and vault/ are
+# bind-mounted by the quadlets; .env is mounted read-only at runtime.
+.env
+.env.*
+data/
+vault/
+.git/
+.venv/
+dist/
+__pycache__/
+*.pyc

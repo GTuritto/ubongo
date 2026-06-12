@@ -1,0 +1,12 @@
+# Resolves /etc/ubongo/egress.hosts into the nftables allowlist sets.
+# System unit (root — nft needs it). Paired with ubongo-egress-refresh.timer.
+# Install: cp to /etc/systemd/system/ (see deploy/envelope/INSTALL.md).
+
+[Unit]
+Description=Refresh Ubongo egress allowlist sets from /etc/ubongo/egress.hosts
+After=network-online.target nftables.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/refresh-egress.sh

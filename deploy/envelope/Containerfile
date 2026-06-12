@@ -1,0 +1,27 @@
+# Ubongo container image — built on the enveloped host (Pi / Ubuntu).
+#
+#   podman build -t localhost/ubongo:latest -f deploy/envelope/Containerfile .
+#
+# One image serves both quadlets; the default command is the web UI and the
+# MCP quadlet overrides Exec. The image carries no secrets: .env is bind-
+# mounted read-only at runtime by the quadlets (never COPYed).
+
+FROM python:3.11-slim
+
+# uv (pinned major), git for any VCS deps, tini-less: systemd/podman manage us.
+COPY --from=ghcr.io/astral-sh/uv:0.7 /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# Dependency layer first for cache-friendly rebuilds.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project --extra web --extra mcp
+
+# The application tree. .containerignore keeps data/, vault/, .env out.
+COPY . .
+RUN uv sync --frozen --extra web --extra mcp
+
+ENV PATH="/app/.venv/bin:${PATH}"
+
+# Default: the web UI. The MCP quadlet overrides with start-ubongo-mcp.sh.
+CMD ["/app/start-ubongo-web.sh"]

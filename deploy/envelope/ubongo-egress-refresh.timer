@@ -1,0 +1,14 @@
+# Re-resolve the egress allowlist shortly after boot, then every 15 minutes
+# (OpenRouter sits behind rotating anycast addresses; a stale set fails
+# closed against new addresses, so refresh cadence bounds outage, not risk).
+
+[Unit]
+Description=Periodic refresh of the Ubongo egress allowlist
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=15min
+Unit=ubongo-egress-refresh.service
+
+[Install]
+WantedBy=timers.target
