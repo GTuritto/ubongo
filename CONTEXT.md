@@ -112,8 +112,8 @@ _Avoid_: auto-approve, auto-install (the daemon never does either).
 ## Memory
 
 **Durable memory / single writer**:
-The canonical record (SQLite via `memory/store.py`, the projected Markdown vault, and embeddings). The **Memory Agent** is the only Worker Agent that writes it; other agents return Findings, the Memory Agent commits. Every outbound message also passes through `notification_queue`.
-_Avoid_: database (bare), persistence layer.
+The canonical record (SQLite via `memory/store.py`, the projected Markdown vault, and embeddings). The **Memory Agent** is the only Worker Agent that writes it; other agents return Findings, the Memory Agent commits. Every outbound message also passes through `notification_queue`. One database, five table-family modules (v0.5 phase 02): `store.py` keeps connection/bootstrap plus the per-turn core (conversations, messages, summaries, sessions, recall); `trace.py` owns the four trace tables and their view builders; `evolution_state.py`, `authoring_state.py`, and `index_state.py` own their subsystems' rows. The single-writer rule is about writers, not files — it is unchanged.
+_Avoid_: database (bare), persistence layer, "the store" for a seam module (name the module).
 
 **Recency window vs. Semantic recall**:
 The two ways recall surfaces context for a turn. **Recency** is the last-N messages of the conversation. **Semantic recall** embeds the current query (`sqlite-vec`) and retrieves the most similar prior messages that fall _outside_ the recency window, returned on `RecallContext.semantic_messages`. Both are best-effort: with embeddings disabled or unavailable, recall degrades cleanly to recency-only.
