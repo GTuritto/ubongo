@@ -40,6 +40,7 @@ agents:
       coding: architect
       research: architect
       critic: architect       # smoke 12.4 critic_no_candidate fix
+      connector: architect    # candidate 20: a dead MCP server degrades to a normal turn
       # Evaluator + Memory + Execution have no peer: their roles are
       # structurally unique (LLM-as-judge, single-writer, sandbox) and a
       # peer would change the contract, not recover it.
@@ -126,6 +127,29 @@ authoring:
   # Phase 3 placeholder: a daemon-drafted candidate is only surfaced for approval
   # when its quality clears this floor.
   promotion_margin: 0.05
+
+# Candidate 20 (v0.1.5, ADR-0016): external MCP servers the Connector agent
+# may call. Reached only via /mode connector_session (not auto-routed). Each
+# server declares its risk; governance escalates the turn to at least that
+# level, and any connector workflow scores irreversible. No secrets here —
+# `env:` maps the child's variable names to HOST environment variable names,
+# resolved from .env at connect time.
+mcp:
+  servers: {}
+  # Example — the Compendium project on the LAN (uncomment + adjust):
+  #   compendium:
+  #     transport: http               # http | stdio
+  #     url: http://192.168.1.50:9000/mcp
+  #     risk: low                     # low | medium | high
+  #     enabled: true
+  # Example — a local stdio server with a token from .env:
+  #   notes:
+  #     transport: stdio
+  #     command: /usr/local/bin/notes-mcp
+  #     args: []
+  #     env: { NOTES_TOKEN: MY_NOTES_TOKEN }
+  #     risk: medium
+  #     enabled: false
 
 logging:
   level: INFO

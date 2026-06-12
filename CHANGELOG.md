@@ -18,6 +18,34 @@ entry below records what that version added. Newest first.
 
 ---
 
+## v0.1.5 — MCP client: the Connector agent
+
+Date: 2026-06-12
+
+The outbound half ([ADR-0016](docs/adr/0016-connector-agent-external-tools-one-seam.md)):
+Ubongo can now call external MCP servers — Compendium first — through one
+governed seam, shipped as candidate 20.
+
+- The **Connector agent** (ninth worker, `composer=False`) discovers the tools
+  on the servers declared in `settings.yaml::mcp.servers`, plans calls with
+  its model, executes them via the new `mcp/client.py` session layer (stdio +
+  streamable HTTP, per-turn sessions, lazy SDK import), and returns results as
+  Findings for the persona to compose from. The first-class tool layer was
+  considered and stays unjustified; the CLI-bridge option was rejected to keep
+  the sandbox's no-network guarantee intact.
+- **Opt-in**: `connector_session` is declared but not auto-routed — reach it
+  with `/mode connector_session` (the `execution_session` precedent).
+- **Governance**: connector workflows are irreversible; turn risk escalates to
+  the highest enabled server's declared `risk:` (low-risk read-only servers
+  stay auto; high-risk ones hit the existing approval row). `[mcp]` joins the
+  unified audit log.
+- **Degrades, never breaks**: no SDK / no servers / no tools produce honest
+  findings; failed calls enter the Repair ladder (peer: architect), so a dead
+  server still yields a normal answer.
+- Config carries no secrets (`env:` maps resolve from `.env` at connect time).
+  17 new tests; smoke gains deterministic checks plus a live **loop-back**
+  (Ubongo's own MCP server as the client's peer); playbook section C.1–C.7.
+
 ## v0.1.4 — MCP server channel
 
 Date: 2026-06-11

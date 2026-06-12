@@ -166,7 +166,7 @@ def audit_log_path() -> Path:
     return _vault_root() / "system" / "audit.md"
 
 
-_AUDIT_CATEGORIES = ("governance", "evolution", "sync", "authoring")
+_AUDIT_CATEGORIES = ("governance", "evolution", "sync", "authoring", "mcp")
 
 
 def append_audit_entry(category: str, line: str, *, timestamp: str | None = None) -> Path:

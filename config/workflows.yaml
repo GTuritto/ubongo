@@ -85,4 +85,13 @@ workflows:
     timeout_s: 10
     evaluate: false
 
+  connector_session:
+    # Candidate 20 (v0.1.5): external capability over MCP. The Connector plans
+    # and executes tool calls on the configured mcp.servers and threads the
+    # results to the architect. Declared but NOT auto-routed (the
+    # execution_session precedent): reach it with /mode connector_session.
+    agents: ["connector", "architect"]
+    mode: sequential
+    evaluate: true
+
 default_workflow: casual_reply

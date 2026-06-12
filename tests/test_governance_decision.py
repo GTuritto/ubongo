@@ -163,3 +163,31 @@ def test_decision_is_frozen_dataclass():
         pass
     else:
         raise AssertionError("Decision should be frozen")
+
+
+# ---------- candidate 20: the Connector agent (ADR-0016) ----------
+
+
+def test_connector_workflow_is_irreversible():
+    decision = _decide(workflow=_workflow(agents=("connector", "architect")))
+    assert decision.reversibility == "irreversible"
+
+
+def test_connector_escalates_risk_to_server_level():
+    from unittest.mock import patch
+
+    with patch("ubongo.mcp.client.max_enabled_risk", return_value="high"):
+        decision = _decide(workflow=_workflow(agents=("connector", "architect")))
+    # high + irreversible hits the existing matrix row
+    assert decision.risk == "high"
+    assert decision.action == Action.REQUIRE_APPROVAL.value
+    assert decision.reason == "irreversible_high_risk"
+
+
+def test_connector_low_risk_server_stays_auto():
+    from unittest.mock import patch
+
+    with patch("ubongo.mcp.client.max_enabled_risk", return_value="low"):
+        decision = _decide(workflow=_workflow(agents=("connector", "architect")))
+    assert decision.risk == "low"
+    assert decision.action == Action.AUTO.value

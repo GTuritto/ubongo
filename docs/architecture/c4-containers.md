@@ -12,6 +12,7 @@ C4Container
   Person(user, "Giuseppe", "The single user")
   System_Ext(llm, "LLM Providers", "Claude et al. via LiteLLM")
   System_Ext(os, "Local OS / Shell", "Host machine")
+  System_Ext(mcpext, "External MCP Servers", "Compendium et al. (LAN)")
 
   Container_Boundary(proc, "Ubongo Process (Python, asyncio)") {
     Container(cli, "CLI", "Python", "REPL + one-shot entrypoints; slash commands; approval prompts")
@@ -19,7 +20,7 @@ C4Container
     Container(classifier, "Classifier", "Python", "LLM-backed intent / tone / risk / skill classification per turn")
     Container(router, "Router", "Python", "plan_workflow: classification -> validated WorkflowPlan via routing.yaml + workflows.yaml")
     Container(runner, "Workflow Runner", "Python, asyncio", "Dispatches agents across six execution modes; drives Repair retries; passes typed AgentDirectives")
-    Container(agents, "Worker Agent Fleet", "Python", "Research, Coding, Evaluator, Critic, Execution, Persona, Memory, Repair; LLM agents share one model-call envelope (agents/llm_run)")
+    Container(agents, "Worker Agent Fleet", "Python", "Research, Coding, Evaluator, Critic, Execution, Connector, Persona, Memory, Repair; LLM agents share one model-call envelope (agents/llm_run)")
     Container(governance, "Governance", "Python", "Decision matrix: auto / ask / require approval / reject")
     Container(sandbox, "Sandbox", "Python", "Constrained shell execution: allowlist, no metacharacters, timeout")
     Container(skills, "Skills Registry", "Python", "Loads skill definitions, prompts, risk/reversibility metadata")
@@ -50,6 +51,7 @@ C4Container
   Rel(llmgw, llm, "Completions", "HTTPS")
   Rel(agents, sandbox, "Run commands")
   Rel(sandbox, os, "subprocess", "shell=False")
+  Rel(agents, mcpext, "Connector: planned tool calls", "MCP (stdio / HTTP)")
   Rel(master, memstore, "Commit runs + messages")
   Rel(memstore, db, "Reads/writes", "sqlite3")
   Rel(memstore, vault, "Trigger projection")

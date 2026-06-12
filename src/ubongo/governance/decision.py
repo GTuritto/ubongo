@@ -73,6 +73,19 @@ def decide(
     keywords = gov.get("destructive_keywords", []) or []
 
     risk = score_risk(classification, message, keywords)
+    # Candidate 20 (ADR-0016): a workflow that ran the Connector escalates risk
+    # to at least the highest declared risk among the enabled MCP servers (the
+    # per-server `risk:` config). Config-read only — no SDK import.
+    if "connector" in (getattr(workflow, "agents", ()) or ()):
+        try:
+            from ubongo.mcp import client as _mcp_client
+            server_risk = _mcp_client.max_enabled_risk()
+        except Exception:
+            server_risk = None
+        if server_risk is not None:
+            server_level = RiskLevel(server_risk)
+            if list(RiskLevel).index(server_level) > list(RiskLevel).index(risk):
+                risk = server_level
     confidence = score_confidence(classification, workflow_result)
     reversibility = score_reversibility(workflow)
     scored = {

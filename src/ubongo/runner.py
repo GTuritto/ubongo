@@ -1087,6 +1087,7 @@ def default_registry() -> dict[str, Agent]:
     Phase 11: Coding, Execution, Repair workers added.
     """
     from ubongo.agents.coding import CodingAgent
+    from ubongo.agents.connector import ConnectorAgent
     from ubongo.agents.critic import CriticAgent
     from ubongo.agents.evaluator import EvaluatorAgent
     from ubongo.agents.execution import ExecutionAgent
@@ -1101,6 +1102,7 @@ def default_registry() -> dict[str, Agent]:
 
     return {
         "research": ResearchAgent(),
+        "connector": ConnectorAgent(),
         "memory": default_memory_agent,
         "evaluator": EvaluatorAgent(),
         "critic": CriticAgent(),
