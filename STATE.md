@@ -117,7 +117,7 @@ each is either documented in an ADR or in a STATUS phase note.
 
 ## Decisions and why (the ADR record)
 
-The architectural "why" lives in `docs/adr/`. Twelve ADRs, all Accepted:
+The architectural "why" lives in `docs/adr/`. Sixteen ADRs, all Accepted:
 
 - **0001 — Hand-rolled orchestration.** Plain Python + asyncio + an event bus, no framework. The whole
   system is small enough that a framework would add more surface than it removes.
@@ -149,6 +149,15 @@ The architectural "why" lives in `docs/adr/`. Twelve ADRs, all Accepted:
   drafts new skills, but the boundary holds in code: quarantine before discoverability, a command-skill risk
   floor that is enforced not author-declared, static command validation reusing the sandbox contract, and a
   daemon that only drafts. The sandbox allowlist stays a human-only change (extends 0005, 0006).
+- **0014 — Local-only observability (profiler).** `/profile` stats/cpu/mem are on-demand, stdlib-only,
+  best-effort diagnostics over rows the runner already persists — a diagnostic view, not a telemetry pipeline.
+- **0015 — MCP server as an additive channel.** Ubongo as an MCP server is the fourth front over the one
+  `master.handle` seam; gated turns return `gated=true` and are never approvable over MCP (approval needs a
+  human channel). LAN no-auth posture.
+- **0016 — External tools behind one Connector seam.** The Connector agent is the only door out: MCP client
+  sessions, model-planned calls, results as Findings. The first-class tool layer was deferred (not granted),
+  the CLI bridge rejected (it would carve a network hole into the sandbox). Connector workflows score
+  irreversible; turn risk escalates to the highest enabled server's declared risk.
 
 Two CLAUDE.md rules worth restating because they constrained the build throughout: new capabilities default
 to CLI scripts behind the constrained-bash skill rather than first-class tools, and new v0.2+ behavior ships
@@ -179,7 +188,7 @@ as handlers on the named events rather than edits to the pipeline.
 
 - Phase-by-phase changelog and acceptance checklist: [STATUS.md](STATUS.md)
 - The contract for v0.1 scope: [UBONGO_BUILD.md](UBONGO_BUILD.md)
-- Decisions with rationale: [docs/adr/](docs/adr/) (0001–0012)
+- Decisions with rationale: [docs/adr/](docs/adr/) (0001–0016)
 - Living architecture (C4 + glossary): [docs/architecture/](docs/architecture/), [CONTEXT.md](CONTEXT.md)
 - Security contract and its known v0.1 limits: [docs/SECURITY.md](docs/SECURITY.md)
 - Cumulative manual smoke playbook: [tests/manual/smoke_test.md](tests/manual/smoke_test.md)

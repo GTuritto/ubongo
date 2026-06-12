@@ -8,14 +8,18 @@ workflow.execution_mode. Agents themselves stay sync; the runner wraps each
 agent.run call in asyncio.to_thread when fanning out.
 
 Mode coverage:
-- sequential   : Phase 9 baseline; threads prior_findings forward; Repair retry.
-- parallel     : Phase 12a; asyncio.gather; agents see no prior_findings;
-                 no Repair retry (cancel-and-retry semantics in fan-out are
-                 ambiguous; Phase 13 may revisit).
-- competitive  : Phase 12b; planned.
-- collaborative: Phase 12c; planned.
-- debate       : Phase 12d; planned.
-- speculative  : Phase 12e; planned.
+- sequential   : Phase 9 baseline; threads prior_findings forward; full Repair
+                 strategy ladder on failure (Phase 13b).
+- parallel     : Phase 12a; asyncio.gather; agents see no prior_findings.
+- competitive  : Phase 12b; N candidates + Evaluator ranking.
+- collaborative: Phase 12c; parallel producers merged under role headings.
+- debate       : Phase 12d; debaters + synthesizer.
+- speculative  : Phase 12e; cheap leader races strong validator.
+
+Fan-out recovery (all five fan-out modes): a failed agent gets a single
+peer-replacement hop (Phase 13c). The full Repair ladder stays sequential-only
+by design — cancel-and-retry semantics inside asyncio.gather are ambiguous.
+Accepted asymmetry; spec: openspec/specs/fanout-peer-replacement/spec.md.
 """
 
 from __future__ import annotations
@@ -597,8 +601,9 @@ class WorkflowRunner:
 
         Convention: workflow.agents[:-1] are competitors; workflow.agents[-1]
         MUST be 'evaluator'. Runner validates at execute time.
-        - Repair retry NOT consulted in competitive mode (same fan-out reason
-          as parallel; Phase 13 may revisit).
+        - Fan-out recovery: a failed candidate gets one peer-replacement hop
+          before ranking (Phase 13c); the full Repair ladder stays
+          sequential-only by design (accepted asymmetry).
         - WorkflowResult.text = winning candidate's text.
         - WorkflowResult.evaluator_confidence = winner's score (so it still
           feeds governance via the existing Phase 10 path).

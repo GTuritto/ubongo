@@ -190,7 +190,7 @@ Three new workers and the `coding_session` workflow go live. **Coding Agent** (`
 
 ## Phase 12 — Execution Modes (all six)
 
-End of Tier 2 (Multi-Agent System). The WorkflowRunner now supports all six execution modes. Internally it is async (each mode is a strategy coroutine selected off `workflow.execution_mode`) but its public `execute()` stays sync via `asyncio.run`, so `master.handle` and the REPL stay sync. Sequential agents run serially with Phase 11 Repair retry; parallel/competitive/collaborative use `asyncio.gather` (no Repair in fan-out modes — cancel-and-retry semantics are ambiguous; Phase 13 may revisit). `EvaluatorAgent` gained `rank()` (competitive winner picker, returns `{winner, winner_index, reason, scores}`) and `agree()` (speculative agreement check; bool/None). `Workflow` dataclass gained optional `rounds` (debate; default 2) and `timeout_s` (speculative; default 10). PersonaAgents read `debate_role` from `input.metadata` (`"challenge"` for round-2+ debaters, `"synthesize"` for the synthesizer). `/mode <workflow>` REPL command pins a workflow for the next turn (mirrors `/skill`'s one-shot pattern); `/mode list` prints every declared workflow with its mode. `master.plan` skips the Phase-10 evaluator-append for competitive (the trailing evaluator is part of the mode contract).
+End of Tier 2 (Multi-Agent System). The WorkflowRunner now supports all six execution modes. Internally it is async (each mode is a strategy coroutine selected off `workflow.execution_mode`) but its public `execute()` stays sync via `asyncio.run`, so `master.handle` and the REPL stay sync. Sequential agents run serially with Phase 11 Repair retry; parallel/competitive/collaborative use `asyncio.gather` (at this phase, no Repair in fan-out modes — cancel-and-retry semantics are ambiguous; Phase 13c later added single-hop peer replacement to all five fan-out modes). `EvaluatorAgent` gained `rank()` (competitive winner picker, returns `{winner, winner_index, reason, scores}`) and `agree()` (speculative agreement check; bool/None). `Workflow` dataclass gained optional `rounds` (debate; default 2) and `timeout_s` (speculative; default 10). PersonaAgents read `debate_role` from `input.metadata` (`"challenge"` for round-2+ debaters, `"synthesize"` for the synthesizer). `/mode <workflow>` REPL command pins a workflow for the next turn (mirrors `/skill`'s one-shot pattern); `/mode list` prints every declared workflow with its mode. `master.plan` skips the Phase-10 evaluator-append for competitive (the trailing evaluator is part of the mode contract).
 
 | # | Scenario | Steps | Expected |
 | --- | --- | --- | --- |
@@ -485,3 +485,17 @@ The outbound half ([Plans/20-mcp-client.md](../../Plans/20-mcp-client.md), ADR-0
 | C.5 | Dead server degrades | point the server at a closed port; `/mode connector_session` turn | the Connector fails, Repair replaces it with the architect (`/trace` shows the repair line), and the turn still answers. |
 | C.6 | Compendium (when it exists) | enable the real `compendium:` entry; `/mode connector_session`, ask a Compendium-shaped question | tool results from Compendium appear in the composed answer; `[mcp]` audit row names the server/tool. |
 | C.7 | Pytest passes | `uv run pytest tests/` | all green (`test_mcp_client.py`, `test_agents_connector.py`, the governance additions). |
+
+## v0.5 Phase 00 — Reconcile the ledger
+
+Bookkeeping only ([Plans/v0.5-trust-protocol.md](../../Plans/v0.5-trust-protocol.md), Phase 00): the fully-implemented openspec change `complete-fanout-peer-replacement` archived, its delta spec synced to the main specs, and the provisional fan-out-recovery wording restated as the accepted asymmetry (single-hop peer replacement in all five fan-out modes; the full Repair ladder stays sequential-only). Zero behavioral change — this section verifies the ledger tells one story, not new runtime behavior.
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| L.1 | Active ledger is empty | `openspec list --json` | `{"changes":[]}` — no open changes. |
+| L.2 | Change is archived intact | `ls openspec/changes/archive/2026-06-12-complete-fanout-peer-replacement/` | `proposal.md design.md tasks.md specs/ .openspec.yaml` all present; `tasks.md` has no unchecked `- [ ]` boxes. |
+| L.3 | Spec synced | `head -1 openspec/specs/fanout-peer-replacement/spec.md` | the capability spec title (not `## ADDED Requirements`). |
+| L.4 | Docstrings state the asymmetry | `grep -c "may revisit" src/ubongo/runner.py` | `0`; the module docstring lists all six modes as shipped and names the accepted fan-out asymmetry. |
+| L.5 | STATE.md count honest | `grep -o "Sixteen ADRs" STATE.md && ls docs/adr/0*.md \| wc -l` | "Sixteen ADRs" found; 16 numbered ADR files. |
+| L.6 | Recovery really is everywhere | `uv run pytest tests/test_runner.py -q -k "peer"` | all peer-replacement tests green across sequential, parallel, collaborative, competitive, debate, speculative. |
+| L.7 | Pytest passes | `uv run pytest` | 960 passed. |
