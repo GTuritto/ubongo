@@ -82,3 +82,27 @@ def help_banner(registry: dict[str, Command], *, extra: tuple[str, ...] = ()) ->
     registry (persona switches / exit)."""
     usages = [registry[name].usage for name in registry]
     return "Try " + ", ".join([*usages, *extra]) + "."
+
+
+def parse_int_arg(line: str, command: str, default: int) -> "int | None":
+    """Shared parser for the `/<command> [N]` shape: returns N (default when
+    omitted), or None for a malformed/non-positive arg. (Moved from repl.py in
+    candidate 18 so command packs can use it without importing the REPL.)"""
+    raw = line.strip().lstrip("/")
+    parts = raw.split(maxsplit=1)
+    if parts[0].lower() != command:
+        return None
+    if len(parts) == 1:
+        return default
+    try:
+        n = int(parts[1].strip())
+    except ValueError:
+        return None
+    return n if n > 0 else None
+
+
+def format_time(ts: "str | None") -> str:
+    """`2026-05-12T15:51:57.123Z` -> `15:51:57`; em-dash when absent."""
+    if ts is None:
+        return "—"
+    return ts[11:19] if len(ts) >= 19 else ts

@@ -11,8 +11,41 @@ from ubongo.context import build_system_prompt
 from ubongo.delivery import queue
 from ubongo.llm import LLMError, complete
 from ubongo.memory import store
+from ubongo.authoring import commands as authoring_commands
+from ubongo.evolution import commands as evolution_commands
+from ubongo.memory import commands as memory_commands
+
+# Candidate 18: the subsystem command packs moved out of this module; every
+# name below is re-exported because tests (and only tests) import them from
+# ubongo.repl. New code should import from the packs.
+from ubongo.evolution.commands import (  # noqa: F401
+    _EVALUATE_LIST_SENTINEL, _OPTIMIZE_LIST_SENTINEL, _cmd_evaluate,
+    _cmd_evolution, _cmd_improvements, _cmd_optimize, _diff_preview,
+    _parse_evaluate_command, _parse_evolution_command,
+    _parse_improvements_command, _parse_optimize_command, _render_evaluate,
+    _render_evaluate_targets, _render_evolution_control,
+    _render_evolution_status, _render_improvements_action,
+    _render_improvements_list, _render_optimize, _render_optimize_targets,
+)
+from ubongo.authoring.commands import (  # noqa: F401
+    _cmd_author, _cmd_authoring, _cmd_skill_candidates,
+    _parse_author_command, _parse_authoring_command,
+    _parse_skill_candidates_command, _render_author,
+    _render_authoring_control, _render_authoring_status,
+    _render_skill_candidates_action, _render_skill_candidates_list,
+)
+from ubongo.memory.commands import (  # noqa: F401
+    _cmd_audit, _cmd_conflicts, _cmd_recall, _parse_audit_command,
+    _parse_conflicts_command, _parse_recall_command, _render_audit,
+    _render_conflicts_list, _render_conflicts_resolve, _render_recall,
+)
 
 logger = logging.getLogger("ubongo.repl")
+
+# Candidate 18: the shared mini-helpers live in ubongo.commands; aliases keep
+# the long-standing repl-namespace surface.
+_parse_int_arg = commands.parse_int_arg
+_format_time = commands.format_time
 
 DEFAULT_PERSONA = "architect"
 VALID_PERSONAS = ("architect", "operator", "casual")
@@ -27,21 +60,6 @@ _LLM_FAILURE_MESSAGE = "Sorry, I couldn't reach the model. Check the logs."
 # the persona/exit fallbacks are both known.
 
 
-def _parse_int_arg(line: str, command: str, default: int) -> int | None:
-    """Shared parser for the `/<command> [N]` shape: returns N (default when
-    omitted), or None for a malformed/non-positive arg. The three int-arg
-    commands (/queue, /decisions, /trace) delegate here."""
-    raw = line.strip().lstrip("/")
-    parts = raw.split(maxsplit=1)
-    if parts[0].lower() != command:
-        return None
-    if len(parts) == 1:
-        return default
-    try:
-        n = int(parts[1].strip())
-    except ValueError:
-        return None
-    return n if n > 0 else None
 
 
 def _parse_queue_command(line: str) -> int | None:
@@ -137,11 +155,6 @@ def _parse_mode_command(line: str) -> str | None:
     return arg
 
 
-def _format_time(ts: str | None) -> str:
-    if ts is None:
-        return "—"
-    # ISO 8601 with millisecond precision: "2026-05-12T15:51:57.123Z"
-    return ts[11:19] if len(ts) >= 19 else ts
 
 
 def _render_queue_table(n: int = 10) -> str:
@@ -227,446 +240,52 @@ def _render_mode_list() -> str:
     return "\n".join(lines)
 
 
-_OPTIMIZE_LIST_SENTINEL = "__list__"
-
-
-def _parse_optimize_command(line: str) -> str | None:
-    """Returns the target from `/optimize <target>`, the sentinel "__list__"
-    for `/optimize` (no arg, lists targets), or None for other commands."""
-    raw = line.strip().lstrip("/")
-    parts = raw.split(maxsplit=1)
-    if parts[0].lower() != "optimize":
-        return None
-    if len(parts) == 1 or not parts[1].strip():
-        return _OPTIMIZE_LIST_SENTINEL
-    return parts[1].strip()
-
-
-def _render_optimize_targets() -> str:
-    """Phase 16d: list every evolvable target."""
-    from ubongo.evolution import targets
-
-    names = targets.evolvable_targets()
-    if not names:
-        return "No evolvable targets."
-    lines = ["Evolvable targets:"]
-    lines.extend(f"  {name}" for name in names)
-    lines.append("Run /optimize <target> to generate variants.")
-    return "\n".join(lines)
-
-
-def _render_optimize(target: str) -> str:
-    """Render variants for one target. The generate+persist business logic lives
-    in ubongo.evolution.manual; this only formats the result (Phase 16d)."""
-    from ubongo.evolution import manual
-    from ubongo.evolution.targets import UnknownTargetError
-
-    try:
-        out = manual.generate_variants(target)
-    except UnknownTargetError:
-        return f"Unknown target: {target}.\n{_render_optimize_targets()}"
-
-    if not out.variants:
-        return f"No variants generated for {target} (generator produced none)."
-
-    header = (
-        f"{len(out.variants)} variant(s) for {out.target}, generation {out.generation} "
-        f"(requested {out.requested})."
-    )
-    lines = [header]
-    for idx, (variant, row_id) in enumerate(zip(out.variants, out.ids), start=1):
-        preview = " ".join(variant.text.split())
-        if len(preview) > 100:
-            preview = preview[:97] + "..."
-        extra = ""
-        if variant.strategy == "perturb_temperature":
-            extra = f" (Δtemp={variant.metadata.get('temperature_delta')})"
-        elif variant.strategy == "recombine":
-            extra = f" (peer={variant.metadata.get('peer')})"
-        lines.append(f"  [{idx}] #{row_id} {variant.strategy}{extra}: {preview}")
-    return "\n".join(lines)
-
-
-_EVALUATE_LIST_SENTINEL = "__list__"
-
-
-def _parse_evaluate_command(line: str) -> str | None:
-    """Returns the target from `/evaluate <target>`, the sentinel "__list__"
-    for `/evaluate` (no arg, lists targets), or None for other commands."""
-    raw = line.strip().lstrip("/")
-    parts = raw.split(maxsplit=1)
-    if parts[0].lower() != "evaluate":
-        return None
-    if len(parts) == 1 or not parts[1].strip():
-        return _EVALUATE_LIST_SENTINEL
-    return parts[1].strip()
-
-
-def _render_evaluate_targets() -> str:
-    """Phase 17e: list targets that have at least one generated variant."""
-    from ubongo.evolution import targets as _targets
-    from ubongo.memory import store as _store
-
-    names = [t for t in _targets.evolvable_targets() if _store.max_lineage_generation(t) > 0]
-    if not names:
-        return "No evaluable targets. Run /optimize <target> to generate variants first."
-    lines = ["Evaluable targets (have variants):"]
-    lines.extend(f"  {name}" for name in names)
-    lines.append("Run /evaluate <target> to score the latest generation.")
-    return "\n".join(lines)
-
-
-def _render_evaluate(target: str) -> str:
-    """Render the fitness leaderboard for a target's latest generation. The
-    score+persist business logic lives in ubongo.evolution.manual; this only
-    formats the result (Phase 17e)."""
-    from ubongo.evolution import manual
-    from ubongo.evolution.targets import UnknownTargetError
-
-    try:
-        out = manual.score_latest_generation(target)
-    except UnknownTargetError:
-        return f"Unknown target: {target}.\n{_render_evaluate_targets()}"
-    except manual.NoVariantsError:
-        return f"No variants for {target}. Run /optimize {target} first."
-
-    result = out.result
-    generation = out.generation
-    if not result.cohort:
-        return (
-            f"No variants evaluated for {target} (call budget exhausted before "
-            f"any variant, or all samples were dropped). "
-            f"{result.skipped}/{result.total_variants} skipped."
-        )
-
-    header = (
-        f"Leaderboard for {target}, generation {generation} "
-        f"(sample_set={result.sample_set_version}; "
-        f"{result.evaluated}/{result.total_variants} scored, {result.skipped} skipped):"
-    )
-    lines = [header]
-    for rank, (metrics, fit) in enumerate(out.ranked, start=1):
-        strat = out.strategy_by_id.get(metrics.lineage_id) or "?"
-        lines.append(
-            f"  {rank}. #{metrics.lineage_id} {strat:<20} "
-            f"fitness={fit:.3f}  "
-            f"success={metrics.success_rate:.2f} "
-            f"halluc={metrics.hallucination_rate:.2f} "
-            f"corr={metrics.user_correction_rate:.2f} "
-            f"cost={metrics.cost:.0f}tok lat={metrics.latency_ms:.0f}ms"
-        )
-    if result.skipped:
-        lines.append(
-            f"  ({result.skipped} variant(s) skipped by the call budget; raise "
-            f"evolution.max_calls_per_hour or lower samples_per_eval for a fuller run.)"
-        )
-    return "\n".join(lines)
-
-
-_EVOLUTION_SUBCOMMANDS = ("status", "pause", "resume", "off")
-
-
-def _parse_evolution_command(line: str) -> str | None:
-    """Returns the subcommand from `/evolution <sub>` (defaults to "status"),
-    or None for other commands. Unknown subcommands return the raw token so the
-    dispatcher can show usage."""
-    raw = line.strip().lstrip("/")
-    parts = raw.split(maxsplit=1)
-    if parts[0].lower() != "evolution":
-        return None
-    if len(parts) == 1 or not parts[1].strip():
-        return "status"
-    return parts[1].strip().split()[0].lower()
-
-
-def _render_evolution_status() -> str:
-    """Phase 18d: render loop control state + per-target progress + throttle."""
-    from ubongo.config import load_evolution
-    from ubongo.evolution import targets as _targets
-    from ubongo.memory import store as _store
-
-    evo = load_evolution()
-    enabled = bool(evo.get("enabled", False))
-    status = _store.get_evolution_status()
-    cap = int(evo.get("max_calls_per_hour", 30))
-    used = _store.calls_in_last_hour()
-    cron = evo.get("cron")
-    pace = "continuous" if cron is None else f"every {cron}s"
-
-    lines = [
-        f"Evolution loop: status={status}  enabled={enabled}  "
-        f"throttle={used}/{cap} calls in last hour  pacing={pace}",
-    ]
-    if not enabled:
-        lines.append("  (evolution.enabled is false in settings.yaml — the loop thread does not start.)")
-    for target in _targets.evolvable_targets():
-        gen = _store.max_lineage_generation(target)
-        if gen == 0:
-            lines.append(f"  {target:<20} no generations yet")
-            continue
-        evals = _store.evaluations_for_target(target, generation=gen)
-        best = evals[0]["fitness"] if evals else None
-        best_str = f"best fitness={best:.3f}" if best is not None else "unevaluated"
-        last = _store.last_cycle_at(target) or "never"
-        lines.append(f"  {target:<20} gen {gen}  {best_str}  last cycle {last}")
-    recent = _store.evolution_runs_recent(3)
-    if recent:
-        lines.append("  recent cycles:")
-        for r in recent:
-            lines.append(
-                f"    #{r['id']} {r['target']} gen{r['generation']} "
-                f"{r['outcome']} calls={r['calls_spent']}"
-            )
-    return "\n".join(lines)
-
-
-def _render_evolution_control(sub: str) -> str:
-    """Phase 18e: apply pause/resume/off and report. resume warns if the loop
-    is disabled in settings (the thread never started)."""
-    from ubongo.config import load_evolution
-    from ubongo.memory import store as _store
-
-    if sub == "resume":
-        _store.set_evolution_status("running")
-        if not load_evolution().get("enabled", False):
-            return ("Status set to running, but evolution.enabled is false in "
-                    "settings.yaml so the loop thread is not active. Enable it and "
-                    "restart the REPL to run.")
-        return "Evolution loop resumed (status=running). Generations will run, throttled."
-    if sub == "pause":
-        _store.set_evolution_status("paused")
-        return "Evolution loop paused. The in-flight cycle finishes; no new ones start."
-    if sub == "off":
-        _store.set_evolution_status("off")
-        return "Evolution loop off. It idles until /evolution resume."
-    return f"Unknown subcommand: {sub}. Usage: /evolution status|pause|resume|off."
-
-
-def _parse_improvements_command(line: str):
-    """Parse `/improvements [approve <id> | reject <id> | rollback <target>]`.
-    Returns ("list", None), ("approve"|"reject", id:int), ("rollback", target),
-    or None for other commands / malformed args (the dispatcher shows usage)."""
-    raw = line.strip().lstrip("/")
-    parts = raw.split()
-    if not parts or parts[0].lower() != "improvements":
-        return None
-    if len(parts) == 1:
-        return ("list", None)
-    sub = parts[1].lower()
-    if sub in ("approve", "reject"):
-        if len(parts) < 3:
-            return ("usage", None)
-        try:
-            return (sub, int(parts[2]))
-        except ValueError:
-            return ("usage", None)
-    if sub == "rollback":
-        if len(parts) < 3:
-            return ("usage", None)
-        return ("rollback", parts[2])
-    return ("usage", None)
-
-
-def _diff_preview(base: str, variant: str, *, context: int = 2) -> list[str]:
-    """A compact unified diff of base→variant (prompts or serialized config)."""
-    import difflib
-
-    diff = difflib.unified_diff(
-        base.splitlines(), variant.splitlines(),
-        fromfile="active", tofile="candidate", lineterm="", n=context,
-    )
-    lines = list(diff)
-    if len(lines) > 24:
-        lines = lines[:24] + [f"    … ({len(lines) - 24} more diff lines)"]
-    return lines
-
-
-def _render_improvements_list() -> str:
-    """Phase 19e: list open pending promotions with fitness delta + a diff."""
-    from ubongo.evolution import promotion, targets
-    from ubongo.memory import store as _store
-
-    pending = _store.open_pending_promotions()
-    if not pending:
-        return "No pending improvements. The loop proposes one when a variant beats the active baseline."
-    out = [f"Pending improvements ({len(pending)}):"]
-    for p in pending:
-        ev = _store.latest_evaluation_for_lineage(p["lineage_id"])
-        champ = ev["fitness"] if ev else None
-        base = promotion.baseline_fitness(p["target"], p["generation"])
-        delta = f"{base:.3f} → {champ:.3f}" if champ is not None else "n/a"
-        out.append(f"\n  #{p['id']}  {p['target']}  gen {p['generation']}  "
-                   f"strategy={p['strategy']}  fitness {delta}")
-        try:
-            base_text = targets.resolve_base(p["target"])
-        except Exception:
-            base_text = ""
-        for dl in _diff_preview(base_text, p["variant_text"]):
-            out.append(f"    {dl}")
-    out.append("\nApprove with /improvements approve <id>, reject <id>, or /improvements rollback <target>.")
-    return "\n".join(out)
-
-
-def _render_improvements_action(action: str, arg) -> str:
-    from ubongo.evolution import promotion
-
-    if action == "approve":
-        d = promotion.approve(arg)
-        if d is None:
-            return f"No open promotion #{arg}."
-        delta = (f" (fitness {d.baseline_fitness:.3f} → {d.champion_fitness:.3f})"
-                 if d.champion_fitness is not None else "")
-        return f"Approved #{arg}: {d.target} now uses lineage #{d.lineage_id}{delta}. Live swap in effect."
-    if action == "reject":
-        d = promotion.reject(arg)
-        if d is None:
-            return f"No open promotion #{arg}."
-        return f"Rejected #{arg}: {d.target} unchanged."
-    if action == "rollback":
-        ok = promotion.rollback(arg)
-        return (f"Rolled back {arg} to its file/default. Live swap reverted."
-                if ok else f"No active promotion for {arg}.")
-    return "Usage: /improvements [approve <id> | reject <id> | rollback <target>]."
-
-
-def _parse_recall_command(line: str) -> str | None:
-    """Returns the query from `/recall [query]` ("" for no query), or None for
-    other commands."""
-    raw = line.strip().lstrip("/")
-    parts = raw.split(maxsplit=1)
-    if parts[0].lower() != "recall":
-        return None
-    return parts[1].strip() if len(parts) > 1 else ""
-
-
-def _render_recall(query: str) -> str:
-    """Phase 20f: show what recall would surface for the current conversation —
-    the recency window, semantic hits (when embeddings are on), and the vault
-    graph neighbors of today's daily note. A direct read tool (no master.handle)."""
-    from datetime import datetime, timezone
-
-    from ubongo.memory import embeddings, graph, store, vault
-
-    session = store.get_session()
-    conv_id = session.current_conversation_id if session else None
-    if conv_id is None:
-        return "No conversation yet."
-
-    # default query = the latest user message
-    if not query:
-        recent_user = [m for m in store.last_n_messages(conv_id, 20) if m.role == "user"]
-        query = recent_user[-1].content if recent_user else ""
-
-    ctx = store.recall(conv_id, query=query or None)
-    lines = [f"Recall for conversation {conv_id}" + (f' — query: "{query}"' if query else "")]
-
-    if ctx.summary_text:
-        lines.append(f"\nsummary: {ctx.summary_text[:200]}")
-
-    lines.append(f"\nrecency window (last {len(ctx.messages)}):")
-    for m in ctx.messages[-6:]:
-        lines.append(f"  {m.role}: {' '.join(m.content.split())[:80]}")
-
-    if not embeddings.enabled():
-        lines.append("\nsemantic: (embeddings disabled — recency only)")
-    elif not embeddings.vec_available():
-        lines.append("\nsemantic: (sqlite-vec unavailable — recency only)")
-    elif ctx.semantic_messages:
-        lines.append("\nsemantic hits (outside the recency window):")
-        for m in ctx.semantic_messages:
-            lines.append(f"  #{m.id} {m.role}: {' '.join(m.content.split())[:80]}")
-    else:
-        lines.append("\nsemantic: (no hits)")
-
-    today = datetime.now(timezone.utc).date().isoformat()
-    note = f"{vault._daily_subdir()}/{today}.md"
-    nbrs = graph.neighbors(note)
-    lines.append(f"\nvault graph — neighbors of {note}: " + (", ".join(nbrs) if nbrs else "(none)"))
-    return "\n".join(lines)
-
-
-_AUDIT_CATEGORIES = ("governance", "evolution", "sync")
-
-
-def _parse_audit_command(line: str):
-    """Parse `/audit [category] [N]`. Returns (category|None, n) or None for
-    other commands."""
-    raw = line.strip().lstrip("/")
-    parts = raw.split()
-    if not parts or parts[0].lower() != "audit":
-        return None
-    category, n = None, 20
-    for tok in parts[1:]:
-        if tok.lower() in _AUDIT_CATEGORIES:
-            category = tok.lower()
-        else:
-            try:
-                n = int(tok)
-            except ValueError:
-                pass
-    return (category, n)
-
-
-def _render_audit(category, n: int) -> str:
-    """Phase 21d: tail the unified audit log, optionally filtered by category."""
-    from ubongo.memory import vault
-
-    rows = vault.audit_tail(category, n)
-    if not rows:
-        return f"No audit entries{f' for {category}' if category else ''}."
-    header = f"Audit log (last {len(rows)}{f', {category}' if category else ''}):"
-    return header + "\n" + "\n".join(f"  {r[2:]}" for r in rows)
-
-
-def _parse_conflicts_command(line: str):
-    """Parse `/conflicts` (list) or `/conflicts resolve <id> <keep-mine|keep-theirs|merge>`.
-    Returns ("list", None, None), ("resolve", id, resolution), ("usage", None, None),
-    or None for other commands."""
-    raw = line.strip().lstrip("/")
-    parts = raw.split()
-    if not parts or parts[0].lower() != "conflicts":
-        return None
-    if len(parts) == 1:
-        return ("list", None, None)
-    if parts[1].lower() == "resolve" and len(parts) >= 4:
-        try:
-            cid = int(parts[2])
-        except ValueError:
-            return ("usage", None, None)
-        res = parts[3].lower()
-        if res not in ("keep-mine", "keep-theirs", "merge"):
-            return ("usage", None, None)
-        return ("resolve", cid, res)
-    return ("usage", None, None)
-
-
-def _render_conflicts_list() -> str:
-    from ubongo.memory import store
-
-    rows = store.open_vault_conflicts()
-    if not rows:
-        return "No open vault conflicts."
-    lines = [f"Open vault conflicts ({len(rows)}):"]
-    for r in rows:
-        lines.append(f"  #{r['id']}  {r['path']}  (edited externally at {r['detected_at']})")
-    lines.append("Resolve with /conflicts resolve <id> <keep-mine|keep-theirs|merge>.")
-    return "\n".join(lines)
-
-
-def _render_conflicts_resolve(cid: int, resolution: str) -> str:
-    from ubongo.memory import store, vault
-
-    conflict = store.get_vault_conflict(cid)
-    if conflict is None or conflict["status"] != "open":
-        return f"No open conflict #{cid}."
-    ok = store.resolve_vault_conflict(cid, resolution)
-    if not ok:
-        return f"No open conflict #{cid}."
-    vault.append_audit_entry("sync", f"resolved conflict #{cid} on {conflict['path']} -> {resolution}")
-    note = ""
-    if resolution == "keep-mine":
-        note = " (note: daily notes are append-only; the system keeps appending and does not snapshot, so the on-disk edit remains)"
-    return f"Conflict #{cid} resolved: {resolution}{note}."
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def _render_exec(cmd: str) -> str:
@@ -984,56 +603,18 @@ def _cmd_mode(line: str, state: ReplState) -> str | None:
     return f"Next turn will use workflow: {arg}."
 
 
-def _cmd_optimize(line: str, state: ReplState) -> str | None:
-    arg = _parse_optimize_command(line)
-    if arg is None or arg == _OPTIMIZE_LIST_SENTINEL:
-        return _render_optimize_targets()
-    return _render_optimize(arg)
 
 
-def _cmd_evaluate(line: str, state: ReplState) -> str | None:
-    arg = _parse_evaluate_command(line)
-    if arg is None or arg == _EVALUATE_LIST_SENTINEL:
-        return _render_evaluate_targets()
-    return _render_evaluate(arg)
 
 
-def _cmd_evolution(line: str, state: ReplState) -> str | None:
-    sub = _parse_evolution_command(line)
-    if sub is None or sub == "status":
-        return _render_evolution_status()
-    if sub in ("pause", "resume", "off"):
-        return _render_evolution_control(sub)
-    return f"Unknown subcommand: {sub}. Usage: /evolution status|pause|resume|off."
 
 
-def _cmd_recall(line: str, state: ReplState) -> str | None:
-    q = _parse_recall_command(line)
-    return _render_recall(q or "")
 
 
-def _cmd_audit(line: str, state: ReplState) -> str | None:
-    parsed = _parse_audit_command(line)
-    cat, n = parsed if parsed else (None, 20)
-    return _render_audit(cat, n)
 
 
-def _cmd_conflicts(line: str, state: ReplState) -> str | None:
-    parsed = _parse_conflicts_command(line)
-    if parsed is None or parsed[0] == "list":
-        return _render_conflicts_list()
-    if parsed[0] == "usage":
-        return "Usage: /conflicts [resolve <id> <keep-mine|keep-theirs|merge>]."
-    return _render_conflicts_resolve(parsed[1], parsed[2])
 
 
-def _cmd_improvements(line: str, state: ReplState) -> str | None:
-    parsed = _parse_improvements_command(line)
-    if parsed is None or parsed[0] == "list":
-        return _render_improvements_list()
-    if parsed[0] == "usage":
-        return "Usage: /improvements [approve <id> | reject <id> | rollback <target>]."
-    return _render_improvements_action(parsed[0], parsed[1])
 
 
 def _cmd_reload(line: str, state: ReplState) -> str | None:
@@ -1050,204 +631,30 @@ def _cmd_skill(line: str, state: ReplState) -> str | None:
     return f"Next turn will use skill: {requested}."
 
 
-def _parse_author_command(line: str) -> str | None:
-    """`/author <description>` -> the description, or None if missing."""
-    raw = line.strip().lstrip("/")
-    parts = raw.split(maxsplit=1)
-    if not parts or parts[0].lower() != "author":
-        return None
-    if len(parts) == 1 or not parts[1].strip():
-        return None
-    return parts[1].strip()
 
 
-def _render_author(description: str) -> str:
-    from ubongo.authoring import manual
-
-    try:
-        outcome = manual.author_skill(description)
-    except manual.AuthoringError as exc:
-        return f"Could not author a skill: {exc}"
-    c = outcome.candidate
-    kind = "command skill" if c.is_command_skill else "prompt skill"
-    lines = [
-        f"Drafted candidate #{outcome.candidate_id} '{c.name}' (gen {outcome.generation}, {kind}).",
-        f"  risk: {c.risk}   reversibility: {c.reversibility}"
-        + (f"   persona: {c.default_persona}" if c.default_persona else ""),
-        f"  {c.description}",
-    ]
-    if c.is_command_skill:
-        lines.append(f"  command: {c.command_template.strip()}")
-    if outcome.quality is not None:
-        lines.append(f"  quality: {outcome.quality:.3f} (estimated)")
-    lines.append("  status: quarantined (not discoverable until approved).")
-    lines.append("  Review with /skill-candidates.")
-    return "\n".join(lines)
 
 
-def _cmd_author(line: str, state: ReplState) -> str | None:
-    description = _parse_author_command(line)
-    if not description:
-        return f"Usage: /author <capability description>. {_HELP_COMMANDS}"
-    return _render_author(description)
 
 
-_AUTHORING_SUBCOMMANDS = ("status", "pause", "resume", "off")
 
 
-def _parse_authoring_command(line: str) -> str | None:
-    raw = line.strip().lstrip("/")
-    parts = raw.split(maxsplit=1)
-    if not parts or parts[0].lower() != "authoring":
-        return None
-    if len(parts) == 1 or not parts[1].strip():
-        return "status"
-    return parts[1].strip().split()[0].lower()
 
 
-def _render_authoring_status() -> str:
-    from ubongo.config import load_authoring
-
-    status = store.get_authoring_status()
-    cap = int((load_authoring() or {}).get("max_calls_per_hour", 20))
-    spent = store.authoring_calls_in_last_hour()
-    drafts = store.authored_skills(status="draft", limit=100)
-    auto = [d for d in drafts if d["source"] == "auto"]
-    lines = [
-        f"Authoring daemon: {status}  (budget {spent}/{cap} calls in the last hour)",
-        f"  pending drafts: {len(drafts)} ({len(auto)} auto-authored) — review with /skill-candidates",
-    ]
-    runs = store.authoring_runs_recent(5)
-    if runs:
-        lines.append("  recent cycles:")
-        for r in runs:
-            lines.append(
-                f"    #{r['id']} {r['outcome']:<11} gap={r['gap'] or '-'} "
-                f"cand={r['candidate_id'] or '-'} calls={r['calls_spent']}"
-            )
-    return "\n".join(lines)
 
 
-def _render_authoring_control(sub: str) -> str:
-    if sub == "pause":
-        store.set_authoring_status("paused")
-        return "Authoring daemon paused."
-    if sub == "resume":
-        store.set_authoring_status("running")
-        return ("Authoring daemon running. It drafts candidates into quarantine on "
-                "recurring capability gaps; approval stays manual (/skill-candidates).")
-    store.set_authoring_status("off")
-    return "Authoring daemon off."
 
 
-def _cmd_authoring(line: str, state: ReplState) -> str | None:
-    sub = _parse_authoring_command(line)
-    if sub is None or sub == "status":
-        return _render_authoring_status()
-    if sub in ("pause", "resume", "off"):
-        return _render_authoring_control(sub)
-    return f"Unknown subcommand: {sub}. Usage: /authoring status|pause|resume|off."
 
 
-def _render_skill_candidates_list() -> str:
-    rows = store.authored_skills(limit=30)
-    if not rows:
-        return "No authored skill candidates yet. Draft one with /author <description>."
-    lines = ["Authored skill candidates (newest first):"]
-    for r in rows:
-        cand = r.get("candidate") or {}
-        is_cmd = bool((cand.get("command_template") or "").strip())
-        quality = r.get("quality")
-        q = f" quality={quality:.3f}" if isinstance(quality, (int, float)) else ""
-        lines.append(
-            f"  #{r['id']} {r['name']:<24} {r['status']:<11} "
-            f"gen={r['generation']} {'cmd' if is_cmd else 'prompt'} "
-            f"src={r['source']}{q}"
-        )
-        if r["status"] == "draft":
-            lines.extend("      " + dl for dl in _candidate_collision_diff(r))
-    lines.append(
-        "Approve with /skill-candidates approve <id> (reject <id>, rollback <name>)."
-    )
-    return "\n".join(lines)
 
 
-def _candidate_collision_diff(row: dict) -> list[str]:
-    """If a draft would overwrite a live skill of the same name, a compact diff
-    of the live SKILL.md -> the candidate's, so the reviewer sees the change
-    before approving. Empty for a fresh (non-colliding) candidate."""
-    from pathlib import Path
-
-    live = skills.skills_dir() / row["name"] / "SKILL.md"
-    qpath = row.get("quarantine_path")
-    if not live.exists() or not qpath:
-        return []
-    qmd = Path(qpath) / "SKILL.md"
-    if not qmd.exists():
-        return []
-    try:
-        diff = _diff_preview(live.read_text(encoding="utf-8"), qmd.read_text(encoding="utf-8"))
-    except OSError:
-        return []
-    header = f"(would overwrite live '{row['name']}'{'' if diff else '; no textual change'}:)"
-    return [header] + diff
 
 
-def _parse_skill_candidates_command(line: str):
-    """Parse `/skill-candidates [approve <id> | reject <id> | rollback <name>]`.
-    Returns ("list", None), ("approve"|"reject", id:int), ("rollback", name),
-    ("usage", None), or None for other commands."""
-    raw = line.strip().lstrip("/")
-    parts = raw.split()
-    if not parts or parts[0].lower() != "skill-candidates":
-        return None
-    if len(parts) == 1 or parts[1].lower() == "list":
-        return ("list", None)
-    sub = parts[1].lower()
-    if sub in ("approve", "reject"):
-        if len(parts) < 3:
-            return ("usage", None)
-        try:
-            return (sub, int(parts[2]))
-        except ValueError:
-            return ("usage", None)
-    if sub == "rollback":
-        if len(parts) < 3:
-            return ("usage", None)
-        return ("rollback", parts[2])
-    return ("usage", None)
 
 
-def _render_skill_candidates_action(action: str, arg) -> str:
-    from ubongo.authoring import promotion
-
-    try:
-        if action == "approve":
-            r = promotion.approve(arg)
-            msg = f"Approved #{r.candidate_id} '{r.name}' — registered and now in /skills."
-            if r.backed_up:
-                msg += f"\n  Prior version backed up to {r.backup_path}."
-            return msg
-        if action == "reject":
-            r = promotion.reject(arg)
-            return f"Rejected #{r.candidate_id} '{r.name}'. Left in quarantine."
-        if action == "rollback":
-            r = promotion.rollback(arg)
-            if r.restored:
-                return f"Rolled back '{r.name}' — restored the prior version from {r.backup_path}."
-            return f"Rolled back '{r.name}' — unregistered (no prior version to restore)."
-    except promotion.PromotionError as exc:
-        return f"Cannot do that: {exc}"
-    return "Unknown action."
 
 
-def _cmd_skill_candidates(line: str, state: ReplState) -> str | None:
-    parsed = _parse_skill_candidates_command(line)
-    if parsed is None or parsed[0] == "list":
-        return _render_skill_candidates_list()
-    if parsed[0] == "usage":
-        return "Usage: /skill-candidates [approve <id> | reject <id> | rollback <name>]."
-    return _render_skill_candidates_action(parsed[0], parsed[1])
 
 
 COMMANDS: dict[str, Command] = {
@@ -1262,16 +669,9 @@ COMMANDS: dict[str, Command] = {
     "profile":      Command(_cmd_profile, "/profile [agents|models|modes|cpu|mem] [N]"),
     "exec":         Command(_cmd_exec, "/exec <cmd>"),
     "mode":         Command(_cmd_mode, "/mode <workflow>"),
-    "optimize":     Command(_cmd_optimize, "/optimize <target>"),
-    "evaluate":     Command(_cmd_evaluate, "/evaluate <target>"),
-    "evolution":    Command(_cmd_evolution, "/evolution <status|pause|resume|off>"),
-    "improvements": Command(_cmd_improvements, "/improvements"),
-    "author":       Command(_cmd_author, "/author <description>"),
-    "authoring":    Command(_cmd_authoring, "/authoring <status|pause|resume|off>"),
-    "skill-candidates": Command(_cmd_skill_candidates, "/skill-candidates [approve <id>|reject <id>|rollback <name>]"),
-    "recall":       Command(_cmd_recall, "/recall [query]"),
-    "audit":        Command(_cmd_audit, "/audit [category]"),
-    "conflicts":    Command(_cmd_conflicts, "/conflicts"),
+    **evolution_commands.COMMANDS,
+    **authoring_commands.COMMANDS,
+    **memory_commands.COMMANDS,
     "reload":       Command(_cmd_reload, "/reload"),
 }
 
