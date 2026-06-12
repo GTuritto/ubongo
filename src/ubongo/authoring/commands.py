@@ -14,7 +14,7 @@ import logging
 from ubongo import skills
 from ubongo.commands import Command, ReplState
 from ubongo.commands import format_time as _format_time  # noqa: F401
-from ubongo.evolution.commands import _diff_preview  # shared unified-diff preview
+from ubongo.evaluation import diff_preview
 from ubongo.memory import authoring_state
 from ubongo.memory import store
 
@@ -153,7 +153,7 @@ def _candidate_collision_diff(row: dict) -> list[str]:
     if not qmd.exists():
         return []
     try:
-        diff = _diff_preview(live.read_text(encoding="utf-8"), qmd.read_text(encoding="utf-8"))
+        diff = diff_preview(live.read_text(encoding="utf-8"), qmd.read_text(encoding="utf-8"))
     except OSError:
         return []
     header = f"(would overwrite live '{row['name']}'{'' if diff else '; no textual change'}:)"

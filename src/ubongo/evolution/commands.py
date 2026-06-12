@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 
+from ubongo.evaluation import diff_preview
 from ubongo.commands import Command, ReplState
 from ubongo.commands import format_time as _format_time  # noqa: F401
 from ubongo.commands import parse_int_arg as _parse_int_arg  # noqa: F401
@@ -251,19 +252,6 @@ def _parse_improvements_command(line: str):
         return ("rollback", parts[2])
     return ("usage", None)
 
-def _diff_preview(base: str, variant: str, *, context: int = 2) -> list[str]:
-    """A compact unified diff of base→variant (prompts or serialized config)."""
-    import difflib
-
-    diff = difflib.unified_diff(
-        base.splitlines(), variant.splitlines(),
-        fromfile="active", tofile="candidate", lineterm="", n=context,
-    )
-    lines = list(diff)
-    if len(lines) > 24:
-        lines = lines[:24] + [f"    … ({len(lines) - 24} more diff lines)"]
-    return lines
-
 def _render_improvements_list() -> str:
     """Phase 19e: list open pending promotions with fitness delta + a diff."""
     from ubongo.evolution import promotion, targets
@@ -284,7 +272,7 @@ def _render_improvements_list() -> str:
             base_text = targets.resolve_base(p["target"])
         except Exception:
             base_text = ""
-        for dl in _diff_preview(base_text, p["variant_text"]):
+        for dl in diff_preview(base_text, p["variant_text"]):
             out.append(f"    {dl}")
     out.append("\nApprove with /improvements approve <id>, reject <id>, or /improvements rollback <target>.")
     return "\n".join(out)

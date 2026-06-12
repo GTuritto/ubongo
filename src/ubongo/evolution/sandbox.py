@@ -38,6 +38,7 @@ from ubongo.agents import personas
 from ubongo.config import load_config, load_evolution
 from ubongo.evolution import targets
 from ubongo.evolution.fitness import VariantMetrics
+from ubongo.evaluation import CallBudget, parse_judgment
 from ubongo.llm import LLMError, complete
 
 logger = logging.getLogger("ubongo.evolution.sandbox")
@@ -51,11 +52,6 @@ _GEN_MAX_TOKENS = 600
 # 400 gives the flat 3-field object ample room.
 _JUDGE_MAX_TOKENS = 400
 _DEFAULT_SAMPLES_PER_EVAL = 5
-
-_CODE_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL | re.IGNORECASE)
-# Fallback: pluck the first flat {...} object out of prose-wrapped output. The
-# judgment JSON has no nested objects, so a brace-free body match is safe.
-_JSON_OBJECT_RE = re.compile(r"\{[^{}]*\}", re.DOTALL)
 
 _JUDGE_RUBRIC = (
     "You are an evaluation judge scoring an assistant response to a user. "
@@ -72,36 +68,6 @@ _JUDGE_RUBRIC = (
     "A response that correctly declines an unknowable question or corrects a "
     "false premise has LOW hallucination and HIGH quality."
 )
-
-
-class CallBudget:
-    """Caps the number of LLM calls in one evaluation run.
-
-    Seeded from `evolution.max_calls_per_hour`. `can_afford(n)` checks whether
-    `n` more calls fit; `spend(n)` consumes them. A variant is evaluated
-    all-or-nothing (its full sample set) so the cohort stays comparable —
-    callers check `can_afford(n_samples * CALLS_PER_SAMPLE)` before starting a
-    variant.
-
-    Note (Phase 17 scope): this is a per-run cap, not a true cross-run
-    rolling-hour window. Rate-over-time across processes is a Phase 18 (the
-    autonomous loop) concern.
-    """
-
-    CALLS_PER_SAMPLE = 2  # one generate + one judge
-
-    def __init__(self, limit: int) -> None:
-        self.limit = max(0, int(limit))
-        self.spent = 0
-
-    def remaining(self) -> int:
-        return max(0, self.limit - self.spent)
-
-    def can_afford(self, n: int) -> bool:
-        return self.spent + n <= self.limit
-
-    def spend(self, n: int) -> None:
-        self.spent += n
 
 
 @dataclass(frozen=True)
@@ -159,49 +125,6 @@ def _build_variant_system_prompt(variant_text: str) -> str:
     if base:
         return base + "\n\n" + variant_text.rstrip()
     return variant_text.rstrip()
-
-
-def _strip_code_fence(text: str) -> str:
-    match = _CODE_FENCE_RE.match(text)
-    return match.group(1) if match else text.strip()
-
-
-def _load_judgment_object(raw: str) -> dict | None:
-    """Get the judgment dict from the raw judge output. Tries, in order:
-    the fence-stripped whole string, then the first flat {...} object embedded
-    in prose (judges sometimes wrap the JSON in explanation despite the rubric).
-    """
-    cleaned = _strip_code_fence(raw)
-    try:
-        data = json.loads(cleaned)
-        if isinstance(data, dict):
-            return data
-    except (json.JSONDecodeError, ValueError):
-        pass
-    match = _JSON_OBJECT_RE.search(cleaned)
-    if match:
-        try:
-            data = json.loads(match.group(0))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, ValueError):
-            return None
-    return None
-
-
-def _parse_judgment(raw: str) -> tuple[float, float, bool] | None:
-    """Parse the judge JSON. Returns (quality, hallucination, would_correct)
-    or None on failure."""
-    data = _load_judgment_object(raw)
-    if data is None:
-        return None
-    try:
-        quality = max(0.0, min(1.0, float(data["quality"])))
-        hallucination = max(0.0, min(1.0, float(data["hallucination"])))
-    except (KeyError, TypeError, ValueError):
-        return None
-    would_correct = bool(data.get("would_user_correct", False))
-    return quality, hallucination, would_correct
 
 
 def _score_sample(
@@ -267,7 +190,7 @@ def _judge(question: str, response_text: str, *, judge_model: str) -> tuple[floa
     except LLMError as exc:
         logger.warning("eval_judge_failed", extra={"cause": str(exc.cause) if exc.cause else None})
         return None
-    parsed = _parse_judgment(judgment.text)
+    parsed = parse_judgment(judgment.text)
     if parsed is None:
         logger.warning("eval_judge_parse_error", extra={"raw_preview": judgment.text[:200]})
         return None

@@ -26,7 +26,7 @@ from ubongo.authoring import fitness, gaps, manual, sandbox
 from ubongo.authoring.candidate import SkillCandidate
 from ubongo import daemon
 from ubongo.config import load_authoring
-from ubongo.evolution.sandbox import CallBudget
+from ubongo.evaluation import CallBudget
 from ubongo.memory import authoring_state
 from ubongo.memory import store
 

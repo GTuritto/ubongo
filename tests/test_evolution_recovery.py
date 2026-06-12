@@ -10,7 +10,7 @@ os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo.agents import personas  # noqa: E402
 from ubongo.evolution import generator, loop, sandbox, selection  # noqa: E402
-from ubongo.evolution.sandbox import CallBudget  # noqa: E402
+from ubongo.evaluation import CallBudget  # noqa: E402
 from ubongo.memory import evolution_state
 from ubongo.memory import store  # noqa: E402
 

@@ -9,7 +9,7 @@ os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo.authoring import sandbox  # noqa: E402
 from ubongo.authoring.candidate import SkillCandidate  # noqa: E402
-from ubongo.evolution.sandbox import CallBudget  # noqa: E402
+from ubongo.evaluation import CallBudget  # noqa: E402
 from ubongo.llm import CompletionResult  # noqa: E402
 from ubongo.memory import authoring_state
 from ubongo.memory import store  # noqa: E402

@@ -19,9 +19,10 @@ from ubongo.memory import commands as memory_commands
 # Candidate 18: the subsystem command packs moved out of this module; every
 # name below is re-exported because tests (and only tests) import them from
 # ubongo.repl. New code should import from the packs.
+from ubongo.evaluation import diff_preview as _diff_preview  # noqa: F401
 from ubongo.evolution.commands import (  # noqa: F401
     _EVALUATE_LIST_SENTINEL, _OPTIMIZE_LIST_SENTINEL, _cmd_evaluate,
-    _cmd_evolution, _cmd_improvements, _cmd_optimize, _diff_preview,
+    _cmd_evolution, _cmd_improvements, _cmd_optimize,
     _parse_evaluate_command, _parse_evolution_command,
     _parse_improvements_command, _parse_optimize_command, _render_evaluate,
     _render_evaluate_targets, _render_evolution_control,
