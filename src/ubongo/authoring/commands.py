@@ -15,6 +15,7 @@ from ubongo import skills
 from ubongo.commands import Command, ReplState
 from ubongo.commands import format_time as _format_time  # noqa: F401
 from ubongo.evolution.commands import _diff_preview  # shared unified-diff preview
+from ubongo.memory import authoring_state
 from ubongo.memory import store
 
 logger = logging.getLogger("ubongo.authoring.commands")
@@ -78,16 +79,16 @@ def _parse_authoring_command(line: str) -> str | None:
 def _render_authoring_status() -> str:
     from ubongo.config import load_authoring
 
-    status = store.get_authoring_status()
+    status = authoring_state.get_authoring_status()
     cap = int((load_authoring() or {}).get("max_calls_per_hour", 20))
-    spent = store.authoring_calls_in_last_hour()
-    drafts = store.authored_skills(status="draft", limit=100)
+    spent = authoring_state.authoring_calls_in_last_hour()
+    drafts = authoring_state.authored_skills(status="draft", limit=100)
     auto = [d for d in drafts if d["source"] == "auto"]
     lines = [
         f"Authoring daemon: {status}  (budget {spent}/{cap} calls in the last hour)",
         f"  pending drafts: {len(drafts)} ({len(auto)} auto-authored) — review with /skill-candidates",
     ]
-    runs = store.authoring_runs_recent(5)
+    runs = authoring_state.authoring_runs_recent(5)
     if runs:
         lines.append("  recent cycles:")
         for r in runs:
@@ -99,13 +100,13 @@ def _render_authoring_status() -> str:
 
 def _render_authoring_control(sub: str) -> str:
     if sub == "pause":
-        store.set_authoring_status("paused")
+        authoring_state.set_authoring_status("paused")
         return "Authoring daemon paused."
     if sub == "resume":
-        store.set_authoring_status("running")
+        authoring_state.set_authoring_status("running")
         return ("Authoring daemon running. It drafts candidates into quarantine on "
                 "recurring capability gaps; approval stays manual (/skill-candidates).")
-    store.set_authoring_status("off")
+    authoring_state.set_authoring_status("off")
     return "Authoring daemon off."
 
 def _cmd_authoring(line: str, state: ReplState) -> str | None:
@@ -117,7 +118,7 @@ def _cmd_authoring(line: str, state: ReplState) -> str | None:
     return f"Unknown subcommand: {sub}. Usage: /authoring status|pause|resume|off."
 
 def _render_skill_candidates_list() -> str:
-    rows = store.authored_skills(limit=30)
+    rows = authoring_state.authored_skills(limit=30)
     if not rows:
         return "No authored skill candidates yet. Draft one with /author <description>."
     lines = ["Authored skill candidates (newest first):"]

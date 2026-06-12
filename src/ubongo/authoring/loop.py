@@ -27,6 +27,7 @@ from ubongo.authoring.candidate import SkillCandidate
 from ubongo import daemon
 from ubongo.config import load_authoring
 from ubongo.evolution.sandbox import CallBudget
+from ubongo.memory import authoring_state
 from ubongo.memory import store
 
 logger = logging.getLogger("ubongo.authoring.loop")
@@ -58,17 +59,17 @@ def run_one_cycle(*, budget: CallBudget | None = None) -> AuthoringCycleResult:
 
     # --- recovery: finish an auto draft that was persisted but not scored ---
     if eval_enabled:
-        pending = store.auto_drafts_unevaluated(limit=1)
+        pending = authoring_state.auto_drafts_unevaluated(limit=1)
         if pending:
             row = pending[0]
             candidate = SkillCandidate.from_dict(row["candidate"])
-            run_id = store.start_authoring_run(gap=None)
+            run_id = authoring_state.start_authoring_run(gap=None)
             metrics = sandbox.evaluate_candidate(candidate, samples_per_eval=spe)
             quality = fitness.score_candidate(metrics) if metrics else None
             if quality is not None:
-                store.update_authored_skill(row["id"], quality=quality)
+                authoring_state.update_authored_skill(row["id"], quality=quality)
             calls = spe * CallBudget.CALLS_PER_SAMPLE
-            store.finish_authoring_run(run_id, calls_spent=calls, outcome="reevaluated",
+            authoring_state.finish_authoring_run(run_id, calls_spent=calls, outcome="reevaluated",
                                        candidate_id=row["id"])
             logger.info("authoring_recovered", extra={"id": row["id"], "quality": quality})
             return AuthoringCycleResult("reevaluated", candidate_id=row["id"],
@@ -79,17 +80,17 @@ def run_one_cycle(*, budget: CallBudget | None = None) -> AuthoringCycleResult:
     if gap is None:
         return AuthoringCycleResult("idle", note="no recurring capability gaps")
 
-    run_id = store.start_authoring_run(gap=gap.intent)
+    run_id = authoring_state.start_authoring_run(gap=gap.intent)
     try:
         outcome = manual.author_skill(gap.description, source="auto")
     except manual.AuthoringError as exc:
-        store.finish_authoring_run(run_id, calls_spent=1, outcome="aborted")
+        authoring_state.finish_authoring_run(run_id, calls_spent=1, outcome="aborted")
         logger.info("authoring_cycle_aborted", extra={"gap": gap.intent, "cause": str(exc)})
         return AuthoringCycleResult("aborted", gap=gap.intent, note=str(exc))
 
     scored = outcome.quality is not None
     calls = 1 + (spe * CallBudget.CALLS_PER_SAMPLE if scored else 0)
-    store.finish_authoring_run(run_id, calls_spent=calls,
+    authoring_state.finish_authoring_run(run_id, calls_spent=calls,
                                outcome="evaluated" if scored else "drafted",
                                candidate_id=outcome.candidate_id)
     logger.info("authoring_cycle", extra={"gap": gap.intent, "id": outcome.candidate_id,
@@ -119,11 +120,11 @@ class AuthoringLoop(daemon.DaemonLoop):
         return bool(load_authoring().get("enabled", False))
 
     def seed(self) -> None:
-        if store.get_authoring_status() not in ("running", "paused", "off"):
-            store.set_authoring_status("paused")
+        if authoring_state.get_authoring_status() not in ("running", "paused", "off"):
+            authoring_state.set_authoring_status("paused")
 
     def start_extra(self) -> dict:
-        return {"status": store.get_authoring_status()}
+        return {"status": authoring_state.get_authoring_status()}
 
     def run_cycle(self) -> None:
         self._maybe_run_cycle()
@@ -131,10 +132,10 @@ class AuthoringLoop(daemon.DaemonLoop):
     def _maybe_run_cycle(self) -> None:
         cfg = load_authoring()
         cap = int(cfg.get("max_calls_per_hour", _DEFAULT_MAX_CALLS))
-        remaining = cap - store.authoring_calls_in_last_hour()
+        remaining = cap - authoring_state.authoring_calls_in_last_hour()
         if not _should_cycle(
-            status=store.get_authoring_status(), remaining=remaining,
-            seconds_since_last=store.authoring_seconds_since_last_cycle(), cron=cfg.get("cron"),
+            status=authoring_state.get_authoring_status(), remaining=remaining,
+            seconds_since_last=authoring_state.authoring_seconds_since_last_cycle(), cron=cfg.get("cron"),
         ):
             return
         run_one_cycle(budget=CallBudget(remaining))

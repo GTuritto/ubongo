@@ -18,6 +18,7 @@ from pathlib import Path
 import yaml
 
 from ubongo.authoring.candidate import SkillCandidate
+from ubongo.memory import authoring_state
 from ubongo.memory import store
 
 logger = logging.getLogger("ubongo.authoring.quarantine")
@@ -86,8 +87,8 @@ def persist(candidate: SkillCandidate, *, source: str = "manual") -> int:
     re-authoring an existing skill is tracked as a new generation.
     """
     folder = write_candidate_folder(candidate)
-    generation = store.max_authored_generation(candidate.name) + 1
-    row_id = store.append_authored_skill(
+    generation = authoring_state.max_authored_generation(candidate.name) + 1
+    row_id = authoring_state.append_authored_skill(
         name=candidate.name,
         description=candidate.description,
         status="draft",

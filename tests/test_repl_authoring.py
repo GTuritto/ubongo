@@ -11,6 +11,7 @@ from ubongo import repl, skills  # noqa: E402
 from ubongo.authoring import candidate, promotion, quarantine  # noqa: E402
 from ubongo.commands import ReplState  # noqa: E402
 from ubongo.llm import CompletionResult  # noqa: E402
+from ubongo.memory import authoring_state
 from ubongo.memory import store, vault  # noqa: E402
 
 _JSON = (
@@ -52,7 +53,7 @@ def test_author_command_drafts_and_quarantines(env, monkeypatch) -> None:
     assert "quarantined" in out.lower()
     assert "git diff --stat" in out
     # registered as a draft
-    assert store.authored_skills(status="draft")
+    assert authoring_state.authored_skills(status="draft")
 
 
 def test_author_command_usage_when_empty(env) -> None:
@@ -96,7 +97,7 @@ def test_author_shows_quality_when_eval_enabled(env, monkeypatch) -> None:
 
 def _draft(state) -> int:
     repl._cmd_author("author summarize a git diff into notes", state)
-    return store.authored_skills(status="draft")[0]["id"]
+    return authoring_state.authored_skills(status="draft")[0]["id"]
 
 
 def test_gate_approve_then_rollback(env, monkeypatch) -> None:
@@ -117,7 +118,7 @@ def test_gate_reject(env, monkeypatch) -> None:
     cid = _draft(st)
     out = repl._cmd_skill_candidates(f"skill-candidates reject {cid}", st)
     assert "Rejected" in out
-    assert store.get_authored_skill(cid)["status"] == "rejected"
+    assert authoring_state.get_authored_skill(cid)["status"] == "rejected"
     assert not skills.has("diff-notes")
 
 
@@ -144,11 +145,11 @@ def test_authoring_status_and_control(env) -> None:
     out = repl._cmd_authoring("authoring", _state())
     assert "Authoring daemon:" in out and "paused" in out
     repl._cmd_authoring("authoring resume", _state())
-    assert store.get_authoring_status() == "running"
+    assert authoring_state.get_authoring_status() == "running"
     repl._cmd_authoring("authoring pause", _state())
-    assert store.get_authoring_status() == "paused"
+    assert authoring_state.get_authoring_status() == "paused"
     repl._cmd_authoring("authoring off", _state())
-    assert store.get_authoring_status() == "off"
+    assert authoring_state.get_authoring_status() == "off"
 
 
 def test_commands_registered() -> None:

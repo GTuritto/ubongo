@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from ubongo.authoring import quarantine
 from ubongo.authoring.candidate import DraftError, SkillCandidate, draft_candidate
 from ubongo.authoring.validation import CandidateInvalid, validate
+from ubongo.memory import authoring_state
 from ubongo.memory import store, vault
 
 logger = logging.getLogger("ubongo.authoring.manual")
@@ -45,7 +46,7 @@ def author_skill(description: str, *, source: str = "manual") -> AuthorOutcome:
         raise AuthoringError(f"drafted skill {drafted.name!r} is invalid: {exc}") from None
 
     candidate_id = quarantine.persist(candidate, source=source)
-    row = store.get_authored_skill(candidate_id)
+    row = authoring_state.get_authored_skill(candidate_id)
     generation = int(row["generation"]) if row else 0
 
     # Best-effort quality estimate. Evaluation is side-effect-free and
@@ -53,7 +54,7 @@ def author_skill(description: str, *, source: str = "manual") -> AuthorOutcome:
     # a draft — the candidate is still quarantined for review.
     quality = _evaluate_quality(candidate)
     if quality is not None:
-        store.update_authored_skill(candidate_id, quality=quality)
+        authoring_state.update_authored_skill(candidate_id, quality=quality)
 
     # Audit the draft so /audit authoring shows a trail even before approval.
     try:

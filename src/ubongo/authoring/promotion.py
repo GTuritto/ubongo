@@ -29,6 +29,7 @@ from ubongo import context, events, skills
 from ubongo.authoring.candidate import SkillCandidate
 from ubongo.authoring.quarantine import write_candidate_folder
 from ubongo.authoring.validation import CandidateInvalid, validate
+from ubongo.memory import authoring_state
 from ubongo.memory import store, vault
 
 logger = logging.getLogger("ubongo.authoring.promotion")
@@ -121,7 +122,7 @@ def _audit(line: str) -> None:
 
 
 def _load_draft(candidate_id: int) -> dict:
-    row = store.get_authored_skill(candidate_id)
+    row = authoring_state.get_authored_skill(candidate_id)
     if row is None:
         raise PromotionError(f"no authored candidate #{candidate_id}")
     if row["status"] != "draft":
@@ -133,7 +134,7 @@ def _load_draft(candidate_id: int) -> dict:
 
 
 def _latest_approved_row(name: str) -> dict | None:
-    rows = [r for r in store.authored_skills(status="approved", limit=200) if r["name"] == name]
+    rows = [r for r in authoring_state.authored_skills(status="approved", limit=200) if r["name"] == name]
     return rows[0] if rows else None  # authored_skills returns newest first
 
 
@@ -161,7 +162,7 @@ def approve(candidate_id: int) -> ApproveResult:
     write_candidate_folder(candidate, base=live_dir)
     _reload_registry()
 
-    store.update_authored_skill(
+    authoring_state.update_authored_skill(
         candidate_id, status="approved", backup_path=backup_path, decided_at=store.now_iso()
     )
     _audit(
@@ -182,7 +183,7 @@ def reject(candidate_id: int) -> RejectResult:
     """Reject a drafted candidate: mark it rejected, leave the quarantine folder
     in place. Raises PromotionError on a bad id / non-draft."""
     row = _load_draft(candidate_id)
-    store.update_authored_skill(candidate_id, status="rejected", decided_at=store.now_iso())
+    authoring_state.update_authored_skill(candidate_id, status="rejected", decided_at=store.now_iso())
     _audit(f"rejected #{candidate_id} '{row['name']}'")
     events.dispatch("authoring_decision",
                     {"event": "rejected", "id": candidate_id, "name": row["name"]})
@@ -220,7 +221,7 @@ def rollback(name: str) -> RollbackResult:
 
     approved = _latest_approved_row(name)
     if approved is not None:
-        store.update_authored_skill(approved["id"], status="rolled_back",
+        authoring_state.update_authored_skill(approved["id"], status="rolled_back",
                                     decided_at=store.now_iso())
     _audit(
         f"rolled back '{name}' -> "

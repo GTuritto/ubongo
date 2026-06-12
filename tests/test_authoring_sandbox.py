@@ -11,6 +11,7 @@ from ubongo.authoring import sandbox  # noqa: E402
 from ubongo.authoring.candidate import SkillCandidate  # noqa: E402
 from ubongo.evolution.sandbox import CallBudget  # noqa: E402
 from ubongo.llm import CompletionResult  # noqa: E402
+from ubongo.memory import authoring_state
 from ubongo.memory import store  # noqa: E402
 
 _JUDGE = '{"quality": 0.8, "hallucination": 0.1, "would_user_correct": false}'
@@ -102,6 +103,6 @@ def test_evaluation_is_side_effect_free(tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setattr(sandbox, "complete", _fake_complete())
         sandbox.evaluate_candidate(_prompt_skill(), samples_per_eval=2)
         # The harness writes nothing durable.
-        assert store.authored_skills() == []
+        assert authoring_state.authored_skills() == []
     finally:
         store.set_db_path(store._REPO_ROOT / "data" / "ubongo.db")

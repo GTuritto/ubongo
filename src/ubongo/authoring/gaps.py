@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ubongo.memory import authoring_state
 from ubongo.memory import store
 from ubongo.memory import trace
 
@@ -50,7 +51,7 @@ def next_gap(*, limit: int = _DEFAULT_LIMIT, min_occurrences: int = _DEFAULT_MIN
 
     if not tally:
         return None
-    worked = store.worked_authoring_gaps()
+    worked = authoring_state.worked_authoring_gaps()
     candidates = [
         (intent, n) for intent, n in tally.items()
         if n >= min_occurrences and intent not in worked

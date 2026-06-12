@@ -12,6 +12,7 @@ from ubongo.authoring import candidate, manual, quarantine  # noqa: E402
 from ubongo.authoring import sandbox as eval_sandbox  # noqa: E402
 from ubongo.authoring.manual import AuthoringError, author_skill  # noqa: E402
 from ubongo.llm import CompletionResult  # noqa: E402
+from ubongo.memory import authoring_state
 from ubongo.memory import store, vault  # noqa: E402
 
 _CMD_JSON = (
@@ -53,7 +54,7 @@ def test_author_skill_end_to_end(env, monkeypatch) -> None:
     assert outcome.candidate.risk == "medium"
     assert outcome.candidate.reversibility == "irreversible"
     # persisted as draft, generation 1
-    row = store.get_authored_skill(outcome.candidate_id)
+    row = authoring_state.get_authored_skill(outcome.candidate_id)
     assert row["status"] == "draft" and row["generation"] == 1
     # audited under the authoring category
     assert audits and audits[0][0] == "authoring"
@@ -80,7 +81,7 @@ def test_author_skill_eval_disabled_leaves_quality_none(env, monkeypatch) -> Non
     monkeypatch.setattr(candidate, "complete", _fake(_CMD_JSON))
     outcome = author_skill("x")
     assert outcome.quality is None
-    assert store.get_authored_skill(outcome.candidate_id)["quality"] is None
+    assert authoring_state.get_authored_skill(outcome.candidate_id)["quality"] is None
 
 
 def test_author_skill_safe_at_info_logging(env, monkeypatch, caplog) -> None:
@@ -124,4 +125,4 @@ def test_author_skill_records_quality_when_eval_enabled(env, monkeypatch) -> Non
 
     outcome = author_skill("release notes from a diff")
     assert outcome.quality is not None and 0.0 <= outcome.quality <= 1.0
-    assert store.get_authored_skill(outcome.candidate_id)["quality"] == pytest.approx(outcome.quality)
+    assert authoring_state.get_authored_skill(outcome.candidate_id)["quality"] == pytest.approx(outcome.quality)
