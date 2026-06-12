@@ -8,6 +8,7 @@ import pytest
 
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
+from ubongo.memory import index_state
 from ubongo.memory import embeddings, store, vault, vault_watch  # noqa: E402
 
 
@@ -33,7 +34,7 @@ def _write_note(text="hi") -> Path:
 def test_system_write_records_vault_state(env) -> None:
     note = _write_note()
     rel = vault.vault_relpath(note)
-    assert store.get_vault_hash(rel) == vault.file_hash(note)
+    assert index_state.get_vault_hash(rel) == vault.file_hash(note)
 
 
 def test_scan_skips_own_write(env) -> None:
@@ -47,7 +48,7 @@ def test_scan_ingests_external_edit_and_queues_conflict(env) -> None:
     r = vault_watch.scan_once()
     assert r["ingested"] == 1
     assert r["conflicts"] == 1
-    assert len(store.open_vault_conflicts()) == 1
+    assert len(index_state.open_vault_conflicts()) == 1
     # vault_state advanced; a re-scan does not re-ingest
     assert vault_watch.scan_once()["ingested"] == 0
 

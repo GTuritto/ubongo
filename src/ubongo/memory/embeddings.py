@@ -16,6 +16,7 @@ import logging
 import os
 
 from ubongo.config import load_config
+from ubongo.memory import index_state
 from ubongo.memory import store
 
 logger = logging.getLogger("ubongo.memory.embeddings")
@@ -100,7 +101,7 @@ def index_message(message_id: int, text: str) -> bool:
     if not text.strip() or not vec_available():
         return False
     h = text_hash(text)
-    if store.embedding_meta_hash(message_id) == h:
+    if index_state.embedding_meta_hash(message_id) == h:
         return False  # unchanged -> no embed call
     vecs = embed([text])
     if not vecs:
@@ -114,7 +115,7 @@ def index_message(message_id: int, text: str) -> bool:
             "INSERT INTO vec_messages(rowid, embedding) VALUES (?, ?)",
             (message_id, sqlite_vec.serialize_float32(vecs[0])),
         )
-        store.upsert_embedding_meta(message_id, h)
+        index_state.upsert_embedding_meta(message_id, h)
         return True
     except Exception as exc:
         logger.warning("index_message_failed", extra={"message_id": message_id, "error": str(exc)[:160]})

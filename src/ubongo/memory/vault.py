@@ -67,8 +67,9 @@ def _record_system_write(path: Path) -> None:
     """Record the hash the system just wrote so the watcher can distinguish its
     own writes from external user edits. Best-effort."""
     try:
+        from ubongo.memory import index_state
         from ubongo.memory import store
-        store.record_vault_write(vault_relpath(path), file_hash(path))
+        index_state.record_vault_write(vault_relpath(path), file_hash(path))
     except Exception as exc:
         logger.warning("vault_state_record_failed", extra={"error": str(exc)[:160]})
 
@@ -116,7 +117,7 @@ def _index_wikilinks(note_path: Path, *texts: str) -> None:
     """Phase 20: upsert vault_links for every `[[wikilink]]` found in the given
     texts, sourced from `note_path`. Best-effort — never blocks the note write."""
     try:
-        from ubongo.memory import store
+        from ubongo.memory import index_state
 
         try:
             source = str(note_path.relative_to(_vault_root()))
@@ -124,7 +125,7 @@ def _index_wikilinks(note_path: Path, *texts: str) -> None:
             source = note_path.name
         for text in texts:
             for target in parse_wikilinks(text):
-                store.upsert_vault_link(source, target, link_type="wikilink")
+                index_state.upsert_vault_link(source, target, link_type="wikilink")
     except Exception as exc:
         logger.warning("vault_link_index_failed", extra={"error": str(exc)[:160]})
 

@@ -8,6 +8,7 @@ import pytest
 
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
+from ubongo.memory import index_state
 from ubongo.memory import graph, store, vault  # noqa: E402
 
 
@@ -44,30 +45,30 @@ def test_daily_note_populates_vault_links(db) -> None:
         "check [[caching-notes]] and [[ops]]", "ok", "casual",
     )
     src = str(note.relative_to(vault._vault_root()))
-    assert store.vault_links_from(src) == ["caching-notes", "ops"]
+    assert index_state.vault_links_from(src) == ["caching-notes", "ops"]
 
 
 # --- graph API --------------------------------------------------------------
 
 def test_neighbors_and_backlinks(db) -> None:
-    store.upsert_vault_link("a.md", "b")
-    store.upsert_vault_link("a.md", "c")
-    store.upsert_vault_link("z.md", "a.md")
+    index_state.upsert_vault_link("a.md", "b")
+    index_state.upsert_vault_link("a.md", "c")
+    index_state.upsert_vault_link("z.md", "a.md")
     assert graph.outbound("a.md") == ["b", "c"]
     assert graph.backlinks("a.md") == ["z.md"]
     assert graph.neighbors("a.md") == ["b", "c", "z.md"]
 
 
 def test_upsert_is_idempotent(db) -> None:
-    store.upsert_vault_link("a.md", "b")
-    store.upsert_vault_link("a.md", "b")
-    assert store.vault_links_from("a.md") == ["b"]
+    index_state.upsert_vault_link("a.md", "b")
+    index_state.upsert_vault_link("a.md", "b")
+    assert index_state.vault_links_from("a.md") == ["b"]
 
 
 def test_traverse_bounded(db) -> None:
     # a -> b -> c
-    store.upsert_vault_link("a.md", "b.md")
-    store.upsert_vault_link("b.md", "c.md")
+    index_state.upsert_vault_link("a.md", "b.md")
+    index_state.upsert_vault_link("b.md", "c.md")
     assert graph.traverse("a.md", depth=1) == ["b.md"]
     assert graph.traverse("a.md", depth=2) == ["b.md", "c.md"]
     assert graph.traverse("a.md", depth=0) == []
