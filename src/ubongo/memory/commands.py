@@ -77,7 +77,7 @@ def _render_recall(query: str) -> str:
     lines.append(f"\nvault graph — neighbors of {note}: " + (", ".join(nbrs) if nbrs else "(none)"))
     return "\n".join(lines)
 
-_AUDIT_CATEGORIES = ("governance", "evolution", "sync")
+_AUDIT_CATEGORIES = ("governance", "evolution", "sync", "authoring", "mcp")
 
 def _parse_audit_command(line: str):
     """Parse `/audit [category] [N]`. Returns (category|None, n) or None for

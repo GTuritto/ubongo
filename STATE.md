@@ -1,6 +1,6 @@
 # Ubongo — State of the Build
 
-A ground-truth read of what is actually in the tree as of 2026-06-11, checked against
+A ground-truth read of what is actually in the tree as of 2026-06-12, checked against
 [UBONGO_BUILD.md](UBONGO_BUILD.md) (the v0.1 spec). [STATUS.md](STATUS.md) is the
 phase-by-phase changelog; this file is the complement: where the code stands, where it
 drifted from the spec, the decisions that produced the drift, and what is parked.
@@ -9,10 +9,13 @@ If STATE.md and the spec disagree, the code is the source of truth and STATE.md 
 
 ## Snapshot
 
-- **Current version: v0.1.4.** v0.1 (the 22-phase build) plus the optional web UI (v0.1.1),
+- **Current version: v0.1.5.** v0.1 (the 22-phase build) plus the optional web UI (v0.1.1),
   self-authored skills (v0.1.2), the local profiler + service control (v0.1.3,
-  [ADR-0014](docs/adr/0014-local-only-observability-profiler.md)), and the MCP server channel
-  (v0.1.4, [ADR-0015](docs/adr/0015-mcp-server-additive-channel.md)). Not yet v0.2 (Telegram).
+  [ADR-0014](docs/adr/0014-local-only-observability-profiler.md)), the MCP server channel
+  (v0.1.4, [ADR-0015](docs/adr/0015-mcp-server-additive-channel.md)), and the MCP client /
+  Connector agent (v0.1.5, [ADR-0016](docs/adr/0016-connector-agent-external-tools-one-seam.md)).
+  Plus the second deepening pass (candidates 14/15/17/18; 16 dropped, 19 trigger-parked).
+  Not yet v0.2 (Telegram).
 - **v0.1 is complete and merged to `main`.** All 22 phases (0–21) landed, each on its own
   `phase-N-<name>` branch, merged after review (16 phase PRs).
 - **Plus a post-v0.1 layer that is also on `main`**: six architecture-deepening refactors
@@ -22,10 +25,13 @@ If STATE.md and the spec disagree, the code is the source of truth and STATE.md 
   family, the `--profile`/`UBONGO_PROFILE` startup switch, `ubongo-ctl.sh`, the systemd unit —
   ADR-0014), and the **MCP server channel** (PR #37: the `mcp/` package, `ubongo mcp` stdio/HTTP,
   ctl + systemd + installer support — ADR-0015). These are *not* in the v0.1 spec; see Drift below.
-- **Size:** ~14,700 LOC under `src/` (11,255 at v0.1 certification; deepening + web ~800;
-  authoring ~1,285; profiler ~650; MCP channel ~235). Effectively at the ~15,000 soft target —
-  the next layer should be v0.2, or something must shrink.
-- **Tests:** 929 pytest, green (874 + 41 profiler + 14 MCP). The spec's `tests/` layout listed ~16 files; the actual suite
+- **Size:** ~15,400 LOC under `src/` (11,255 at v0.1 certification; deepening + web ~800;
+  authoring ~1,285; profiler ~650; MCP server ~235; MCP client + Connector ~430; the second
+  deepening pass was net-negative). **First crossing of the ~15,000 soft target** (~+1.3%):
+  acceptable for the two MCP halves, but the budget is spent — v0.2 should add a transport,
+  not another subsystem, and candidate 19's trigger (a growing store.py) doubles as the
+  shrink-review trigger.
+- **Tests:** 960 pytest, green (874 + 41 profiler + 14 MCP server + 11 deepening + 20 MCP client). The spec's `tests/` layout listed ~16 files; the actual suite
   is far broader (one test module per real module, plus REPL, live-swap, recovery, evaluation,
   sync, audit, and the six authoring suites).
 - **Stack matches spec:** Python 3.11+, LiteLLM over OpenRouter, stdlib SQLite, `sqlite-vec`,

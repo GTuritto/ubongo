@@ -32,12 +32,12 @@ Single user, single machine, accessed through a CLI (REPL primary, one-shot for 
 ## What It Does
 
 - **Talks in three personas** and switches automatically by reading your tone, or on command (`/architect`, `/operator`, `/casual`).
-- **Runs a real agent fleet** per turn: research over your own history, code generation, an evaluator that scores confidence, a contrarian critic, sandboxed shell execution, and a repair agent that recovers failures on its own.
+- **Runs a real agent fleet** per turn: research over your own history, code generation, an evaluator that scores confidence, a contrarian critic, sandboxed shell execution, an MCP connector for external services, and a repair agent that recovers failures on its own.
 - **Gates risk.** A destructive request like "delete the entire vault" triggers an `Approve? (y/n/why)` prompt; shell commands run in a locked-down sandbox (allowlist, no network, repo-root, 10s timeout).
 - **Improves its own prompts** (`/optimize`, `/evaluate`, `/improvements`) and **authors its own skills** (`/author`, `/skill-candidates`), both behind your explicit approval.
 - **Remembers and recalls** across restarts: recency plus semantic search (`/recall`), a browsable Obsidian journal, and bidirectional vault sync.
 - **Traces everything.** Every decision, agent run, governance call, repair, and evolution variant is persisted and auditable (`/trace`, `/decisions`, `/audit`).
-- **Reachable by other agents.** An MCP server channel (`ubongo mcp`): external agents and tools (Claude Code, Compendium) can run a full governed turn or read memory over MCP, stdio or LAN HTTP ([ADR-0015](docs/adr/0015-mcp-server-additive-channel.md)).
+- **Speaks MCP in both directions.** As a server (`ubongo mcp`), external agents (Claude Code, Compendium) can run a full governed turn or read memory ([ADR-0015](docs/adr/0015-mcp-server-additive-channel.md)); as a client, the Connector agent calls the MCP servers you declare in config — `/mode connector_session` — with governance escalating risk per server ([ADR-0016](docs/adr/0016-connector-agent-external-tools-one-seam.md)).
 - **Profiles itself, locally.** On-demand performance breakdowns by agent/model/mode, opt-in CPU (cProfile) and memory (tracemalloc) profiling (`/profile`, `--profile`, `UBONGO_PROFILE`); nothing telemetric ever leaves the machine ([ADR-0014](docs/adr/0014-local-only-observability-profiler.md)).
 
 ## How It Works (one screen)
@@ -258,6 +258,29 @@ HTTP and point the client at `http://<this-host>:8765/mcp`:
 Same security posture as the web UI: no auth, no TLS, home LAN only
 ([docs/SECURITY.md](docs/SECURITY.md)).
 
+**The other direction** — Ubongo calling external MCP servers (v0.1.5): declare
+them in `config/settings.yaml` and invoke the Connector explicitly:
+
+```yaml
+mcp:
+  servers:
+    compendium:
+      transport: http
+      url: http://192.168.1.50:9000/mcp
+      risk: low        # governance escalates the turn to at least this level
+      enabled: true
+```
+
+```text
+> /mode connector_session
+> what does Compendium know about X?
+```
+
+The Connector plans and executes the tool calls and threads the results to the
+architect; a dead server degrades to a normal answer. Not auto-routed by
+design; tokens for protected servers come from `.env` via each server's
+`env:` map, never from config.
+
 Deployment bundles are published automatically: merging a `VERSION` bump to
 `main` makes the release pipeline run the tests **and the automated smoke gate**
 (`scripts/smoke.sh`; plus a small live-model subset when an API-key secret is
@@ -283,7 +306,7 @@ The full v0.1 command surface:
 
 ### Inspection
 
-- `/agents` — list registered worker agents (10: architect, casual, coding, critic, evaluator, execution, memory, operator, repair, research)
+- `/agents` — list registered worker agents (11: architect, casual, coding, connector, critic, evaluator, execution, memory, operator, repair, research)
 - `/skills` — list available skills
 - `/decisions [N]` — last N Master Agent decisions for this session (default 10)
 - `/trace [N]` — full execution trace for the N most recent turns: classification, workflow agents, per-agent timings + tokens + confidence, repair line, governance decision (default 1)

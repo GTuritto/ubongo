@@ -26,7 +26,7 @@ C4Component
   Component(router, "Router", "Python", "plan_workflow: classification -> validated WorkflowPlan")
   Component(governance, "Governance", "Python", "Decision matrix")
   Component(repair, "Repair Agent", "Python", "Failure taxonomy + recovery ladder")
-  Component(fleet, "Worker Agent Fleet", "Python", "Research, Coding, Evaluator, Critic, Execution, Persona")
+  Component(fleet, "Worker Agent Fleet", "Python", "Research, Coding, Evaluator, Critic, Execution, Connector, Persona")
   Component(envelope, "Model-call Envelope", "agents/llm_run", "run_agent_llm / call_model_or_none: timer, model resolve, error->AgentResult, logging")
   Component(bus, "Event Bus", "Python", "before_*/after_* hooks")
   Component(profiler, "Profiler", "ubongo.profiling", "/profile: read-only stats over the run tables; opt-in cProfile/tracemalloc around the turn (ADR-0014)")

@@ -168,6 +168,17 @@ else
   skip "mcp server checks (mcp extra not installed; uv sync --extra mcp)"
 fi
 
+# ---------- MCP client / Connector (candidate 20; needs the extra) ----------
+if $PY -c "import mcp" >/dev/null 2>&1; then
+  printf '/mode list\n/agents\n/exit\n' | $CMD >"$TMP/conn.out" 2>/dev/null
+  expect "connector_session declared"      "connector_session"  "$TMP/conn.out"
+  expect "connector agent registered"      "connector"          "$TMP/conn.out"
+  $PY -c "from ubongo.mcp import client; assert client.servers() == []" \
+    && ok "mcp client config parses (no servers enabled)" || bad "mcp client config parse"
+else
+  skip "mcp client checks (mcp extra not installed)"
+fi
+
 # ---------- live subset (real model; ~3 calls) ----------
 if [ $LIVE -eq 1 ]; then
   $CMD send "Reply with exactly: smoke live ok" --persona casual >"$TMP/live1.out" 2>/dev/null; rc=$?
@@ -181,6 +192,27 @@ if [ $LIVE -eq 1 ]; then
   $CMD send "Reply with one word." --profile >"$TMP/live3.out" 2>/dev/null; rc=$?
   expect_rc "profiled live turn" 0 $rc
   expect "cpu profile artifact written" "CPU profile written to" "$TMP/live3.out"
+
+  # Connector loop-back: Ubongo's own MCP server becomes the client's peer, so
+  # the full outbound path (catalog -> plan -> call -> finding) runs with no
+  # external dependency.
+  if $PY -c "import mcp" >/dev/null 2>&1; then
+    ./ubongo-ctl.sh start mcp >/dev/null 2>&1 && sleep 4
+    cp config/settings.yaml "$TMP/settings.bak"
+    $PY -c "
+import pathlib
+p = pathlib.Path('config/settings.yaml'); t = p.read_text()
+t = t.replace('mcp:\n  servers: {}', 'mcp:\n  servers:\n    selfback:\n      transport: http\n      url: http://127.0.0.1:8765/mcp\n      risk: low\n      enabled: true')
+p.write_text(t)
+"
+    printf '/mode connector_session\nUse the available external tool to recall anything about smoke, then summarize what came back.\n/exit\n' \
+      | $CMD >"$TMP/loopback.out" 2>/dev/null; rc=$?
+    cp "$TMP/settings.bak" config/settings.yaml
+    ./ubongo-ctl.sh stop mcp >/dev/null 2>&1
+    expect_rc "connector loop-back session exits clean" 0 $rc
+    grep -qi "connector\|external tool" "$TMP/loopback.out" 2>/dev/null \
+      && ok "connector produced a finding" || bad "connector finding missing"
+  fi
 fi
 
 # ---------- cleanup + verdict ----------

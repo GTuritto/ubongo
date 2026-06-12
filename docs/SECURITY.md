@@ -135,6 +135,19 @@ Three properties bound what a caller can do:
 An unattended caller can spend model tokens via `ubongo_send`; at this scale
 (one user, one LAN) the posture is accepted rather than rate-limited.
 
+## Outbound MCP calls (the Connector, v0.1.5)
+
+The Connector agent ([ADR-0016](adr/0016-connector-agent-external-tools-one-seam.md))
+is the only component that calls external services, and only the servers you
+enable in `mcp.servers`. What leaves the machine is the **tool arguments its
+model plans** — treat an enabled server as a recipient of conversation-derived
+text. Controls: per-server `enabled` + `risk` (a high-risk server gates the
+turn through the approval flow), the not-auto-routed workflow (external calls
+need an explicit `/mode`), irreversibility scoring, and the `[mcp]` audit
+trail. Secrets for protected servers come from the environment via each
+server's `env:` map; config files never hold them. The `/exec` sandbox's
+no-network guarantee is unchanged — MCP egress does not pass through it.
+
 ## Reporting
 
 This is a personal project with no external attack surface in the default CLI

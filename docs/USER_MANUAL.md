@@ -133,6 +133,16 @@ Anything the governance gate would stop still gets stopped — and a gated turn
 **cannot be approved over MCP**; approving stays here (REPL `y/n/why`) or on
 the web page (Approve/Deny). Same home-network-only rule as the web page.
 
+### Calling other services (the Connector)
+
+Ubongo can also use *other* MCP servers (e.g. your Compendium project).
+Declare them under `mcp.servers` in `config/settings.yaml` (examples are in
+the file), then ask explicitly: `/mode connector_session` followed by your
+question. Ubongo's Connector agent picks the right tool, calls it, and weaves
+the result into the answer; if the server is down you still get a normal
+answer. Each server declares a `risk` level — a high-risk server makes the
+turn ask for your approval, exactly like a destructive request would.
+
 It is the same Ubongo — the web page runs every turn through the exact same
 pipeline as the REPL (classify → plan → execute → govern → compose → remember),
 sharing the same database and vault.
@@ -194,7 +204,7 @@ All commands start with `/`. (One-shot mode uses CLI flags instead.)
 ### Inspection
 | Command | What it does |
 |---|---|
-| `/agents` | List the ten worker agents |
+| `/agents` | List the eleven worker agents |
 | `/skills` | List available skills |
 | `/decisions [N]` | The last N governance decisions |
 | `/trace [N]` | Full execution trace of the last N turns (agents, timings, tokens, repair, governance) |
