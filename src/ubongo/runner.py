@@ -94,12 +94,12 @@ class WorkflowRunner:
         message: str,
         history: list,
         summary_text: str | None,
-        prior_findings: list[str],
         workflow,
         context,
         workflow_run_id: int | None,
-        override_model: str | None,
-        retried: bool,
+        prior_findings: "list[str] | tuple[str, ...]" = (),
+        override_model: str | None = None,
+        retried: bool = False,
         repair_prompt_hint: str | None = None,
         max_tokens_override: int | None = None,
         debate_role: str | None = None,
@@ -239,6 +239,19 @@ class WorkflowRunner:
         )
 
     # ---------- shared composer + result selection ----------
+
+    def _fanout_tasks(self, resolved, *, message, history, summary_text,
+                      workflow, context, workflow_run_id):
+        """The fan-out dispatch parallel/competitive/collaborative repeat: one
+        coroutine per resolved (name, agent), fresh input, no prior findings."""
+        return [
+            self._dispatch_agent_async(
+                agent=agent, agent_name=name, message=message, history=history,
+                summary_text=summary_text, workflow=workflow, context=context,
+                workflow_run_id=workflow_run_id,
+            )
+            for name, agent in resolved
+        ]
 
     def _build_workflow_result(
         self,
@@ -544,22 +557,11 @@ class WorkflowRunner:
         agent_names = [n for n, _ in resolved]
         agents = [a for _, a in resolved]
 
-        tasks = [
-            self._dispatch_agent_async(
-                agent=agent,
-                agent_name=name,
-                message=message,
-                history=history,
-                summary_text=summary_text,
-                prior_findings=[],
-                workflow=workflow,
-                context=context,
-                workflow_run_id=workflow_run_id,
-                override_model=None,
-                retried=False,
-            )
-            for name, agent in resolved
-        ]
+        tasks = self._fanout_tasks(
+            resolved, message=message, history=history,
+            summary_text=summary_text, workflow=workflow, context=context,
+            workflow_run_id=workflow_run_id,
+        )
         results: list[AgentResult] = list(await asyncio.gather(*tasks))
 
         # Phase 13c: per-failure peer replacement. Single hop only.
@@ -622,22 +624,11 @@ class WorkflowRunner:
         competitor_names = [n for n, _ in resolved]
         competitor_agents = [a for _, a in resolved]
 
-        tasks = [
-            self._dispatch_agent_async(
-                agent=agent,
-                agent_name=name,
-                message=message,
-                history=history,
-                summary_text=summary_text,
-                prior_findings=[],
-                workflow=workflow,
-                context=context,
-                workflow_run_id=workflow_run_id,
-                override_model=None,
-                retried=False,
-            )
-            for name, agent in resolved
-        ]
+        tasks = self._fanout_tasks(
+            resolved, message=message, history=history,
+            summary_text=summary_text, workflow=workflow, context=context,
+            workflow_run_id=workflow_run_id,
+        )
         results: list[AgentResult] = list(await asyncio.gather(*tasks))
 
         # Phase 13c: per-failure peer replacement before ranking, so a
@@ -747,22 +738,11 @@ class WorkflowRunner:
         producer_names = [n for n, _ in resolved]
         producer_agents = [a for _, a in resolved]
 
-        tasks = [
-            self._dispatch_agent_async(
-                agent=agent,
-                agent_name=name,
-                message=message,
-                history=history,
-                summary_text=summary_text,
-                prior_findings=[],
-                workflow=workflow,
-                context=context,
-                workflow_run_id=workflow_run_id,
-                override_model=None,
-                retried=False,
-            )
-            for name, agent in resolved
-        ]
+        tasks = self._fanout_tasks(
+            resolved, message=message, history=history,
+            summary_text=summary_text, workflow=workflow, context=context,
+            workflow_run_id=workflow_run_id,
+        )
         results: list[AgentResult] = list(await asyncio.gather(*tasks))
 
         # Phase 13c: for each failed producer, ask Repair if peer-replacement
@@ -818,8 +798,6 @@ class WorkflowRunner:
                     workflow=workflow,
                     context=context,
                     workflow_run_id=workflow_run_id,
-                    override_model=None,
-                    retried=False,
                 )
                 if eval_result.ok and eval_result.confidence is not None:
                     evaluator_confidence = eval_result.confidence
@@ -892,8 +870,6 @@ class WorkflowRunner:
                     workflow=workflow,
                     context=context,
                     workflow_run_id=workflow_run_id,
-                    override_model=None,
-                    retried=False,
                     debate_role=debate_role,
                 )
                 if not result.ok:
@@ -938,8 +914,6 @@ class WorkflowRunner:
             workflow=workflow,
             context=context,
             workflow_run_id=workflow_run_id,
-            override_model=None,
-            retried=False,
             debate_role="synthesize",
         )
 
@@ -1005,16 +979,14 @@ class WorkflowRunner:
         cheap_task = asyncio.create_task(self._dispatch_agent_async(
             agent=cheap_agent, agent_name=cheap_name,
             message=message, history=history, summary_text=summary_text,
-            prior_findings=[], workflow=workflow, context=context,
+            workflow=workflow, context=context,
             workflow_run_id=workflow_run_id,
-            override_model=None, retried=False,
         ))
         strong_task = asyncio.create_task(self._dispatch_agent_async(
             agent=strong_agent, agent_name=strong_name,
             message=message, history=history, summary_text=summary_text,
-            prior_findings=[], workflow=workflow, context=context,
+            workflow=workflow, context=context,
             workflow_run_id=workflow_run_id,
-            override_model=None, retried=False,
         ))
 
         try:
