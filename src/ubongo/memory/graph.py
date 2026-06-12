@@ -8,7 +8,6 @@ notes by `memory/vault.py`). Paths are vault-relative strings (e.g.
 from __future__ import annotations
 
 from ubongo.memory import index_state
-from ubongo.memory import store
 
 
 def outbound(path: str) -> list[str]:

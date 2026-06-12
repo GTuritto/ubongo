@@ -15,7 +15,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ubongo.memory import authoring_state
-from ubongo.memory import store
 from ubongo.memory import trace
 
 _DEFAULT_LIMIT = 200

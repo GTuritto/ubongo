@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from ubongo.evolution import targets
 from ubongo.memory import evolution_state
-from ubongo.memory import store
 
 
 def next_target() -> str | None:

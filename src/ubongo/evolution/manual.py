@@ -15,7 +15,6 @@ from ubongo.config import load_evolution
 from ubongo.evolution import generator, lineage, loop, sandbox
 from ubongo.evolution.targets import UnknownTargetError, is_target
 from ubongo.memory import evolution_state
-from ubongo.memory import store
 
 
 class NoVariantsError(Exception):

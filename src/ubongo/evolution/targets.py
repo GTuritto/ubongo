@@ -25,7 +25,6 @@ import yaml
 
 from ubongo.agents import personas
 from ubongo.memory import evolution_state
-from ubongo.memory import store
 
 PROMPT = "prompt"
 CONFIG = "config"

@@ -46,8 +46,7 @@ def _render_approval_gate() -> None:
     """A turn that governance held for approval. Mirrors the REPL's y/n: Approve
     re-issues with approved=True; Deny records the decline. Persists the choice to
     governance_decisions.approval_response, like the REPL."""
-    from ubongo.memory import store
-from ubongo.memory import trace
+    from ubongo.memory import trace
 
     pa = st.session_state.pending_approval
     approval = pa["approval"]

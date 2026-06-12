@@ -28,7 +28,6 @@ from ubongo import daemon
 from ubongo.config import load_authoring
 from ubongo.evaluation import CallBudget
 from ubongo.memory import authoring_state
-from ubongo.memory import store
 
 logger = logging.getLogger("ubongo.authoring.loop")
 

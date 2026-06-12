@@ -17,7 +17,7 @@ from ubongo.authoring import quarantine
 from ubongo.authoring.candidate import DraftError, SkillCandidate, draft_candidate
 from ubongo.authoring.validation import CandidateInvalid, validate
 from ubongo.memory import authoring_state
-from ubongo.memory import store, vault
+from ubongo.memory import vault
 
 logger = logging.getLogger("ubongo.authoring.manual")
 

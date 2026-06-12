@@ -16,7 +16,6 @@ from ubongo.commands import Command, ReplState
 from ubongo.commands import format_time as _format_time  # noqa: F401
 from ubongo.evaluation import diff_preview
 from ubongo.memory import authoring_state
-from ubongo.memory import store
 
 logger = logging.getLogger("ubongo.authoring.commands")
 

@@ -30,7 +30,6 @@ from ubongo.config import load_evolution
 from ubongo.evolution import fitness, generator, lineage, sandbox, selection
 from ubongo.evolution.sandbox import CallBudget
 from ubongo.memory import evolution_state
-from ubongo.memory import store
 
 logger = logging.getLogger("ubongo.evolution.loop")
 

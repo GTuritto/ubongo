@@ -19,7 +19,6 @@ import yaml
 
 from ubongo.authoring.candidate import SkillCandidate
 from ubongo.memory import authoring_state
-from ubongo.memory import store
 
 logger = logging.getLogger("ubongo.authoring.quarantine")
 
