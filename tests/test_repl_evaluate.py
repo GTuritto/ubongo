@@ -14,6 +14,8 @@ from ubongo.memory import evolution_state
 from ubongo.memory import store  # noqa: E402
 from ubongo.repl import (  # noqa: E402
     _HELP_COMMANDS,
+)
+from ubongo.evolution.commands import (  # noqa: E402
     _EVALUATE_LIST_SENTINEL,
     _parse_evaluate_command,
     _render_evaluate,

@@ -11,6 +11,7 @@ from ubongo import repl, skills  # noqa: E402
 from ubongo.authoring import candidate, promotion, quarantine  # noqa: E402
 from ubongo.commands import ReplState  # noqa: E402
 from ubongo.llm import CompletionResult  # noqa: E402
+from ubongo.authoring import commands as auth_commands
 from ubongo.memory import authoring_state
 from ubongo.memory import store, vault  # noqa: E402
 
@@ -48,7 +49,7 @@ def _fake(**kwargs):
 
 def test_author_command_drafts_and_quarantines(env, monkeypatch) -> None:
     monkeypatch.setattr(candidate, "complete", _fake)
-    out = repl._cmd_author("author release notes from a diff", _state())
+    out = auth_commands._cmd_author("author release notes from a diff", _state())
     assert "diff-notes" in out
     assert "quarantined" in out.lower()
     assert "git diff --stat" in out
@@ -57,20 +58,20 @@ def test_author_command_drafts_and_quarantines(env, monkeypatch) -> None:
 
 
 def test_author_command_usage_when_empty(env) -> None:
-    out = repl._cmd_author("author", _state())
+    out = auth_commands._cmd_author("author", _state())
     assert "Usage" in out
 
 
 def test_skill_candidates_lists_drafts(env, monkeypatch) -> None:
     monkeypatch.setattr(candidate, "complete", _fake)
-    repl._cmd_author("author release notes", _state())
-    listing = repl._cmd_skill_candidates("skill-candidates", _state())
+    auth_commands._cmd_author("author release notes", _state())
+    listing = auth_commands._cmd_skill_candidates("skill-candidates", _state())
     assert "diff-notes" in listing
     assert "draft" in listing
 
 
 def test_skill_candidates_empty(env) -> None:
-    out = repl._cmd_skill_candidates("skill-candidates", _state())
+    out = auth_commands._cmd_skill_candidates("skill-candidates", _state())
     assert "No authored skill candidates" in out
 
 
@@ -88,15 +89,15 @@ def test_author_shows_quality_when_eval_enabled(env, monkeypatch) -> None:
                                 latency_ms=4, attempts=1)
     monkeypatch.setattr(eval_sandbox, "complete", _eval_complete)
 
-    out = repl._cmd_author("author release notes from a diff", _state())
+    out = auth_commands._cmd_author("author release notes from a diff", _state())
     assert "quality:" in out
     # listing should also show the score
-    listing = repl._cmd_skill_candidates("skill-candidates", _state())
+    listing = auth_commands._cmd_skill_candidates("skill-candidates", _state())
     assert "quality=" in listing
 
 
 def _draft(state) -> int:
-    repl._cmd_author("author summarize a git diff into notes", state)
+    auth_commands._cmd_author("author summarize a git diff into notes", state)
     return authoring_state.authored_skills(status="draft")[0]["id"]
 
 
@@ -104,10 +105,10 @@ def test_gate_approve_then_rollback(env, monkeypatch) -> None:
     monkeypatch.setattr(candidate, "complete", _fake)
     st = _state()
     cid = _draft(st)
-    out = repl._cmd_skill_candidates(f"skill-candidates approve {cid}", st)
+    out = auth_commands._cmd_skill_candidates(f"skill-candidates approve {cid}", st)
     assert "Approved" in out and "now in /skills" in out
     assert skills.has("diff-notes")
-    out2 = repl._cmd_skill_candidates("skill-candidates rollback diff-notes", st)
+    out2 = auth_commands._cmd_skill_candidates("skill-candidates rollback diff-notes", st)
     assert "Rolled back" in out2
     assert not skills.has("diff-notes")
 
@@ -116,17 +117,17 @@ def test_gate_reject(env, monkeypatch) -> None:
     monkeypatch.setattr(candidate, "complete", _fake)
     st = _state()
     cid = _draft(st)
-    out = repl._cmd_skill_candidates(f"skill-candidates reject {cid}", st)
+    out = auth_commands._cmd_skill_candidates(f"skill-candidates reject {cid}", st)
     assert "Rejected" in out
     assert authoring_state.get_authored_skill(cid)["status"] == "rejected"
     assert not skills.has("diff-notes")
 
 
 def test_gate_usage_and_errors(env) -> None:
-    assert "Usage" in repl._cmd_skill_candidates("skill-candidates approve", _state())
-    assert "Usage" in repl._cmd_skill_candidates("skill-candidates approve notanint", _state())
-    assert "Cannot do that" in repl._cmd_skill_candidates("skill-candidates approve 999", _state())
-    assert "Cannot do that" in repl._cmd_skill_candidates("skill-candidates rollback nope", _state())
+    assert "Usage" in auth_commands._cmd_skill_candidates("skill-candidates approve", _state())
+    assert "Usage" in auth_commands._cmd_skill_candidates("skill-candidates approve notanint", _state())
+    assert "Cannot do that" in auth_commands._cmd_skill_candidates("skill-candidates approve 999", _state())
+    assert "Cannot do that" in auth_commands._cmd_skill_candidates("skill-candidates rollback nope", _state())
 
 
 def test_listing_shows_collision_diff(env, monkeypatch) -> None:
@@ -134,21 +135,21 @@ def test_listing_shows_collision_diff(env, monkeypatch) -> None:
     st = _state()
     # approve a first version so a live skill exists
     cid = _draft(st)
-    repl._cmd_skill_candidates(f"skill-candidates approve {cid}", st)
+    auth_commands._cmd_skill_candidates(f"skill-candidates approve {cid}", st)
     # draft a second version of the same name; listing should show a diff
     _draft(st)
-    listing = repl._cmd_skill_candidates("skill-candidates", st)
+    listing = auth_commands._cmd_skill_candidates("skill-candidates", st)
     assert "would overwrite live 'diff-notes'" in listing
 
 
 def test_authoring_status_and_control(env) -> None:
-    out = repl._cmd_authoring("authoring", _state())
+    out = auth_commands._cmd_authoring("authoring", _state())
     assert "Authoring daemon:" in out and "paused" in out
-    repl._cmd_authoring("authoring resume", _state())
+    auth_commands._cmd_authoring("authoring resume", _state())
     assert authoring_state.get_authoring_status() == "running"
-    repl._cmd_authoring("authoring pause", _state())
+    auth_commands._cmd_authoring("authoring pause", _state())
     assert authoring_state.get_authoring_status() == "paused"
-    repl._cmd_authoring("authoring off", _state())
+    auth_commands._cmd_authoring("authoring off", _state())
     assert authoring_state.get_authoring_status() == "off"
 
 

@@ -13,6 +13,8 @@ from ubongo.memory import store  # noqa: E402
 from ubongo import repl  # noqa: E402
 from ubongo.repl import (  # noqa: E402
     _HELP_COMMANDS,
+)
+from ubongo.evolution.commands import (  # noqa: E402
     _parse_evolution_command,
     _render_evolution_control,
     _render_evolution_status,

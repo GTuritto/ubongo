@@ -13,6 +13,8 @@ from ubongo.memory import evolution_state
 from ubongo.memory import store, vault  # noqa: E402
 from ubongo.repl import (  # noqa: E402
     _HELP_COMMANDS,
+)
+from ubongo.evolution.commands import (  # noqa: E402
     _parse_improvements_command,
     _render_improvements_action,
     _render_improvements_list,

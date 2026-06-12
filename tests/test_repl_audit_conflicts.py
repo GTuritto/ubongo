@@ -11,6 +11,8 @@ from ubongo.memory import index_state
 from ubongo.memory import store, vault  # noqa: E402
 from ubongo.repl import (  # noqa: E402
     _HELP_COMMANDS,
+)
+from ubongo.memory.commands import (  # noqa: E402
     _parse_audit_command,
     _parse_conflicts_command,
     _render_audit,

@@ -16,32 +16,6 @@ from ubongo.authoring import commands as authoring_commands
 from ubongo.evolution import commands as evolution_commands
 from ubongo.memory import commands as memory_commands
 
-# Candidate 18: the subsystem command packs moved out of this module; every
-# name below is re-exported because tests (and only tests) import them from
-# ubongo.repl. New code should import from the packs.
-from ubongo.evaluation import diff_preview as _diff_preview  # noqa: F401
-from ubongo.evolution.commands import (  # noqa: F401
-    _EVALUATE_LIST_SENTINEL, _OPTIMIZE_LIST_SENTINEL, _cmd_evaluate,
-    _cmd_evolution, _cmd_improvements, _cmd_optimize,
-    _parse_evaluate_command, _parse_evolution_command,
-    _parse_improvements_command, _parse_optimize_command, _render_evaluate,
-    _render_evaluate_targets, _render_evolution_control,
-    _render_evolution_status, _render_improvements_action,
-    _render_improvements_list, _render_optimize, _render_optimize_targets,
-)
-from ubongo.authoring.commands import (  # noqa: F401
-    _cmd_author, _cmd_authoring, _cmd_skill_candidates,
-    _parse_author_command, _parse_authoring_command,
-    _parse_skill_candidates_command, _render_author,
-    _render_authoring_control, _render_authoring_status,
-    _render_skill_candidates_action, _render_skill_candidates_list,
-)
-from ubongo.memory.commands import (  # noqa: F401
-    _cmd_audit, _cmd_conflicts, _cmd_recall, _parse_audit_command,
-    _parse_conflicts_command, _parse_recall_command, _render_audit,
-    _render_conflicts_list, _render_conflicts_resolve, _render_recall,
-)
-
 logger = logging.getLogger("ubongo.repl")
 
 # Candidate 18: the shared mini-helpers live in ubongo.commands; aliases keep
