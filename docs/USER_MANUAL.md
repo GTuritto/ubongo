@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Ubongo.png" alt="Ubongo logo: an armored brain with a terminal-prompt face and a governance shield" width="360">
+  <img src="Ubongo-Monkey.png" alt="Ubongo logo: a cybernetic monkey with glowing circuitry playing the bongos" width="360">
 </p>
 
 # Ubongo User Manual (v0.1.2)
