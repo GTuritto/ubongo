@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 from ubongo import events
 from ubongo.agents.base import Agent, AgentDirectives, AgentInput, AgentResult
 from ubongo.memory import store
+from ubongo.memory import trace
 
 if TYPE_CHECKING:
     from ubongo.master import Context, Workflow, WorkflowResult
@@ -151,7 +152,7 @@ class WorkflowRunner:
         ended_at = store.now_iso()
 
         if workflow_run_id is not None:
-            store.append_agent_run(
+            trace.append_agent_run(
                 workflow_run_id=workflow_run_id,
                 agent=agent_name,
                 model=result.model,
@@ -308,7 +309,7 @@ class WorkflowRunner:
         is None (test paths that bypass master.handle)."""
         if workflow_run_id is None:
             return
-        store.append_repair_run(
+        trace.append_repair_run(
             workflow_run_id=workflow_run_id,
             agent=agent_name,
             failure_kind=failure_kind,
@@ -675,7 +676,7 @@ class WorkflowRunner:
         # Persist the evaluator's ranking as an agent_runs row so /trace shows
         # the judging step. confidence carries the winner's score (or None).
         if workflow_run_id is not None:
-            store.append_agent_run(
+            trace.append_agent_run(
                 workflow_run_id=workflow_run_id,
                 agent="evaluator",
                 model=getattr(evaluator, "default_model", None),
@@ -1052,7 +1053,7 @@ class WorkflowRunner:
                 )
                 agree_ended = store.now_iso()
                 if workflow_run_id is not None:
-                    store.append_agent_run(
+                    trace.append_agent_run(
                         workflow_run_id=workflow_run_id,
                         agent="evaluator",
                         model=getattr(evaluator, "default_model", None),

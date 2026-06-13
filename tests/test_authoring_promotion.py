@@ -11,6 +11,7 @@ from ubongo import events, skills  # noqa: E402
 from ubongo.authoring import promotion, quarantine  # noqa: E402
 from ubongo.authoring.candidate import SkillCandidate  # noqa: E402
 from ubongo.authoring.promotion import PromotionError  # noqa: E402
+from ubongo.memory import authoring_state
 from ubongo.memory import store, vault  # noqa: E402
 
 
@@ -50,8 +51,8 @@ def test_approve_registers_and_is_discoverable(env) -> None:
     assert r.name == "diff-notes" and not r.backed_up
     assert skills.has("diff-notes")
     assert "diff-notes" in [s.name for s in skills.list_skills()]
-    assert store.get_authored_skill(cid)["status"] == "approved"
-    assert store.get_authored_skill(cid)["decided_at"] is not None
+    assert authoring_state.get_authored_skill(cid)["status"] == "approved"
+    assert authoring_state.get_authored_skill(cid)["decided_at"] is not None
     assert any(c[0] == "authoring" and "approved" in c[1] for c in audits)
     assert decisions and decisions[-1]["event"] == "approved"
 
@@ -65,7 +66,7 @@ def test_approve_over_existing_backs_up(env) -> None:
     r2 = promotion.approve(cid2)
     assert r2.backed_up and r2.backup_path is not None
     assert Path(r2.backup_path).is_dir()
-    assert store.get_authored_skill(cid2)["backup_path"] == r2.backup_path
+    assert authoring_state.get_authored_skill(cid2)["backup_path"] == r2.backup_path
     # live is now v2
     assert "v2 body improved" in (skills.skills_dir() / "diff-notes" / "SKILL.md").read_text()
     # the backup is byte-for-byte v1
@@ -78,7 +79,7 @@ def test_approve_reenforces_risk_floor(env) -> None:
     cand = {"name": "runner", "description": "d", "risk": "low",
             "reversibility": "reversible", "default_persona": None, "body": "b",
             "prompts": {}, "command_template": "git status", "metadata": {}}
-    cid = store.append_authored_skill(name="runner", description="d", status="draft",
+    cid = authoring_state.append_authored_skill(name="runner", description="d", status="draft",
                                       generation=1, source="manual", candidate=cand)
     promotion.approve(cid)
     md = (skills.skills_dir() / "runner" / "SKILL.md").read_text(encoding="utf-8")
@@ -105,7 +106,7 @@ def test_reject_leaves_quarantined(env) -> None:
     cid = quarantine.persist(_candidate())
     r = promotion.reject(cid)
     assert r.name == "diff-notes"
-    assert store.get_authored_skill(cid)["status"] == "rejected"
+    assert authoring_state.get_authored_skill(cid)["status"] == "rejected"
     assert not skills.has("diff-notes")
     # quarantine folder is left in place
     assert (quarantine.candidates_dir() / "diff-notes" / "SKILL.md").exists()
@@ -124,7 +125,7 @@ def test_rollback_restores_prior_version(env) -> None:
     assert r.restored
     assert skills.has("diff-notes")  # still registered, just the old version
     assert (skills.skills_dir() / "diff-notes" / "SKILL.md").read_text(encoding="utf-8") == v1
-    assert store.get_authored_skill(cid2)["status"] == "rolled_back"
+    assert authoring_state.get_authored_skill(cid2)["status"] == "rolled_back"
 
 
 def test_rollback_without_backup_unregisters(env) -> None:
@@ -133,7 +134,7 @@ def test_rollback_without_backup_unregisters(env) -> None:
     r = promotion.rollback("diff-notes")
     assert not r.restored
     assert not skills.has("diff-notes")
-    assert store.get_authored_skill(cid)["status"] == "rolled_back"
+    assert authoring_state.get_authored_skill(cid)["status"] == "rolled_back"
 
 
 def test_rollback_nothing_live_raises(env) -> None:

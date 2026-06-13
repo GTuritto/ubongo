@@ -10,6 +10,7 @@ os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 from ubongo import context  # noqa: E402
 from ubongo.agents import personas  # noqa: E402
 from ubongo.evolution import promotion  # noqa: E402
+from ubongo.memory import evolution_state
 from ubongo.memory import store, vault  # noqa: E402
 
 
@@ -30,11 +31,11 @@ _MARKER = "PROMOTED_ARCHITECT_BODY_MARKER_12345"
 
 
 def _seed_and_propose() -> int:
-    lid = store.append_lineage_variant(
+    lid = evolution_state.append_lineage_variant(
         target="persona:architect", parent_id=None, generation=1,
         variant_text=_MARKER, variant_metadata={"strategy": "prune", "kind": "prompt"},
     )
-    store.append_evaluation(
+    evolution_state.append_evaluation(
         lineage_id=lid, sample_set="s", success_rate=0.9, cost=1, latency_ms=1,
         hallucination_rate=0, user_correction_rate=0, fitness=0.9,
     )

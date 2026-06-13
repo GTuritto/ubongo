@@ -29,7 +29,7 @@ from ubongo import daemon
 from ubongo.config import load_evolution
 from ubongo.evolution import fitness, generator, lineage, sandbox, selection
 from ubongo.evolution.sandbox import CallBudget
-from ubongo.memory import store
+from ubongo.memory import evolution_state
 
 logger = logging.getLogger("ubongo.evolution.loop")
 
@@ -58,7 +58,7 @@ def persist_cohort_evaluations(result: "sandbox.TargetEvaluation") -> list:
     free). Returns the ranked (metrics, fitness) pairs, best first."""
     ranked = fitness.rank_cohort(result.cohort)
     for metrics, fit in ranked:
-        store.append_evaluation(
+        evolution_state.append_evaluation(
             lineage_id=metrics.lineage_id,
             sample_set=result.sample_set_version,
             success_rate=metrics.success_rate,
@@ -99,17 +99,17 @@ def run_one_cycle(
     if target is None:
         return CycleResult(target=None, generation=None, action="idle", note="no evolvable targets")
 
-    latest_gen = store.max_lineage_generation(target)
+    latest_gen = evolution_state.max_lineage_generation(target)
 
     # --- recovery: re-evaluate an incomplete latest generation ---
     if latest_gen > 0:
-        variant_rows = store.lineage_for_target(target, generation=latest_gen)
-        eval_rows = store.evaluations_for_target(target, generation=latest_gen)
+        variant_rows = evolution_state.lineage_for_target(target, generation=latest_gen)
+        eval_rows = evolution_state.evaluations_for_target(target, generation=latest_gen)
         if variant_rows and len(eval_rows) < len(variant_rows):
-            run_id = store.start_evolution_run(target=target, generation=latest_gen)
+            run_id = evolution_state.start_evolution_run(target=target, generation=latest_gen)
             result = sandbox.evaluate_target(variant_rows, target, budget=budget)
             persist_cohort_evaluations(result)
-            store.finish_evolution_run(run_id, calls_spent=budget.spent, outcome=_outcome(result))
+            evolution_state.finish_evolution_run(run_id, calls_spent=budget.spent, outcome=_outcome(result))
             if result.evaluated > 0:
                 from ubongo.evolution import promotion
                 promotion.propose_if_better(target, latest_gen)
@@ -124,7 +124,7 @@ def run_one_cycle(
 
     # --- generate the next generation ---
     new_gen = latest_gen + 1
-    run_id = store.start_evolution_run(target=target, generation=new_gen)
+    run_id = evolution_state.start_evolution_run(target=target, generation=new_gen)
 
     parent = None
     if latest_gen > 0:
@@ -141,17 +141,17 @@ def run_one_cycle(
         variants = generator.generate(target, population_size, budget=budget)
 
     if not variants:
-        store.finish_evolution_run(run_id, calls_spent=budget.spent, outcome="aborted")
+        evolution_state.finish_evolution_run(run_id, calls_spent=budget.spent, outcome="aborted")
         return CycleResult(
             target=target, generation=new_gen, action="aborted",
             calls_spent=budget.spent, note="generator produced no variants",
         )
 
     lineage.record_variants(target, variants)  # next_generation resolves to new_gen
-    variant_rows = store.lineage_for_target(target, generation=new_gen)
+    variant_rows = evolution_state.lineage_for_target(target, generation=new_gen)
     result = sandbox.evaluate_target(variant_rows, target, budget=budget)
     persist_cohort_evaluations(result)
-    store.finish_evolution_run(run_id, calls_spent=budget.spent, outcome=_outcome(result))
+    evolution_state.finish_evolution_run(run_id, calls_spent=budget.spent, outcome=_outcome(result))
     # Phase 19: propose a promotion when this generation's champion beats the
     # active baseline by the margin. The user approves via /improvements.
     if result.evaluated > 0:
@@ -195,24 +195,24 @@ class EvolutionLoop(daemon.DaemonLoop):
     def seed(self) -> None:
         # Seed the control row to 'paused' on first ever launch, so the loop
         # never auto-spends on launch.
-        if store.get_evolution_status() not in ("running", "paused", "off"):
-            store.set_evolution_status("paused")
+        if evolution_state.get_evolution_status() not in ("running", "paused", "off"):
+            evolution_state.set_evolution_status("paused")
 
     def start_extra(self) -> dict:
-        return {"status": store.get_evolution_status()}
+        return {"status": evolution_state.get_evolution_status()}
 
     def run_cycle(self) -> None:
         self._maybe_run_cycle()
 
     def _maybe_run_cycle(self) -> None:
         evo = load_evolution()
-        status = store.get_evolution_status()
+        status = evolution_state.get_evolution_status()
         cap = int(evo.get("max_calls_per_hour", 30))
-        remaining = cap - store.calls_in_last_hour()
+        remaining = cap - evolution_state.calls_in_last_hour()
         cron = evo.get("cron")
         if not _should_cycle(
             status=status, remaining=remaining,
-            seconds_since_last=store.seconds_since_last_cycle(), cron=cron,
+            seconds_since_last=evolution_state.seconds_since_last_cycle(), cron=cron,
         ):
             return
         run_one_cycle(budget=CallBudget(remaining))

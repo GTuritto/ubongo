@@ -7,17 +7,17 @@ notes by `memory/vault.py`). Paths are vault-relative strings (e.g.
 
 from __future__ import annotations
 
-from ubongo.memory import store
+from ubongo.memory import index_state
 
 
 def outbound(path: str) -> list[str]:
     """Targets this note links to."""
-    return store.vault_links_from(path)
+    return index_state.vault_links_from(path)
 
 
 def backlinks(path: str) -> list[str]:
     """Notes that link to this one."""
-    return store.vault_links_to(path)
+    return index_state.vault_links_to(path)
 
 
 def neighbors(path: str) -> list[str]:

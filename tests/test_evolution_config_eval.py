@@ -10,7 +10,8 @@ os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 from ubongo import router  # noqa: E402
 from ubongo.agents import personas  # noqa: E402
 from ubongo.evolution import promotion, sandbox, targets  # noqa: E402
-from ubongo.evolution.sandbox import CallBudget  # noqa: E402
+from ubongo.evaluation import CallBudget  # noqa: E402
+from ubongo.memory import evolution_state
 from ubongo.memory import store  # noqa: E402
 
 
@@ -42,15 +43,15 @@ def test_config_override_routing_restores(db) -> None:
 def test_live_swap_routing_promotion(db) -> None:
     variant_text = ("rules:\n- match: {intent: technical}\n  workflow: casual_reply\n"
                     "default_workflow: casual_reply")
-    lid = store.append_lineage_variant(
+    lid = evolution_state.append_lineage_variant(
         target="routing:default", parent_id=None, generation=1,
         variant_text=variant_text, variant_metadata={"strategy": "retarget", "kind": "config"})
-    store.set_active_evolution("routing:default", lid)
+    evolution_state.set_active_evolution("routing:default", lid)
     from ubongo.classifier import Classification
     cls = Classification(intent="technical", tone="neutral", confidence=0.9,
                          risk="low", task_type=None, suggested_skill=None)
     assert router.route_workflow(cls) == "casual_reply"  # promoted rule in effect
-    store.clear_active_evolution("routing:default")
+    evolution_state.clear_active_evolution("routing:default")
     assert router.route_workflow(cls) != "casual_reply"  # reverted
 
 
@@ -58,12 +59,12 @@ def test_live_swap_toolchain_promotion(db) -> None:
     tc = next(t for t in targets.evolvable_targets() if t.startswith("toolchain:"))
     wf = tc[len("toolchain:"):]
     variant_text = f"workflow: {wf}\nagents: [architect, evaluator]"
-    lid = store.append_lineage_variant(
+    lid = evolution_state.append_lineage_variant(
         target=tc, parent_id=None, generation=1, variant_text=variant_text,
         variant_metadata={"strategy": "add", "kind": "config"})
-    store.set_active_evolution(tc, lid)
+    evolution_state.set_active_evolution(tc, lid)
     assert router.workflow_agents(wf) == ("architect", "evaluator")
-    store.clear_active_evolution(tc)
+    evolution_state.clear_active_evolution(tc)
     assert router.workflow_agents(wf) != ("architect", "evaluator")
 
 
@@ -126,6 +127,6 @@ def test_retry_target_evaluates_without_llm(db) -> None:
     from ubongo.evolution import generator, lineage
     vs = generator.generate("retry:repair", 3)
     lineage.record_variants("retry:repair", vs)
-    rows = store.lineage_for_target("retry:repair", generation=1)
+    rows = evolution_state.lineage_for_target("retry:repair", generation=1)
     res = sandbox.evaluate_target(rows, "retry:repair", budget=CallBudget(0))  # budget 0: proxy needs none
     assert res.evaluated == len(rows)

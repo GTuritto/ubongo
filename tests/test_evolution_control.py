@@ -9,6 +9,7 @@ os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo.evolution import loop  # noqa: E402
 from ubongo.evolution.loop import EvolutionLoop  # noqa: E402
+from ubongo.memory import evolution_state
 from ubongo.memory import store  # noqa: E402
 
 
@@ -21,25 +22,25 @@ def db(tmp_path: Path):
 
 
 def test_status_defaults_paused(db) -> None:
-    assert store.get_evolution_status() == "paused"
+    assert evolution_state.get_evolution_status() == "paused"
 
 
 def test_set_get_status(db) -> None:
-    store.set_evolution_status("running")
-    assert store.get_evolution_status() == "running"
-    store.set_evolution_status("off")
-    assert store.get_evolution_status() == "off"
+    evolution_state.set_evolution_status("running")
+    assert evolution_state.get_evolution_status() == "running"
+    evolution_state.set_evolution_status("off")
+    assert evolution_state.get_evolution_status() == "off"
 
 
 def test_invalid_status_rejected(db) -> None:
     with pytest.raises(ValueError):
-        store.set_evolution_status("bogus")
+        evolution_state.set_evolution_status("bogus")
 
 
 def test_maybe_run_cycle_skips_when_paused(db, monkeypatch) -> None:
     calls = []
     monkeypatch.setattr(loop, "run_one_cycle", lambda **kw: calls.append(kw))
-    store.set_evolution_status("paused")
+    evolution_state.set_evolution_status("paused")
     EvolutionLoop()._maybe_run_cycle()
     assert calls == []
 
@@ -47,7 +48,7 @@ def test_maybe_run_cycle_skips_when_paused(db, monkeypatch) -> None:
 def test_maybe_run_cycle_runs_when_running(db, monkeypatch) -> None:
     calls = []
     monkeypatch.setattr(loop, "run_one_cycle", lambda **kw: calls.append(kw))
-    store.set_evolution_status("running")
+    evolution_state.set_evolution_status("running")
     EvolutionLoop()._maybe_run_cycle()
     assert len(calls) == 1
     assert calls[0]["budget"].limit == 30  # seeded from max_calls_per_hour - 0
@@ -56,7 +57,7 @@ def test_maybe_run_cycle_runs_when_running(db, monkeypatch) -> None:
 def test_maybe_run_cycle_skips_when_off(db, monkeypatch) -> None:
     calls = []
     monkeypatch.setattr(loop, "run_one_cycle", lambda **kw: calls.append(kw))
-    store.set_evolution_status("off")
+    evolution_state.set_evolution_status("off")
     EvolutionLoop()._maybe_run_cycle()
     assert calls == []
 

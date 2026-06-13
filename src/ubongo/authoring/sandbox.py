@@ -4,7 +4,7 @@ This is NOT the shell sandbox (`ubongo.sandbox`) nor the GP harness
 (`ubongo.evolution.sandbox`) — it is the authoring equivalent: it scores ONE
 drafted candidate so the approval gate has a quality number, and it writes
 nothing durable (no skills registered, no DB rows; the caller persists the
-`quality` it returns). It reuses `evolution.sandbox.CallBudget` so the budget
+`quality` it returns). It reuses `ubongo.evaluation.CallBudget` so the budget
 discipline is identical.
 
 For a candidate it:
@@ -36,7 +36,7 @@ from pathlib import Path
 from ubongo import sandbox as shell_sandbox
 from ubongo.authoring.candidate import SkillCandidate
 from ubongo.config import load_authoring, load_config
-from ubongo.evolution.sandbox import CallBudget
+from ubongo.evaluation import CallBudget, parse_judgment
 from ubongo.llm import LLMError, complete
 
 logger = logging.getLogger("ubongo.authoring.sandbox")
@@ -68,10 +68,6 @@ def _generic_probes() -> list[str]:
         return probes or list(_GENERIC_PROBES)
     except (OSError, json.JSONDecodeError, ValueError):
         return list(_GENERIC_PROBES)
-
-_CODE_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL | re.IGNORECASE)
-_JSON_OBJECT_RE = re.compile(r"\{[^{}]*\}", re.DOTALL)
-
 
 @dataclass(frozen=True)
 class CandidateMetrics:
@@ -117,37 +113,6 @@ def _probes(candidate: SkillCandidate, n: int) -> list[str]:
     probes = [candidate.description.strip()]
     probes.extend(_generic_probes())
     return probes[: max(1, n)]
-
-
-def _strip_fence(text: str) -> str:
-    m = _CODE_FENCE_RE.match(text)
-    return m.group(1) if m else text.strip()
-
-
-def _parse_judgment(raw: str) -> tuple[float, float, bool] | None:
-    cleaned = _strip_fence(raw)
-    data = None
-    try:
-        loaded = json.loads(cleaned)
-        if isinstance(loaded, dict):
-            data = loaded
-    except (json.JSONDecodeError, ValueError):
-        m = _JSON_OBJECT_RE.search(cleaned)
-        if m:
-            try:
-                loaded = json.loads(m.group(0))
-                if isinstance(loaded, dict):
-                    data = loaded
-            except (json.JSONDecodeError, ValueError):
-                data = None
-    if data is None:
-        return None
-    try:
-        quality = max(0.0, min(1.0, float(data["quality"])))
-        hallucination = max(0.0, min(1.0, float(data["hallucination"])))
-    except (KeyError, TypeError, ValueError):
-        return None
-    return quality, hallucination, bool(data.get("would_user_correct", False))
 
 
 def _judge_rubric(purpose: str) -> str:
@@ -247,7 +212,7 @@ def evaluate_candidate(
             logger.warning("authoring_eval_judge_failed",
                            extra={"cause": str(exc.cause) if exc.cause else None})
             continue
-        parsed = _parse_judgment(judgment.text)
+        parsed = parse_judgment(judgment.text)
         if parsed is None:
             continue
         q, h, wc = parsed

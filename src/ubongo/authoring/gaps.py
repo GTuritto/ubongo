@@ -14,7 +14,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ubongo.memory import store
+from ubongo.memory import authoring_state
+from ubongo.memory import trace
 
 _DEFAULT_LIMIT = 200
 _DEFAULT_MIN_OCCURRENCES = 2
@@ -34,7 +35,7 @@ class Gap:
 def next_gap(*, limit: int = _DEFAULT_LIMIT, min_occurrences: int = _DEFAULT_MIN_OCCURRENCES) -> Gap | None:
     """The most frequent recurring intent that matched no skill and has not been
     worked yet, or None. Deterministic (frequency desc, then intent asc)."""
-    rows = store.recent_workflow_classifications(limit)
+    rows = trace.recent_workflow_classifications(limit)
     tally: dict[str, int] = {}
     sample: dict[str, str] = {}
     for r in rows:
@@ -49,7 +50,7 @@ def next_gap(*, limit: int = _DEFAULT_LIMIT, min_occurrences: int = _DEFAULT_MIN
 
     if not tally:
         return None
-    worked = store.worked_authoring_gaps()
+    worked = authoring_state.worked_authoring_gaps()
     candidates = [
         (intent, n) for intent, n in tally.items()
         if n >= min_occurrences and intent not in worked

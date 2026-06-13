@@ -9,9 +9,12 @@ os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo.agents import personas  # noqa: E402
 from ubongo.evolution import generator  # noqa: E402
+from ubongo.memory import evolution_state
 from ubongo.memory import store  # noqa: E402
 from ubongo.repl import (  # noqa: E402
     _HELP_COMMANDS,
+)
+from ubongo.evolution.commands import (  # noqa: E402
     _OPTIMIZE_LIST_SENTINEL,
     _parse_optimize_command,
     _render_optimize,
@@ -72,7 +75,7 @@ def test_render_targets_lists_personas() -> None:
 def test_optimize_generates_eight_rows(db, fake_llm) -> None:
     out = _render_optimize("persona:architect")
     assert "generation 1" in out
-    rows = store.lineage_for_target("persona:architect")
+    rows = evolution_state.lineage_for_target("persona:architect")
     assert len(rows) == 8
     assert all(r["generation"] == 1 for r in rows)
 
@@ -81,14 +84,14 @@ def test_optimize_second_run_is_generation_two(db, fake_llm) -> None:
     _render_optimize("persona:casual")
     out = _render_optimize("persona:casual")
     assert "generation 2" in out
-    gens = {r["generation"] for r in store.lineage_for_target("persona:casual")}
+    gens = {r["generation"] for r in evolution_state.lineage_for_target("persona:casual")}
     assert gens == {1, 2}
 
 
 def test_optimize_unknown_target_errors(db, fake_llm) -> None:
     out = _render_optimize("persona:bogus")
     assert "Unknown target" in out
-    assert store.lineage_for_target("persona:bogus") == []
+    assert evolution_state.lineage_for_target("persona:bogus") == []
 
 
 def test_help_mentions_optimize() -> None:

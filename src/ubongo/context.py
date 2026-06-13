@@ -62,11 +62,12 @@ def build_system_prompt(
 def _active_persona_body(persona: str) -> str | None:
     """Return the promoted persona variant's body, or None when unpromoted or
     when this process has no DB connection (pure prompt assembly)."""
+    from ubongo.memory import evolution_state
     from ubongo.memory import store
 
     if not store.is_connected():
         return None
-    active = store.active_evolution(f"persona:{persona}")
+    active = evolution_state.active_evolution(f"persona:{persona}")
     return active["variant_text"] if active else None
 
 

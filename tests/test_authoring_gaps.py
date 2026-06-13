@@ -9,6 +9,7 @@ import pytest
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo.authoring import gaps  # noqa: E402
+from ubongo.memory import authoring_state
 from ubongo.memory import store  # noqa: E402
 
 
@@ -55,15 +56,15 @@ def test_below_min_occurrences_is_not_a_gap(db) -> None:
 
 def test_worked_gap_excluded(db) -> None:
     _seed("translation", 3)
-    rid = store.start_authoring_run(gap="translation")
-    store.finish_authoring_run(rid, calls_spent=1, outcome="drafted")
+    rid = authoring_state.start_authoring_run(gap="translation")
+    authoring_state.finish_authoring_run(rid, calls_spent=1, outcome="drafted")
     assert gaps.next_gap() is None
 
 
 def test_aborted_gap_not_excluded(db) -> None:
     _seed("translation", 3)
-    rid = store.start_authoring_run(gap="translation")
-    store.finish_authoring_run(rid, calls_spent=1, outcome="aborted")
+    rid = authoring_state.start_authoring_run(gap="translation")
+    authoring_state.finish_authoring_run(rid, calls_spent=1, outcome="aborted")
     # an aborted attempt should not block re-attempting the gap
     assert gaps.next_gap() is not None
 

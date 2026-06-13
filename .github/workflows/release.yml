@@ -1,14 +1,21 @@
-# Release — version-driven continuous delivery of the deployment bundle.
+# Release — CI-owned versioning + continuous delivery of the deployment bundle.
 #
-# Trigger: every push to main. If the VERSION file names a version that has no
-# git tag yet (i.e. a version bump just merged), this workflow re-runs the test
-# suite, builds the bundle with scripts/package.sh, and publishes a GitHub
-# Release `v<VERSION>` with exactly the two distribution files attached
-# (install-ubongo.sh + the zip), using that version's CHANGELOG.md section as
-# the release notes. Merges that do not bump VERSION are a no-op.
+# Trigger: every push to main (i.e. every PR merge). The version is NOT bumped
+# by hand; this workflow derives it:
 #
-# Deploying to the Pi then becomes: download both assets from the Release,
-# run ./install-ubongo.sh on the target.
+#   * Phase branches encode it. A merge of `vX.Y/NN-<name>` becomes version
+#     `X.Y.NN` (e.g. `v0.5/02-store-split` -> `0.5.2`). This is the normal path
+#     for the v0.5 trust-protocol plan.
+#   * Any other merge (docs, hotfix) bumps the patch by one until it lands on an
+#     untagged version.
+#
+# When the derived version differs from the VERSION file, the workflow writes
+# VERSION + pyproject.toml back to main with a `[skip ci]` commit (so it does not
+# re-trigger itself), then re-runs the test + smoke gates, builds the bundle with
+# scripts/package.sh, and publishes GitHub Release `v<VERSION>` with the two
+# distribution assets, using that version's CHANGELOG.md section as the notes.
+#
+# A branch-derived version that is already tagged is a no-op (idempotent re-runs).
 name: release
 
 on:
@@ -30,34 +37,78 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 0 # need tags to detect an already-released version
+          fetch-depth: 0 # need tags + the merge commit subject
 
-      - name: Detect version bump
+      - name: Derive version from the merged branch
         id: ver
         run: |
-          VER="$(tr -d '[:space:]' < VERSION)"
-          echo "version=$VER" >> "$GITHUB_OUTPUT"
-          if git rev-parse "v$VER" >/dev/null 2>&1; then
-            echo "new=false" >> "$GITHUB_OUTPUT"
-            echo "v$VER already tagged — nothing to release."
+          CUR="$(tr -d '[:space:]' < VERSION)"
+          SUBJECT="$(git log -1 --pretty=%s)"
+          echo "merge subject: $SUBJECT"
+          # "Merge pull request #N from <owner>/<branch>" -> <branch>
+          BRANCH="$(printf '%s' "$SUBJECT" | sed -n 's/.* from [^ /]*\/\(.*\)/\1/p')"
+          NEW=""
+          if printf '%s' "$BRANCH" | grep -qE '^v[0-9]+\.[0-9]+/[0-9]+'; then
+            PLAN="$(printf '%s' "$BRANCH" | sed -E 's#^v([0-9]+\.[0-9]+)/.*#\1#')"
+            PHASE="$(printf '%s' "$BRANCH" | sed -E 's#^v[0-9]+\.[0-9]+/0*([0-9]+).*#\1#')"
+            NEW="$PLAN.$PHASE"
+            echo "phase branch '$BRANCH' -> v$NEW"
+            if git rev-parse "v$NEW" >/dev/null 2>&1; then
+              echo "v$NEW already tagged — nothing to release."
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           else
-            echo "new=true" >> "$GITHUB_OUTPUT"
-            echo "v$VER is unreleased — building."
+            # Non-phase merge: patch bump from the current version, skip taken tags.
+            maj="$(echo "$CUR" | cut -d. -f1)"
+            min="$(echo "$CUR" | cut -d. -f2)"
+            pat="$(echo "$CUR" | cut -d. -f3)"
+            pat=$((pat + 1))
+            while git rev-parse "v$maj.$min.$pat" >/dev/null 2>&1; do pat=$((pat + 1)); done
+            NEW="$maj.$min.$pat"
+            echo "non-phase merge -> patch bump -> v$NEW"
           fi
+          echo "version=$NEW" >> "$GITHUB_OUTPUT"
+          echo "changed=$([ "$NEW" != "$CUR" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "release=true" >> "$GITHUB_OUTPUT"
+
+      - name: Commit the version bump to main
+        if: steps.ver.outputs.release == 'true' && steps.ver.outputs.changed == 'true'
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          printf '%s\n' "$VER" > VERSION
+          python3 - "$VER" <<'PY'
+          import pathlib, re, sys
+          ver = sys.argv[1]
+          # pyproject.toml: the project version (first match).
+          pp = pathlib.Path("pyproject.toml")
+          pp.write_text(re.sub(r'^version = "[^"]*"', f'version = "{ver}"',
+                               pp.read_text(), count=1, flags=re.M))
+          # uv.lock: only the workspace package's own version, so `uv sync
+          # --frozen` (the release gate) stays consistent with pyproject.
+          lk = pathlib.Path("uv.lock")
+          lk.write_text(re.sub(r'(name = "ubongo"\nversion = ")[^"]*(")',
+                               rf'\g<1>{ver}\g<2>', lk.read_text(), count=1))
+          PY
+          git config user.name "ubongo-ci[bot]"
+          git config user.email "ci@ubongo.local"
+          git add VERSION pyproject.toml uv.lock
+          git commit -m "chore(release): v$VER [skip ci]"
+          git push origin HEAD:main
 
       - uses: astral-sh/setup-uv@v6
-        if: steps.ver.outputs.new == 'true'
+        if: steps.ver.outputs.release == 'true'
         with:
           enable-cache: true
 
       - name: Pytest (release gate)
-        if: steps.ver.outputs.new == 'true'
+        if: steps.ver.outputs.release == 'true'
         run: |
           uv sync --frozen --all-extras
           uv run pytest -q
 
       - name: Smoke gate (deterministic layer)
-        if: steps.ver.outputs.new == 'true'
+        if: steps.ver.outputs.release == 'true'
         run: bash scripts/smoke.sh
 
       # The live subset (3 real model calls: a persona turn, the governance
@@ -65,17 +116,17 @@ jobs:
       # is configured on the repo. Without the secret the release still gates
       # on the deterministic layer.
       - name: Smoke gate (live subset)
-        if: steps.ver.outputs.new == 'true' && env.LIVE_KEY != ''
+        if: steps.ver.outputs.release == 'true' && env.LIVE_KEY != ''
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: bash scripts/smoke.sh --live
 
       - name: Build deployment bundle
-        if: steps.ver.outputs.new == 'true'
+        if: steps.ver.outputs.release == 'true'
         run: bash scripts/package.sh
 
       - name: Extract release notes from CHANGELOG
-        if: steps.ver.outputs.new == 'true'
+        if: steps.ver.outputs.release == 'true'
         run: |
           VER="${{ steps.ver.outputs.version }}"
           awk -v ver="$VER" '
@@ -84,12 +135,12 @@ jobs:
             p
           ' CHANGELOG.md > release-notes.md
           if ! [ -s release-notes.md ]; then
-            echo "No CHANGELOG section found for v$VER" > release-notes.md
+            echo "Release v$VER" > release-notes.md
           fi
           cat release-notes.md
 
       - name: Publish GitHub Release
-        if: steps.ver.outputs.new == 'true'
+        if: steps.ver.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -97,5 +148,6 @@ jobs:
           gh release create "v$VER" \
             "dist/ubongo-v$VER.zip" \
             "dist/install-ubongo.sh" \
+            --target "$(git rev-parse HEAD)" \
             --title "Ubongo v$VER" \
             --notes-file release-notes.md

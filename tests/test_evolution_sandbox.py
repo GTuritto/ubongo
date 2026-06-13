@@ -7,6 +7,7 @@ import pytest
 
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
+from ubongo import evaluation
 from ubongo.evolution import sandbox  # noqa: E402
 from ubongo.evolution.sandbox import CallBudget  # noqa: E402
 
@@ -149,7 +150,7 @@ def test_bad_variant_drives_hallucination_up(fake_llm) -> None:
 
 def test_judge_parser_tolerates_code_fence() -> None:
     raw = '```json\n{"quality": 0.7, "hallucination": 0.1, "would_user_correct": false}\n```'
-    parsed = sandbox._parse_judgment(raw)
+    parsed = evaluation.parse_judgment(raw)
     assert parsed == (0.7, 0.1, False)
 
 
@@ -160,16 +161,16 @@ def test_judge_parser_extracts_object_from_prose() -> None:
         '{"quality": 0.6, "hallucination": 0.3, "would_user_correct": true}\n'
         "The response was mostly fine but a bit vague."
     )
-    assert sandbox._parse_judgment(raw) == (0.6, 0.3, True)
+    assert evaluation.parse_judgment(raw) == (0.6, 0.3, True)
 
 
 def test_judge_parser_rejects_malformed() -> None:
-    assert sandbox._parse_judgment("not json") is None
-    assert sandbox._parse_judgment('{"quality": "high"}') is None
+    assert evaluation.parse_judgment("not json") is None
+    assert evaluation.parse_judgment('{"quality": "high"}') is None
 
 
 def test_judge_parser_clamps() -> None:
-    parsed = sandbox._parse_judgment('{"quality": 1.5, "hallucination": -0.2, "would_user_correct": true}')
+    parsed = evaluation.parse_judgment('{"quality": 1.5, "hallucination": -0.2, "would_user_correct": true}')
     assert parsed == (1.0, 0.0, True)
 
 

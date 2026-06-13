@@ -10,6 +10,7 @@ os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 from ubongo import skills  # noqa: E402
 from ubongo.authoring import quarantine  # noqa: E402
 from ubongo.authoring.candidate import SkillCandidate  # noqa: E402
+from ubongo.memory import authoring_state
 from ubongo.memory import store  # noqa: E402
 from ubongo.skills import _parse_skill  # noqa: E402
 
@@ -60,7 +61,7 @@ def test_quarantine_is_not_discoverable(env) -> None:
 
 def test_persist_creates_draft_row(env) -> None:
     row_id = quarantine.persist(_candidate())
-    row = store.get_authored_skill(row_id)
+    row = authoring_state.get_authored_skill(row_id)
     assert row is not None
     assert row["status"] == "draft"
     assert row["name"] == "diff-notes"
@@ -72,13 +73,13 @@ def test_persist_creates_draft_row(env) -> None:
 def test_generation_increments_per_name(env) -> None:
     quarantine.persist(_candidate())
     second = quarantine.persist(_candidate())
-    assert store.get_authored_skill(second)["generation"] == 2
-    assert store.max_authored_generation("diff-notes") == 2
+    assert authoring_state.get_authored_skill(second)["generation"] == 2
+    assert authoring_state.max_authored_generation("diff-notes") == 2
 
 
 def test_store_list_and_update(env) -> None:
     rid = quarantine.persist(_candidate())
-    assert [r["id"] for r in store.authored_skills(status="draft")] == [rid]
-    assert store.update_authored_skill(rid, quality=0.42)
-    assert store.get_authored_skill(rid)["quality"] == pytest.approx(0.42)
-    assert store.authored_skills(status="approved") == []
+    assert [r["id"] for r in authoring_state.authored_skills(status="draft")] == [rid]
+    assert authoring_state.update_authored_skill(rid, quality=0.42)
+    assert authoring_state.get_authored_skill(rid)["quality"] == pytest.approx(0.42)
+    assert authoring_state.authored_skills(status="approved") == []

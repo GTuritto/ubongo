@@ -8,10 +8,13 @@ import pytest
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo.agents import personas  # noqa: E402
+from ubongo.memory import evolution_state
 from ubongo.memory import store  # noqa: E402
 from ubongo import repl  # noqa: E402
 from ubongo.repl import (  # noqa: E402
     _HELP_COMMANDS,
+)
+from ubongo.evolution.commands import (  # noqa: E402
     _parse_evolution_command,
     _render_evolution_control,
     _render_evolution_status,
@@ -48,11 +51,11 @@ def test_parse_other_command_is_none() -> None:
 def test_pause_resume_off_set_status(db) -> None:
     _render_evolution_control("resume")
     # resume warns if disabled but still sets status.
-    assert store.get_evolution_status() == "running"
+    assert evolution_state.get_evolution_status() == "running"
     _render_evolution_control("pause")
-    assert store.get_evolution_status() == "paused"
+    assert evolution_state.get_evolution_status() == "paused"
     _render_evolution_control("off")
-    assert store.get_evolution_status() == "off"
+    assert evolution_state.get_evolution_status() == "off"
 
 
 def test_resume_warns_when_disabled(db, monkeypatch) -> None:
@@ -60,7 +63,7 @@ def test_resume_warns_when_disabled(db, monkeypatch) -> None:
     monkeypatch.setattr(cfg, "load_evolution", lambda *a, **k: {"enabled": False})
     out = _render_evolution_control("resume")
     assert "enabled is false" in out
-    assert store.get_evolution_status() == "running"
+    assert evolution_state.get_evolution_status() == "running"
 
 
 # --- status renderer --------------------------------------------------------
@@ -72,11 +75,11 @@ def test_status_render_no_generations(db) -> None:
 
 
 def test_status_render_with_generation(db) -> None:
-    lid = store.append_lineage_variant(
+    lid = evolution_state.append_lineage_variant(
         target="persona:architect", parent_id=None, generation=1,
         variant_text="v", variant_metadata={"strategy": "paraphrase"},
     )
-    store.append_evaluation(
+    evolution_state.append_evaluation(
         lineage_id=lid, sample_set="s", success_rate=0.8, cost=1, latency_ms=1,
         hallucination_rate=0, user_correction_rate=0, fitness=0.88,
     )

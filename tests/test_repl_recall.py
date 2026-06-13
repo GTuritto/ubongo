@@ -8,8 +8,10 @@ import pytest
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo.agents import personas  # noqa: E402
+from ubongo.memory import index_state
 from ubongo.memory import store, vault  # noqa: E402
-from ubongo.repl import _HELP_COMMANDS, _parse_recall_command, _render_recall  # noqa: E402
+from ubongo.memory.commands import _parse_recall_command, _render_recall  # noqa: E402
+from ubongo.repl import _HELP_COMMANDS  # noqa: E402
 
 
 @pytest.fixture
@@ -60,7 +62,7 @@ def test_render_recency_and_degrades_without_embeddings(db) -> None:
 
 def test_render_shows_vault_neighbors(db) -> None:
     cid = _seed_conversation()
-    store.upsert_vault_link("daily/2026-06-04.md", "caching-notes")
+    index_state.upsert_vault_link("daily/2026-06-04.md", "caching-notes")
     out = _render_recall("caching")
     assert "vault graph" in out
 

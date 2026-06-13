@@ -6,6 +6,7 @@ import pytest
 
 from ubongo import repl
 from ubongo.memory import store
+from ubongo.memory import trace
 
 
 @pytest.fixture(autouse=True)
@@ -20,7 +21,7 @@ def _seed_decision(intent="technical", persona="architect", action="auto", risk=
                    reversibility="reversible"):
     cid = store.start_conversation(persona)
     msg_id = store.append_message(cid, "user", "x", persona=persona)
-    wf_id = store.append_workflow_run(
+    wf_id = trace.append_workflow_run(
         conversation_id=cid,
         message_id=msg_id,
         classification={"intent": intent, "confidence": conf},
@@ -29,7 +30,7 @@ def _seed_decision(intent="technical", persona="architect", action="auto", risk=
         outcome="success",
         started_at=store.now_iso(),
     )
-    return store.append_governance_decision(
+    return trace.append_governance_decision(
         workflow_run_id=wf_id,
         intent=intent,
         risk=risk,

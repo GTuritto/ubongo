@@ -8,7 +8,8 @@ import pytest
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo import context, events, skills  # noqa: E402
-from ubongo.memory import store, vault  # noqa: E402
+from ubongo.memory import store
+from ubongo.memory import trace, vault  # noqa: E402
 from ubongo.repl import _parse_trace_command, _render_trace  # noqa: E402
 
 
@@ -32,7 +33,7 @@ def _clean_env(tmp_path: Path):
 def _seed_trace_row() -> int:
     conv = store.current_or_new_conversation("architect")
     msg = store.append_message(conv, "user", "design a circuit breaker", persona="architect")
-    wf = store.append_workflow_run(
+    wf = trace.append_workflow_run(
         conversation_id=conv,
         message_id=msg,
         classification={
@@ -48,19 +49,19 @@ def _seed_trace_row() -> int:
         started_at=store.now_iso(),
     )
     started = store.now_iso()
-    store.append_agent_run(
+    trace.append_agent_run(
         workflow_run_id=wf, agent="architect", model="anthropic/claude-sonnet-4.5",
         input={"len": 30}, output={"text_len": 120}, confidence=None,
         tokens_in=820, tokens_out=540, latency_ms=1840,
         outcome="success", started_at=started, ended_at=store.now_iso(),
     )
-    store.append_agent_run(
+    trace.append_agent_run(
         workflow_run_id=wf, agent="evaluator", model="anthropic/claude-sonnet-4.5",
         input={"len": 120}, output={"text_len": 42}, confidence=0.83,
         tokens_in=380, tokens_out=44, latency_ms=210,
         outcome="success", started_at=started, ended_at=store.now_iso(),
     )
-    store.append_governance_decision(
+    trace.append_governance_decision(
         workflow_run_id=wf, intent="technical", risk="low",
         confidence=0.83, reversibility="reversible", action="auto",
     )
@@ -118,7 +119,7 @@ def test_render_trace_renders_repair_line_under_failing_agent():
     affected agent_runs row."""
     conv = store.current_or_new_conversation("architect")
     msg = store.append_message(conv, "user", "x", persona="architect")
-    wf = store.append_workflow_run(
+    wf = trace.append_workflow_run(
         conversation_id=conv, message_id=msg,
         classification={"intent": "technical", "confidence": 0.7},
         workflow={"persona": "architect", "execution_mode": "sequential",
@@ -128,20 +129,20 @@ def test_render_trace_renders_repair_line_under_failing_agent():
         started_at=store.now_iso(),
     )
     started = store.now_iso()
-    store.append_agent_run(
+    trace.append_agent_run(
         workflow_run_id=wf, agent="critic", model="m",
         input={}, output={"error": "critic_no_candidate"},
         confidence=None, tokens_in=0, tokens_out=0, latency_ms=10,
         outcome="failure", started_at=started, ended_at=store.now_iso(),
     )
-    store.append_agent_run(
+    trace.append_agent_run(
         workflow_run_id=wf, agent="architect", model="m",
         input={}, output={}, confidence=None,
         tokens_in=10, tokens_out=20, latency_ms=100,
         outcome="success", started_at=started, ended_at=store.now_iso(),
         retried=True,
     )
-    store.append_repair_run(
+    trace.append_repair_run(
         workflow_run_id=wf, agent="critic",
         failure_kind="precondition_missing",
         original_error="critic_no_candidate",
@@ -175,13 +176,13 @@ def test_render_trace_multi():
 
 
 def test_last_n_workflow_runs_returns_empty_when_db_empty():
-    assert store.last_n_workflow_runs(1) == []
+    assert trace.last_n_workflow_runs(1) == []
 
 
 def test_last_n_workflow_runs_orders_desc_and_joins_agent_runs():
     first = _seed_trace_row()
     second = _seed_trace_row()
-    rows = store.last_n_workflow_runs(2)
+    rows = trace.last_n_workflow_runs(2)
     assert [r.id for r in rows] == [second, first]
     assert len(rows[0].agent_runs) == 2
     assert rows[0].governance.action == "auto"

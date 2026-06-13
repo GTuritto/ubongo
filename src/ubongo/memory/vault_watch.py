@@ -35,6 +35,7 @@ def enabled() -> bool:
 def scan_once() -> dict:
     """One scan of the vault daily notes. Ingests external edits, queues
     conflicts. Returns {ingested, conflicts}. Best-effort; never raises."""
+    from ubongo.memory import index_state
     from ubongo.memory import embeddings, store, vault
 
     result = {"ingested": 0, "conflicts": 0}
@@ -50,7 +51,7 @@ def scan_once() -> dict:
         disk = vault.file_hash(f)
         if not disk:
             continue
-        known = store.get_vault_hash(rel)
+        known = index_state.get_vault_hash(rel)
         if known == disk:
             continue  # the system's own write (or unchanged) — no echo
         # External edit (or a note the system has never written).
@@ -64,11 +65,11 @@ def scan_once() -> dict:
             # The system manages this note and it changed externally -> a
             # collision the user may want to resolve. For append-only daily
             # notes the practical resolution is usually "coexist".
-            store.append_vault_conflict(path=rel, system_hash=known, disk_hash=disk)
+            index_state.append_vault_conflict(path=rel, system_hash=known, disk_hash=disk)
             vault.append_audit_entry("sync", f"ingested external edit to {rel}")
             result["conflicts"] += 1
         # The disk hash is now the known state — don't re-ingest the same edit.
-        store.record_vault_write(rel, disk)
+        index_state.record_vault_write(rel, disk)
     return result
 
 

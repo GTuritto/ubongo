@@ -7,9 +7,12 @@ import pytest
 
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
+from ubongo.memory import index_state
 from ubongo.memory import store, vault  # noqa: E402
 from ubongo.repl import (  # noqa: E402
     _HELP_COMMANDS,
+)
+from ubongo.memory.commands import (  # noqa: E402
     _parse_audit_command,
     _parse_conflicts_command,
     _render_audit,
@@ -63,11 +66,11 @@ def test_conflicts_list_empty(db) -> None:
 
 
 def test_conflicts_list_and_resolve(db) -> None:
-    cid = store.append_vault_conflict(path="daily/x.md", system_hash="aaa", disk_hash="bbb")
+    cid = index_state.append_vault_conflict(path="daily/x.md", system_hash="aaa", disk_hash="bbb")
     assert "daily/x.md" in _render_conflicts_list()
     out = _render_conflicts_resolve(cid, "keep-theirs")
     assert "resolved" in out
-    assert store.open_vault_conflicts() == []
+    assert index_state.open_vault_conflicts() == []
     assert "[sync]" in vault.audit_log_path().read_text()
 
 
@@ -76,7 +79,7 @@ def test_resolve_unknown(db) -> None:
 
 
 def test_keep_mine_notes_append_only(db) -> None:
-    cid = store.append_vault_conflict(path="daily/x.md", system_hash="a", disk_hash="b")
+    cid = index_state.append_vault_conflict(path="daily/x.md", system_hash="a", disk_hash="b")
     out = _render_conflicts_resolve(cid, "keep-mine")
     assert "append-only" in out
 

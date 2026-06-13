@@ -12,6 +12,7 @@ from ubongo.authoring import candidate, loop, quarantine  # noqa: E402
 from ubongo.authoring import sandbox as eval_sandbox  # noqa: E402
 from ubongo.authoring.loop import AuthoringLoop, _should_cycle, run_one_cycle  # noqa: E402
 from ubongo.llm import CompletionResult  # noqa: E402
+from ubongo.memory import authoring_state
 from ubongo.memory import store, vault  # noqa: E402
 
 _DRAFT_JSON = (
@@ -70,16 +71,16 @@ def test_cycle_drafts_for_gap(env) -> None:
     r = run_one_cycle()
     assert r.action == "drafted"
     assert r.candidate_id is not None and r.gap == "translation"
-    drafts = store.authored_skills(status="draft")
+    drafts = authoring_state.authored_skills(status="draft")
     assert drafts and drafts[0]["source"] == "auto"
     # a run row was recorded
-    assert store.authoring_runs_recent(1)[0]["outcome"] == "drafted"
+    assert authoring_state.authoring_runs_recent(1)[0]["outcome"] == "drafted"
 
 
 def test_cycle_idle_when_no_gap(env) -> None:
     r = run_one_cycle()
     assert r.action == "idle"
-    assert store.authored_skills(status="draft") == []
+    assert authoring_state.authored_skills(status="draft") == []
 
 
 def test_worked_gap_not_redrafted(env) -> None:
@@ -87,7 +88,7 @@ def test_worked_gap_not_redrafted(env) -> None:
     run_one_cycle()
     r2 = run_one_cycle()  # gap already worked
     assert r2.action == "idle"
-    assert len(store.authored_skills(status="draft")) == 1
+    assert len(authoring_state.authored_skills(status="draft")) == 1
 
 
 def test_crash_recovery_reevaluates_unevaluated_draft(env, monkeypatch) -> None:
@@ -95,9 +96,9 @@ def test_crash_recovery_reevaluates_unevaluated_draft(env, monkeypatch) -> None:
     cand = {"name": "x-skill", "description": "do x", "risk": "low",
             "reversibility": "reversible", "default_persona": None, "body": "b",
             "prompts": {}, "command_template": None, "metadata": {}}
-    cid = store.append_authored_skill(name="x-skill", description="do x", status="draft",
+    cid = authoring_state.append_authored_skill(name="x-skill", description="do x", status="draft",
                                       generation=1, source="auto", candidate=cand)
-    assert store.get_authored_skill(cid)["quality"] is None
+    assert authoring_state.get_authored_skill(cid)["quality"] is None
 
     monkeypatch.setenv("UBONGO_DISABLE_AUTHORING_EVAL", "0")
     monkeypatch.setattr(eval_sandbox, "complete", lambda **k: CompletionResult(
@@ -107,7 +108,7 @@ def test_crash_recovery_reevaluates_unevaluated_draft(env, monkeypatch) -> None:
 
     r = run_one_cycle()
     assert r.action == "reevaluated" and r.candidate_id == cid
-    assert store.get_authored_skill(cid)["quality"] is not None
+    assert authoring_state.get_authored_skill(cid)["quality"] is not None
 
 
 # --- daemon control ---------------------------------------------------------
@@ -123,14 +124,14 @@ def test_boots_paused_when_enabled(env, monkeypatch) -> None:
     started = daemon.start()
     try:
         assert started is True
-        assert store.get_authoring_status() == "paused"  # never auto-spends on launch
+        assert authoring_state.get_authoring_status() == "paused"  # never auto-spends on launch
     finally:
         daemon.stop()
 
 
 def test_status_control(env) -> None:
-    assert store.get_authoring_status() == "paused"
-    store.set_authoring_status("running")
-    assert store.get_authoring_status() == "running"
-    store.set_authoring_status("off")
-    assert store.get_authoring_status() == "off"
+    assert authoring_state.get_authoring_status() == "paused"
+    authoring_state.set_authoring_status("running")
+    assert authoring_state.get_authoring_status() == "running"
+    authoring_state.set_authoring_status("off")
+    assert authoring_state.get_authoring_status() == "off"

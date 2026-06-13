@@ -9,6 +9,7 @@ os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo.agents import personas  # noqa: E402
 from ubongo.evolution import targets  # noqa: E402
+from ubongo.memory import evolution_state
 from ubongo.memory import store  # noqa: E402
 
 
@@ -60,7 +61,7 @@ def test_resolve_base_unknown_target_raises(db) -> None:
 
 def test_resolve_base_prefers_promoted_active_variant(db) -> None:
     # Simulate a Phase-19 promotion: a lineage row + an active_evolutions entry.
-    lineage_id = store.append_lineage_variant(
+    lineage_id = evolution_state.append_lineage_variant(
         target="persona:architect",
         parent_id=None,
         generation=1,

@@ -13,6 +13,7 @@ import logging
 
 from ubongo.commands import Command, ReplState
 from ubongo.commands import format_time as _format_time  # noqa: F401
+from ubongo.memory import index_state
 from ubongo.memory import store, vault
 
 logger = logging.getLogger("ubongo.memory.commands")
@@ -131,7 +132,7 @@ def _parse_conflicts_command(line: str):
 def _render_conflicts_list() -> str:
     from ubongo.memory import store
 
-    rows = store.open_vault_conflicts()
+    rows = index_state.open_vault_conflicts()
     if not rows:
         return "No open vault conflicts."
     lines = [f"Open vault conflicts ({len(rows)}):"]
@@ -143,10 +144,10 @@ def _render_conflicts_list() -> str:
 def _render_conflicts_resolve(cid: int, resolution: str) -> str:
     from ubongo.memory import store, vault
 
-    conflict = store.get_vault_conflict(cid)
+    conflict = index_state.get_vault_conflict(cid)
     if conflict is None or conflict["status"] != "open":
         return f"No open conflict #{cid}."
-    ok = store.resolve_vault_conflict(cid, resolution)
+    ok = index_state.resolve_vault_conflict(cid, resolution)
     if not ok:
         return f"No open conflict #{cid}."
     vault.append_audit_entry("sync", f"resolved conflict #{cid} on {conflict['path']} -> {resolution}")

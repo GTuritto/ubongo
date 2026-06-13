@@ -46,7 +46,7 @@ def _render_approval_gate() -> None:
     """A turn that governance held for approval. Mirrors the REPL's y/n: Approve
     re-issues with approved=True; Deny records the decline. Persists the choice to
     governance_decisions.approval_response, like the REPL."""
-    from ubongo.memory import store
+    from ubongo.memory import trace
 
     pa = st.session_state.pending_approval
     approval = pa["approval"]
@@ -57,7 +57,7 @@ def _render_approval_gate() -> None:
             st.write(approval.get("why", "(no detail)"))
         approve_col, deny_col = st.columns(2)
         if approve_col.button("Approve", type="primary", use_container_width=True):
-            store.update_governance_decision(approval["decision_id"], "y")
+            trace.update_governance_decision(approval["decision_id"], "y")
             resp = turn.run_turn(
                 pa["message"], pa["persona"], auto_mode=pa["auto_mode"], approved=True
             )
@@ -65,7 +65,7 @@ def _render_approval_gate() -> None:
             st.session_state.pending_approval = None
             st.rerun()
         if deny_col.button("Deny", use_container_width=True):
-            store.update_governance_decision(approval["decision_id"], "n")
+            trace.update_governance_decision(approval["decision_id"], "n")
             st.session_state.messages.append(
                 {"role": ASSISTANT, "content": "_Aborted; nothing was done._"}
             )

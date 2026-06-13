@@ -10,7 +10,8 @@ os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from ubongo import context, events, profiling, skills  # noqa: E402
 from ubongo.commands import ReplState  # noqa: E402
-from ubongo.memory import store, vault  # noqa: E402
+from ubongo.memory import store
+from ubongo.memory import trace, vault  # noqa: E402
 from ubongo.repl import _cmd_profile, _parse_profile_command  # noqa: E402
 
 
@@ -48,7 +49,7 @@ def _seed_workflow(
 ) -> int:
     conv = store.current_or_new_conversation("architect")
     msg = store.append_message(conv, "user", "q", persona="architect")
-    wf = store.append_workflow_run(
+    wf = trace.append_workflow_run(
         conversation_id=conv, message_id=msg,
         classification={"intent": "technical", "confidence": 0.8},
         workflow={"persona": "architect", "execution_mode": mode, "agents": []},
@@ -56,7 +57,7 @@ def _seed_workflow(
         started_at=started_at, ended_at=ended_at,
     )
     for spec in agents:
-        store.append_agent_run(
+        trace.append_agent_run(
             workflow_run_id=wf,
             agent=spec.get("agent", "research"),
             model=spec.get("model", "m1"),

@@ -513,3 +513,18 @@ Deployment infrastructure, zero `src/` change ([Plans/v0.5-01-outer-envelope.md]
 | E.5 | Refresh fails closed | append `no-such-host.invalid` to `/etc/ubongo/egress.hosts`; `systemctl start ubongo-egress-refresh`; `nft list set inet ubongo_egress allow4`; remove the line | the unit exits non-zero and logs the unresolved host; the previously resolved addresses are still in the set (never fail open, never drop the known-good). |
 | E.6 | Quadlets replace the bare units | `systemctl --user status ubongo-web ubongo-mcp` (as the ubongo user) | both active (running); the old `deploy/ubongo-*.service` units are disabled on this host. |
 | E.7 | Pytest passes (regression only) | `uv run pytest` | 960 passed — this phase ships no Python. |
+
+## v0.5 Phase 02 — Split the store
+
+Behavior-free refactor ([Plans/v0.5-02-store-split.md](../../Plans/v0.5-02-store-split.md)): `memory/store.py` (1,990 lines / 92 functions) split along its subsystem seams — `store.py` keeps connection/bootstrap + the per-turn core (conversations, messages, summaries, sessions, recall); `memory/trace.py` owns the four trace tables and their builders; `memory/evolution_state.py`, `memory/authoring_state.py`, `memory/index_state.py` own their subsystems' rows; `src/ubongo/evaluation.py` owns the judge plumbing both sandboxes shared by duplication. Callers re-import (no shims), the test module split the same way, single-writer rule untouched, net `src/` LOC at baseline. This section verifies the seams carry real traffic, not new behavior.
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| S.1 | Seam inventory | `wc -l src/ubongo/memory/{store,trace,evolution_state,authoring_state,index_state}.py` | store ≤ ~600 lines; the four seam modules exist; no function defined in two of them (`cat ... \| grep -oE '^def [a-z_]+' \| sort \| uniq -d` → empty). |
+| S.2 | Trace seam carries a live turn | one `ubongo send` turn, then REPL `/trace 1` | `workflow_runs`/`agent_runs`/`governance_decisions` rows written; the trace block renders with agent rows + governance line (reads via `trace.last_n_workflow_runs`). |
+| S.3 | Evolution seam | `/optimize persona:casual`; `sqlite3 data/ubongo.db "SELECT generation, COUNT(*) FROM evolution_lineage GROUP BY generation"` | 8 variants in generation 1 — written through `evolution_state`. |
+| S.4 | Authoring seam | `/skill-candidates` | the candidate list renders (reads `authoring_state.authored_skills`); empty list on a fresh DB is a pass. |
+| S.5 | Index seam | a turn, then `/recall <word>`; `sqlite3 data/ubongo.db "SELECT COUNT(*) FROM embedding_meta"` | recall renders recency (+ semantic when hits exist); `embedding_meta` grew — idempotency sidecar via `index_state`. |
+| S.6 | Evaluation-common is the one home | `grep -r "from ubongo.evolution" src/ubongo/authoring/` | no hits — authoring no longer imports evolution internals; both sandboxes import `CallBudget`/`parse_judgment` from `ubongo.evaluation`. |
+| S.7 | Single writer intact | `uv run pytest tests/test_agents_memory.py::test_strict_mode_blocks_non_memory_writer -q` | passes unmodified — the rule is about writers, not files. |
+| S.8 | Pytest passes | `uv run pytest` | 960 passed, no assertion changed (only import homes moved; the trace-table tests live in `tests/test_memory_trace.py`). |
