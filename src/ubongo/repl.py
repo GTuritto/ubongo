@@ -505,6 +505,34 @@ def _cmd_policy(line: str, state: ReplState) -> str | None:
     return _render_policy()
 
 
+def _cmd_grants(line: str, state: ReplState) -> str | None:
+    """v0.5 phase 05: the grant registry surface. `/grants` lists active grants;
+    `/grants revoke <id>` revokes one (re-arming the first-encounter ask)."""
+    from ubongo.memory import grant_state
+
+    parts = line.split()
+    if len(parts) >= 3 and parts[1] == "revoke":
+        try:
+            grant_id = int(parts[2])
+        except ValueError:
+            return f"Usage: /grants [revoke <id>]. {_HELP_COMMANDS}"
+        if grant_state.revoke(grant_id):
+            return f"Revoked grant #{grant_id}. That capability will ask again next time."
+        return f"No active grant #{grant_id} (unknown or already revoked)."
+    if len(parts) >= 2:
+        return f"Usage: /grants [revoke <id>]. {_HELP_COMMANDS}"
+    rows = grant_state.active_grants()
+    if not rows:
+        return "No active grants. Connector capabilities ask on first use."
+    out = [f"Active grants ({len(rows)}):"]
+    for g in rows:
+        out.append(f"  #{g['id']}  {_format_time(g['created_at'])}  "
+                   f"{g['capability_class']:<24}  {g['consequence_class']:<12}  "
+                   f"scope={g['scope']}")
+    out.append("Revoke with /grants revoke <id>.")
+    return "\n".join(out)
+
+
 def _cmd_pending(line: str, state: ReplState) -> str | None:
     """v0.5 phase 03: the listable surface for require_approval turns raised
     anywhere (this session, a one-shot, or MCP). `/pending` lists them;
@@ -677,6 +705,7 @@ COMMANDS: dict[str, Command] = {
     "decisions":    Command(_cmd_decisions, "/decisions [N]"),
     "policy":       Command(_cmd_policy, "/policy"),
     "pending":      Command(_cmd_pending, "/pending [approve|decline <id>]"),
+    "grants":       Command(_cmd_grants, "/grants [revoke <id>]"),
     "agents":       Command(_cmd_agents, "/agents"),
     "trace":        Command(_cmd_trace, "/trace [N]"),
     "profile":      Command(_cmd_profile, "/profile [agents|models|modes|cpu|mem] [N]"),

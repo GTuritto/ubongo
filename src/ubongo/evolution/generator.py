@@ -334,36 +334,11 @@ def _toolchain_mutations(parsed: dict):
         yield (f"reorder_{i}", m)
 
 
-def _retry_mutations(parsed: dict):
-    from ubongo import runner
-
-    registry = runner.default_registry()
-    # bump / drop max_attempts
-    cur = parsed.get("max_attempts", 3)
-    for delta in (1, -1):
-        nv = cur + delta
-        if nv >= 1:
-            m = copy.deepcopy(parsed)
-            m["max_attempts"] = nv
-            yield (f"max_attempts_{nv}", m)
-    # flip a peer_replacement to another valid agent
-    peers = parsed.get("peer_replacements", {}) or {}
-    for agent_name, cur_peer in peers.items():
-        alt = next((a for a in ("architect", "operator") if a != cur_peer and a in registry), None)
-        if alt:
-            m = copy.deepcopy(parsed)
-            m["peer_replacements"][agent_name] = alt
-            yield (f"peer_{agent_name}_{alt}", m)
-            break
-
-
 def _mutations_for(target: str, parsed: dict):
     if target == "routing:default":
         return _routing_mutations(parsed)
     if target.startswith("toolchain:"):
         return _toolchain_mutations(parsed)
-    if target == "retry:repair":
-        return _retry_mutations(parsed)
     return iter(())
 
 

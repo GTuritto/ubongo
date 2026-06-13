@@ -75,14 +75,12 @@ def test_toolchain_rejects_no_composer(db) -> None:
         targets.apply_variant(tc, "workflow: x\nagents: [evaluator]")
 
 
-def test_retry_rejects_unknown_key(db) -> None:
-    with pytest.raises(targets.InvalidVariantError):
-        targets.apply_variant("retry:repair", "bogus_key: 1")
-
-
-def test_retry_rejects_bad_peer(db) -> None:
-    with pytest.raises(targets.InvalidVariantError):
-        targets.apply_variant("retry:repair", "peer_replacements:\n  coding: ghost")
+# v0.5 phase 05: retry:repair was cut (Amendment 2) — apply_variant now rejects it
+# as an unknown target.
+def test_retry_target_is_gone(db) -> None:
+    assert not targets.is_target("retry:repair")
+    with pytest.raises(targets.UnknownTargetError):
+        targets.apply_variant("retry:repair", "max_attempts: 2")
 
 
 # --- config generation ------------------------------------------------------
@@ -101,13 +99,6 @@ def test_toolchain_generation_all_valid(db) -> None:
     assert vs
     for v in vs:
         targets.apply_variant(tc, v.text)
-
-
-def test_retry_generation_all_valid(db) -> None:
-    vs = generator.generate("retry:repair", 3)
-    assert vs
-    for v in vs:
-        targets.apply_variant("retry:repair", v.text)
 
 
 def test_config_variants_differ_from_base(db) -> None:

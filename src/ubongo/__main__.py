@@ -61,6 +61,11 @@ def _build_parser() -> argparse.ArgumentParser:
     approve.add_argument("decision_id", type=int)
     decline = subparsers.add_parser("decline", help="Decline a pending turn by decision id")
     decline.add_argument("decision_id", type=int)
+    # v0.5 phase 05: the grant registry surface.
+    grants_cmd = subparsers.add_parser("grants", help="List active capability grants")
+    grants_sub = grants_cmd.add_subparsers(dest="grants_action")
+    grants_revoke = grants_sub.add_parser("revoke", help="Revoke a grant by id")
+    grants_revoke.add_argument("grant_id", type=int)
     return parser
 
 
@@ -96,6 +101,9 @@ def main(argv: list[str] | None = None) -> int:
         return oneshot.resolve_pending(args.decision_id, approve=True)
     if args.command == "decline":
         return oneshot.resolve_pending(args.decision_id, approve=False)
+    if args.command == "grants":
+        revoke_id = args.grant_id if getattr(args, "grants_action", None) == "revoke" else None
+        return oneshot.grants(revoke_id=revoke_id)
 
     startup_profile = profiling.resolve_startup_profile(
         getattr(args, "profile", None), os.environ.get("UBONGO_PROFILE")

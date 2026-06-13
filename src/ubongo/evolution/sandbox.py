@@ -318,7 +318,7 @@ def _score_config_sample(target: str, parsed: dict, sample: dict, *, judge_model
             persona = router.workflow_persona(wf_name)
             response, tokens = _run_workflow_isolated(agents, message, persona=persona)
     else:
-        return None  # retry is scored by a structural proxy, not here
+        return None
 
     if not response.strip():
         return None
@@ -369,34 +369,6 @@ def evaluate_config_variant(
         user_correction_rate=sum(1 for s in scores if s.would_correct) / n,
         cost=sum(s.gen_tokens for s in scores) / n,
         latency_ms=sum(s.gen_latency_ms for s in scores) / n,
-    )
-
-
-def evaluate_retry_variant(variant_row: dict) -> VariantMetrics | None:
-    """Score a retry-config variant with a STRUCTURAL PROXY (Phase 19c).
-
-    Retry quality only manifests under failure, which offline samples cannot
-    induce, so this is deliberately not a response-quality signal — it rewards a
-    sane attempt cap and good peer coverage and penalizes an excessive cap
-    (cost). Documented as the weakest fitness in the system; a fault-injection
-    harness is a follow-up. No LLM call.
-    """
-    try:
-        parsed = yaml.safe_load(variant_row["variant_text"])
-    except yaml.YAMLError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    ma = parsed.get("max_attempts", 3)
-    peers = parsed.get("peer_replacements", {}) or {}
-    covered = sum(1 for a in ("coding", "research", "critic") if peers.get(a))
-    attempts_score = 1.0 if 2 <= ma <= 3 else (0.6 if ma == 4 else 0.3)
-    coverage_score = covered / 3.0
-    success = 0.5 * attempts_score + 0.5 * coverage_score
-    return VariantMetrics(
-        lineage_id=variant_row["id"], success_rate=success,
-        hallucination_rate=0.0, user_correction_rate=0.0,
-        cost=float(ma), latency_ms=0.0,
     )
 
 
@@ -457,9 +429,7 @@ def evaluate_target(
     cohort: list[VariantMetrics] = []
     skipped = 0
     for row in variant_rows:
-        if target == "retry:repair":
-            metrics = evaluate_retry_variant(row)  # structural proxy, no LLM
-        elif kind == targets.CONFIG:
+        if kind == targets.CONFIG:
             metrics = evaluate_config_variant(
                 row, target, samples, judge_model=judge_model, budget=budget,
             )

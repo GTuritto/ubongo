@@ -544,3 +544,20 @@ Governance approvals are no longer trapped in the channel that raised them ([Pla
 | T.7 | Auto / reject turns write no pending row | `ubongo send "what is a write-ahead log" --persona architect`; `sqlite3 ... "SELECT COUNT(*) FROM pending_approvals"` | a normal answer; count unchanged (behaviour-neutral — only require_approval turns persist a record). |
 | T.8 | `/pending` in the help banner | REPL: `/foo` | the help banner lists `/pending [approve|decline <id>]`. |
 | T.9 | Pytest passes | `uv run pytest` | 980 passed (+20: `test_approval_seam.py`, `test_oneshot_pending.py`, the `/pending` REPL cases, the typed-seam updates). |
+
+## v0.5 Phase 05 — The grant registry
+
+Persistent capability grants replace ask-every-time fatigue ([Plans/v0.5-05-grant-registry.md](../../Plans/v0.5-05-grant-registry.md), [ADR-0019](../../docs/adr/0019-grant-registry.md)): the first connector turn touching a capability class (`connector:<server>`, server-granular) with no active grant asks once through the Phase 03 seam; approving writes a grant; later turns in that class auto-proceed; revoking re-arms the ask (DB-backed, survives restart). The grant check is a decision-matrix rule placed *after* the safety rules. Built channel-free. Paired with the cut of the `retry:repair` evolvable target.
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| U.1 | First connector turn gates | enable a loop-back MCP server in `settings.yaml::mcp.servers`; `rm -f data/ubongo.db`; REPL `/mode connector_session`, ask it to use the tool | the gated approval message; `sqlite3 data/ubongo.db "SELECT reason FROM governance_decisions ORDER BY id DESC LIMIT 1"` shows `grant_first_encounter:connector:<server>`; no grant row yet. |
+| U.2 | Approve → grant written, answer delivered | at the prompt: `y` | the real composed answer; `sqlite3 ... "SELECT capability_class, status FROM grants"` → `connector:<server> active`. |
+| U.3 | Next connector turn auto-proceeds | `/mode connector_session`, ask again | no approval prompt — the turn runs straight through (auto under the grant); `/decisions 1` shows `action=auto`. |
+| U.4 | `/grants` lists it | REPL `/grants` (or `ubongo grants`) | the active grant listed with `#id`, `connector:<server>`, consequence, scope. |
+| U.5 | Revoke re-arms | `/grants revoke <id>`; then a connector turn | "Revoked …"; the next connector turn gates again (`grant_first_encounter`). Survives a fresh process. |
+| U.6 | Safety still wins | with an active grant, `/mode connector_session`, "delete the entire vault" | still gates — reason `risk_destructive` (rule 1), not the grant rule; grants never override safety. |
+| U.7 | Non-connector turn writes no grant | `ubongo send "what is a write-ahead log" --persona architect`; `sqlite3 ... "SELECT COUNT(*) FROM grants"` | a normal answer; grant count unchanged (only connector turns touch the registry). |
+| U.8 | retry:repair is gone | REPL `/optimize` | the target list shows `persona:*`, `routing:default`, `toolchain:*` — **no `retry:repair`**. |
+| U.9 | CLI grants surface | `ubongo grants`; `ubongo grants revoke <id>` | lists active grants / revokes by id; unknown id exits non-zero with a clean message. |
+| U.10 | Pytest passes | `uv run pytest` | 993 passed (grant registry + the retry:repair cut; `test_grant_registry.py` included). |

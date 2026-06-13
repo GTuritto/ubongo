@@ -5,7 +5,7 @@ A *target* is something the GP layer can mutate. Targets have a **kind**:
 - ``prompt`` — the three persona prompts (``persona:architect|operator|casual``).
   The base is the persona body; ``variant_text`` holds an alternate body.
 - ``config`` — routing rules (``routing:default``), per-workflow tool chains
-  (``toolchain:<workflow>``), and the Repair retry config (``retry:repair``).
+  and the tool-chain config (``toolchain:<workflow>``).
   The base is a serialized YAML snapshot of the live config section;
   ``variant_text`` holds an alternate serialized config.
 
@@ -32,7 +32,10 @@ CONFIG = "config"
 _PERSONA_PREFIX = "persona:"
 _ROUTING_TARGET = "routing:default"
 _TOOLCHAIN_PREFIX = "toolchain:"
-_RETRY_TARGET = "retry:repair"
+# v0.5 phase 05 (Amendment 2): the retry:repair target was cut. Its fitness was
+# a structural proxy — offline held-out samples can't induce real agent failures
+# (ADR-0007) — so it was the weakest evolution signal; removed as the budget
+# offset for the grant registry. Repair config stays human-edited in settings.yaml.
 
 
 class UnknownTargetError(ValueError):
@@ -74,7 +77,6 @@ def evolvable_targets() -> list[str]:
     out = [f"{_PERSONA_PREFIX}{name}" for name in personas.VALID_PERSONAS]
     out.append(_ROUTING_TARGET)
     out.extend(f"{_TOOLCHAIN_PREFIX}{wf}" for wf in _toolchain_workflows())
-    out.append(_RETRY_TARGET)
     return out
 
 
@@ -113,12 +115,6 @@ def _live_toolchain(workflow: str) -> dict[str, Any]:
     return {"workflow": workflow, "agents": list(router.workflow_agents(workflow))}
 
 
-def _live_retry() -> dict[str, Any]:
-    from ubongo.config import load_config
-
-    return load_config().get("agents", {}).get("repair", {}) or {}
-
-
 def _serialize(obj: Any) -> str:
     return yaml.safe_dump(obj, sort_keys=False, default_flow_style=False).rstrip()
 
@@ -130,8 +126,6 @@ def serialize_config(target: str) -> str:
         return _serialize(_live_routing())
     if target.startswith(_TOOLCHAIN_PREFIX):
         return _serialize(_live_toolchain(target[len(_TOOLCHAIN_PREFIX):]))
-    if target == _RETRY_TARGET:
-        return _serialize(_live_retry())
     raise UnknownTargetError(target)
 
 
@@ -179,8 +173,6 @@ def apply_variant(target: str, variant_text: str) -> Any:
         return _validate_routing(parsed)
     if target.startswith(_TOOLCHAIN_PREFIX):
         return _validate_toolchain(parsed)
-    if target == _RETRY_TARGET:
-        return _validate_retry(parsed)
     raise UnknownTargetError(target)
 
 
@@ -223,28 +215,4 @@ def _validate_toolchain(parsed: Any) -> dict:
             composer_present = True
     if not composer_present:
         raise InvalidVariantError("toolchain has no composer agent")
-    return parsed
-
-
-_KNOWN_RETRY_KEYS = {"max_attempts", "fallback_models", "smaller_models", "peer_replacements"}
-
-
-def _validate_retry(parsed: Any) -> dict:
-    from ubongo import runner
-
-    if not isinstance(parsed, dict):
-        raise InvalidVariantError("retry variant must be a mapping")
-    unknown = set(parsed) - _KNOWN_RETRY_KEYS
-    if unknown:
-        raise InvalidVariantError(f"unknown retry keys: {sorted(unknown)}")
-    peers = parsed.get("peer_replacements", {}) or {}
-    if not isinstance(peers, dict):
-        raise InvalidVariantError("peer_replacements must be a mapping")
-    registry = runner.default_registry()
-    for agent_name, peer in peers.items():
-        if peer is not None and peer not in registry:
-            raise InvalidVariantError(f"peer '{peer}' for '{agent_name}' is not a registered agent")
-    ma = parsed.get("max_attempts")
-    if ma is not None and (not isinstance(ma, int) or ma < 1):
-        raise InvalidVariantError("max_attempts must be a positive int")
     return parsed

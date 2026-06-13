@@ -79,6 +79,21 @@ CREATE TABLE IF NOT EXISTS governance_decisions (
   decided_at TIMESTAMP NOT NULL
 );
 
+-- v0.5 phase 05: the grant registry. Persistent consent for a capability class;
+-- the first connector turn touching a class with no active grant asks once, and
+-- approving writes a row here so later turns auto-proceed. Revoking re-arms the ask.
+CREATE TABLE IF NOT EXISTS grants (
+  id INTEGER PRIMARY KEY,
+  capability_class TEXT NOT NULL,                -- e.g. "connector:compendium"
+  consequence_class TEXT NOT NULL CHECK (consequence_class IN ('reversible', 'irreversible')),
+  scope TEXT NOT NULL DEFAULT '*',               -- agent name, or '*' for any agent
+  purpose TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
+  created_at TIMESTAMP NOT NULL,
+  revoked_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_grants_class_status ON grants(capability_class, status);
+
 -- v0.5 phase 03: the resumable approval record. One row per require_approval
 -- turn; the single source of truth for resuming a gated turn in any channel.
 CREATE TABLE IF NOT EXISTS pending_approvals (

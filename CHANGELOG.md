@@ -18,6 +18,30 @@ entry below records what that version added. Newest first.
 
 ---
 
+## v0.5.5 — the grant registry (v0.5 trust-protocol, phase 05)
+
+Date: 2026-06-13
+
+The plan's one genuinely new subsystem ([ADR-0019](docs/adr/0019-grant-registry.md)):
+persistent capability grants replace ask-every-time approval fatigue. Built
+channel-free (it runs on the Phase-03 approval seam via the existing REPL/web/CLI
+surfaces); the messaging channel is a later phase. The version sequence reads
+`0.5.3 → 0.5.5` — `0.5.4` is reserved for the channel phase.
+
+- The first connector turn touching a capability class (`connector:<server>`) with
+  no active grant asks once through the approval seam; approving writes a grant;
+  later turns in that class auto-proceed; revoking re-arms the ask (DB-backed,
+  survives restart). The grant check is a new decision-matrix rule placed *after*
+  the safety rules — a destructive connector turn still gates regardless of grants.
+- Management: REPL `/grants` + `/grants revoke <id>`, CLI `ubongo grants [revoke <id>]`.
+- Grants are server-granular (per-tool-name allowlists stay deferred until a real
+  integration gives concrete tool names — ADR-0016).
+- Paired cut (plan Amendment 2): the `retry:repair` evolvable target and its
+  structural-proxy fitness are removed — the weakest GP signal (ADR-0007), the
+  budget offset for the registry. Repair config stays human-edited.
+- Behaviour-neutral for every non-connector turn; additive schema, no migration;
+  single-writer rule untouched. 993 tests green.
+
 ## v0.5.3 — the typed, resumable approval seam (v0.5 trust-protocol, phase 03)
 
 Date: 2026-06-13
