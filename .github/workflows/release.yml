@@ -80,13 +80,19 @@ jobs:
           python3 - "$VER" <<'PY'
           import pathlib, re, sys
           ver = sys.argv[1]
-          p = pathlib.Path("pyproject.toml")
-          p.write_text(re.sub(r'^version = "[^"]*"', f'version = "{ver}"',
-                              p.read_text(), count=1, flags=re.M))
+          # pyproject.toml: the project version (first match).
+          pp = pathlib.Path("pyproject.toml")
+          pp.write_text(re.sub(r'^version = "[^"]*"', f'version = "{ver}"',
+                               pp.read_text(), count=1, flags=re.M))
+          # uv.lock: only the workspace package's own version, so `uv sync
+          # --frozen` (the release gate) stays consistent with pyproject.
+          lk = pathlib.Path("uv.lock")
+          lk.write_text(re.sub(r'(name = "ubongo"\nversion = ")[^"]*(")',
+                               rf'\g<1>{ver}\g<2>', lk.read_text(), count=1))
           PY
           git config user.name "ubongo-ci[bot]"
           git config user.email "ci@ubongo.local"
-          git add VERSION pyproject.toml
+          git add VERSION pyproject.toml uv.lock
           git commit -m "chore(release): v$VER [skip ci]"
           git push origin HEAD:main
 
