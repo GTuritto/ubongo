@@ -23,6 +23,11 @@ web = [
 mcp = [
     "mcp>=1.2",
 ]
+# Optional, v0.5 Telegram channel. A thin httpx long-poll loop against the Bot
+# API — no heavy bot framework. Kept out of core: `uv sync --extra telegram`.
+telegram = [
+    "httpx>=0.27",
+]
 
 [dependency-groups]
 dev = [

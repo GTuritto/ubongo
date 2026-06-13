@@ -1,6 +1,6 @@
 # Ubongo — Context for Claude Code Sessions
 
-Ubongo is a personal, mood-aware AI mind for one user (Giuseppe Turitto), running locally as a CLI. v0.1 is **a multi-agent orchestration platform** and **a self-improving runtime** in one package: a Master Agent dispatches a fleet of disposable worker agents across six execution modes; a governance layer gates risk; a continuous Genetic Programming loop evolves prompts, routing rules, tool chains, and retry strategies, with human approval before any promotion. CLI is the v0.1 channel (REPL plus one-shot); Telegram is v0.2.
+Ubongo is a personal, mood-aware AI mind for one user (Giuseppe Turitto), running locally as a CLI. v0.1 is **a multi-agent orchestration platform** and **a self-improving runtime** in one package: a Master Agent dispatches a fleet of disposable worker agents across six execution modes; a governance layer gates risk; a continuous Genetic Programming loop evolves prompts, routing rules, tool chains, and retry strategies, with human approval before any promotion. CLI is the v0.1 channel (REPL plus one-shot); web, MCP, and (v0.5) Telegram channels were added post-v0.1 as additive adapters over the one turn seam.
 
 ## Status
 

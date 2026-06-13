@@ -1,0 +1,29 @@
+# Ubongo Telegram bot — systemd unit for the Pi / Ubuntu deployment.
+#
+# Same install recipe as deploy/ubongo-web.service (edit the two paths, copy to
+# ~/.config/systemd/user/, daemon-reload, enable --now, enable-linger). This
+# unit and `ubongo-ctl.sh ... telegram` are alternatives; do not run both at once.
+#
+# The bot drives Ubongo from Telegram (long-poll). Auth is real: only the user
+# ids in settings.yaml::telegram.allowed_user_ids may use it (ADR-0020). The
+# token is a secret in .env (TELEGRAM_BOT_TOKEN). First cloud-relayed channel —
+# behind the egress envelope, api.telegram.org must be allowlisted (ADR-0017).
+
+[Unit]
+Description=Ubongo Telegram bot (long-poll)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+# EDIT these two paths to your install location:
+WorkingDirectory=/home/pi/ubongo
+ExecStart=/home/pi/ubongo/start-ubongo-telegram.sh
+# The app loads .env itself via dotenv; this makes TELEGRAM_BOT_TOKEN and any
+# UBONGO_* knobs visible to the launcher too.
+EnvironmentFile=-/home/pi/ubongo/.env
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

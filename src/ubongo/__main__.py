@@ -54,6 +54,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--addr", default=os.environ.get("UBONGO_MCP_ADDR", "0.0.0.0"),
         help="HTTP bind address (default 0.0.0.0, or UBONGO_MCP_ADDR)",
     )
+    # v0.5 phase 04: the Telegram channel (long-poll bot).
+    subparsers.add_parser(
+        "telegram", help="Run the Telegram bot (long-poll; TELEGRAM_BOT_TOKEN in .env)"
+    )
     # v0.5 phase 03: the cross-channel approval surface. A turn gated in any
     # channel persists a record; these resolve it without the original channel.
     subparsers.add_parser("pending", help="List require_approval turns awaiting a decision")
@@ -94,6 +98,12 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         return mcp_server.run(http=args.http, port=args.port, addr=args.addr)
+
+    if args.command == "telegram":
+        # Lazy import: httpx is the optional [telegram] extra; bot.py reports a
+        # friendly hint if it's missing.
+        from ubongo.telegram import bot as telegram_bot
+        return telegram_bot.run()
 
     if args.command == "pending":
         return oneshot.list_pending()
