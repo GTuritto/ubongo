@@ -35,6 +35,10 @@ class SendResult(TypedDict):
     ok: bool
     persona: str
     gated: bool
+    # v0.5 phase 03: when gated, the decision id of the persisted pending
+    # record. MCP still can't approve (ADR-0015), but the turn is no longer a
+    # dead end — a human channel can `ubongo approve <decision_id>` later.
+    decision_id: int | None
     requires_user_decision: bool
 
 
@@ -62,7 +66,7 @@ def send_turn(message: str, persona: str | None = None, auto: bool = False) -> S
         return {
             "text": f"Unknown persona '{chosen}'. Choose from: {valid}.",
             "ok": False, "persona": chosen, "gated": False,
-            "requires_user_decision": False,
+            "decision_id": None, "requires_user_decision": False,
         }
     # The envelope (cProfile wrap behind the knob, master.handle, queue
     # flush) is the channel core's; this module keeps the MCP shaping only.
@@ -71,8 +75,10 @@ def send_turn(message: str, persona: str | None = None, auto: bool = False) -> S
         "text": response.text,
         "ok": response.ok,
         "persona": response.persona,
-        # Approval is never possible over MCP: report the gate, drop the payload.
+        # Approval is never possible over MCP: report the gate + the id a human
+        # channel can resolve, but no approve action here.
         "gated": response.approval is not None,
+        "decision_id": response.approval.decision_id if response.approval else None,
         "requires_user_decision": response.requires_user_decision,
     }
 

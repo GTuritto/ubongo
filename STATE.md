@@ -118,7 +118,7 @@ each is either documented in an ADR or in a STATUS phase note.
 
 ## Decisions and why (the ADR record)
 
-The architectural "why" lives in `docs/adr/`. Seventeen ADRs, all Accepted:
+The architectural "why" lives in `docs/adr/`. Eighteen ADRs, all Accepted:
 
 - **0001 — Hand-rolled orchestration.** Plain Python + asyncio + an event bus, no framework. The whole
   system is small enough that a framework would add more surface than it removes.
@@ -163,6 +163,11 @@ The architectural "why" lives in `docs/adr/`. Seventeen ADRs, all Accepted:
   nftables egress allowlist on the Linux/Pi deployment (`deploy/envelope/`): what leaves the machine is
   enumerable in `/etc/ubongo/egress.hosts` and enforced below the model's discretion. Zero `src/` change;
   Linux-only by design — the macOS dev machine is not enveloped.
+- **0018 — The approval exchange is a typed, persisted, resumable seam.** A `pending_approvals` record
+  (in `trace.py`, keyed by `decision_id`) is the single source of truth for a held turn; `Response.approval`
+  is a typed `ApprovalRequest`; `master.resume_approval` is the one re-issue path. A turn gated in one
+  channel can be approved in another (`/pending`, web, `ubongo approve <id>`) — the prerequisite for
+  approve-later over Telegram.
 
 Two CLAUDE.md rules worth restating because they constrained the build throughout: new capabilities default
 to CLI scripts behind the constrained-bash skill rather than first-class tools, and new v0.2+ behavior ships
@@ -193,7 +198,7 @@ as handlers on the named events rather than edits to the pipeline.
 
 - Phase-by-phase changelog and acceptance checklist: [STATUS.md](STATUS.md)
 - The contract for v0.1 scope: [UBONGO_BUILD.md](UBONGO_BUILD.md)
-- Decisions with rationale: [docs/adr/](docs/adr/) (0001–0017)
+- Decisions with rationale: [docs/adr/](docs/adr/) (0001–0018)
 - Living architecture (C4 + glossary): [docs/architecture/](docs/architecture/), [CONTEXT.md](CONTEXT.md)
 - Security contract and its known v0.1 limits: [docs/SECURITY.md](docs/SECURITY.md)
 - Cumulative manual smoke playbook: [tests/manual/smoke_test.md](tests/manual/smoke_test.md)

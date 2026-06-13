@@ -505,6 +505,42 @@ def _cmd_policy(line: str, state: ReplState) -> str | None:
     return _render_policy()
 
 
+def _cmd_pending(line: str, state: ReplState) -> str | None:
+    """v0.5 phase 03: the listable surface for require_approval turns raised
+    anywhere (this session, a one-shot, or MCP). `/pending` lists them;
+    `/pending approve|decline <id>` resolves one through the shared seam."""
+    from ubongo.governance import approval as gov_approval
+
+    parts = line.split()
+    if len(parts) >= 3 and parts[1] in ("approve", "decline"):
+        try:
+            decision_id = int(parts[2])
+        except ValueError:
+            return f"Usage: /pending [approve|decline <id>]. {_HELP_COMMANDS}"
+        pending = gov_approval.get_pending(decision_id)
+        if pending is None or pending.status != "pending":
+            return f"No pending approval #{decision_id} (unknown or already resolved)."
+        if parts[1] == "approve":
+            resumed = master.resume_approval(decision_id, "y")
+            return f"Approved #{decision_id}. Delivered:\n{resumed.text}"
+        master.resume_approval(decision_id, "n")
+        return f"Declined #{decision_id}; nothing was done."
+    if len(parts) >= 2:
+        return f"Usage: /pending [approve|decline <id>]. {_HELP_COMMANDS}"
+    rows = gov_approval.list_pending()
+    if not rows:
+        return "No pending approvals."
+    out = [f"Pending approvals ({len(rows)}):"]
+    for p in rows:
+        snippet = p.message.strip().replace("\n", " ")
+        if len(snippet) > 60:
+            snippet = snippet[:57] + "..."
+        out.append(f"  #{p.decision_id}  {_format_time(p.created_at)}  "
+                   f"{p.persona:<10}  {snippet}")
+    out.append("Approve with /pending approve <id> (or decline <id>).")
+    return "\n".join(out)
+
+
 def _cmd_agents(line: str, state: ReplState) -> str | None:
     return _render_agents_table()
 
@@ -640,6 +676,7 @@ COMMANDS: dict[str, Command] = {
     "queue":        Command(_cmd_queue, "/queue [N]"),
     "decisions":    Command(_cmd_decisions, "/decisions [N]"),
     "policy":       Command(_cmd_policy, "/policy"),
+    "pending":      Command(_cmd_pending, "/pending [approve|decline <id>]"),
     "agents":       Command(_cmd_agents, "/agents"),
     "trace":        Command(_cmd_trace, "/trace [N]"),
     "profile":      Command(_cmd_profile, "/profile [agents|models|modes|cpu|mem] [N]"),
@@ -684,20 +721,20 @@ def _prompt_repair_retry() -> str:
     return "y" if choice == "y" else "n"
 
 
-def _prompt_approval(request: dict) -> str:
+def _prompt_approval(request) -> str:
     """Phase 15a: ask the user to approve a require_approval turn.
 
-    Prints the one-line summary, then reads y/n/why. `why` prints the
-    explanation paragraph and re-prompts. Returns "y" or "n" — anything other
-    than "y" (and EOF) is treated as "n"."""
-    print(request["summary"])
+    Takes the typed `ApprovalRequest`. Prints the one-line summary, then reads
+    y/n/why. `why` prints the explanation paragraph and re-prompts. Returns "y"
+    or "n" — anything other than "y" (and EOF) is treated as "n"."""
+    print(request.summary)
     while True:
         try:
             choice = input("Approve? (y/n/why) ").strip().lower()
         except EOFError:
             return "n"
         if choice == "why":
-            print(request["why"])
+            print(request.why)
             continue
         return "y" if choice == "y" else "n"
 
@@ -835,18 +872,16 @@ def _repl_loop(persona, auto_mode, pending_skill, pending_workflow,
             # On "n" (or anything else), just continue the loop. The user
             # types the next prompt as usual.
 
-        # Phase 15: when governance held the turn for approval, prompt y/n/why.
+        # Phase 15 / v0.5 phase 03: governance held the turn — prompt y/n/why,
+        # then resume through the one shared seam (which reads the persisted
+        # record, not this loop's locals).
         if response.approval is not None:
             choice = _prompt_approval(response.approval)
-            trace.update_governance_decision(response.approval["decision_id"], choice)
-            if choice == "y":
-                approved_response, _ = channel.run_turn(
-                    stripped, state.persona, auto_mode=state.auto_mode,
-                    approved=True, profile_cpu=False,
-                )
-                print(approved_response.text)
+            resumed = master.resume_approval(response.approval.decision_id, choice)
+            if resumed is not None:
+                print(resumed.text)
                 if state.auto_mode:
-                    state.persona = approved_response.persona
+                    state.persona = resumed.persona
             else:
                 emit("Aborted; nothing was done.")
 

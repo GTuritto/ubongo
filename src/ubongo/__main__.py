@@ -54,6 +54,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--addr", default=os.environ.get("UBONGO_MCP_ADDR", "0.0.0.0"),
         help="HTTP bind address (default 0.0.0.0, or UBONGO_MCP_ADDR)",
     )
+    # v0.5 phase 03: the cross-channel approval surface. A turn gated in any
+    # channel persists a record; these resolve it without the original channel.
+    subparsers.add_parser("pending", help="List require_approval turns awaiting a decision")
+    approve = subparsers.add_parser("approve", help="Approve a pending turn by decision id")
+    approve.add_argument("decision_id", type=int)
+    decline = subparsers.add_parser("decline", help="Decline a pending turn by decision id")
+    decline.add_argument("decision_id", type=int)
     return parser
 
 
@@ -82,6 +89,13 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         return mcp_server.run(http=args.http, port=args.port, addr=args.addr)
+
+    if args.command == "pending":
+        return oneshot.list_pending()
+    if args.command == "approve":
+        return oneshot.resolve_pending(args.decision_id, approve=True)
+    if args.command == "decline":
+        return oneshot.resolve_pending(args.decision_id, approve=False)
 
     startup_profile = profiling.resolve_startup_profile(
         getattr(args, "profile", None), os.environ.get("UBONGO_PROFILE")

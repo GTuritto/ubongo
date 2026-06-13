@@ -264,6 +264,73 @@ def update_governance_decision(decision_id: int, approval_response: str) -> None
     )
 
 
+# --- pending approvals (v0.5 phase 03): the resumable record, keyed by decision_id ---
+
+
+def append_pending_approval(
+    decision_id: int,
+    *,
+    message: str,
+    persona: str,
+    auto_mode: bool,
+    summary: str,
+    why: str,
+) -> None:
+    """Persist the turn a require_approval decision held, so it can be resumed
+    in any channel later. One row per gated turn, status='pending'."""
+    connection().execute(
+        "INSERT OR REPLACE INTO pending_approvals "
+        "(decision_id, message, persona, auto_mode, summary, why, status, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
+        (decision_id, message, persona, 1 if auto_mode else 0, summary, why, now_iso()),
+    )
+
+
+def get_pending_approval(decision_id: int) -> dict | None:
+    """The pending-approval record for a decision, or None. `auto_mode` is
+    returned as a bool; `status` is pending|approved|declined."""
+    row = connection().execute(
+        "SELECT decision_id, message, persona, auto_mode, summary, why, status, "
+        "created_at, resolved_at FROM pending_approvals WHERE decision_id = ?",
+        (decision_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    d = dict(row)
+    d["auto_mode"] = bool(d["auto_mode"])
+    return d
+
+
+def open_pending_approvals(limit: int = 50) -> list[dict]:
+    """Every still-pending approval, oldest first (the order a human works them)."""
+    rows = connection().execute(
+        "SELECT decision_id, message, persona, auto_mode, summary, why, status, "
+        "created_at, resolved_at FROM pending_approvals "
+        "WHERE status = 'pending' ORDER BY decision_id ASC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    out = []
+    for row in rows:
+        d = dict(row)
+        d["auto_mode"] = bool(d["auto_mode"])
+        out.append(d)
+    return out
+
+
+def resolve_pending_approval(decision_id: int, status: str) -> bool:
+    """Mark a still-pending record approved|declined. Returns True if it was
+    pending and got resolved, False if it was absent or already resolved
+    (the idempotency guard for resume)."""
+    if status not in ("approved", "declined"):
+        raise ValueError(f"resolve_pending_approval: bad status {status!r}")
+    cur = connection().execute(
+        "UPDATE pending_approvals SET status = ?, resolved_at = ? "
+        "WHERE decision_id = ? AND status = 'pending'",
+        (status, now_iso(), decision_id),
+    )
+    return cur.rowcount > 0
+
+
 def append_repair_run(
     workflow_run_id: int,
     *,

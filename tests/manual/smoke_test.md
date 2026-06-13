@@ -528,3 +528,19 @@ Behavior-free refactor ([Plans/v0.5-02-store-split.md](../../Plans/v0.5-02-store
 | S.6 | Evaluation-common is the one home | `grep -r "from ubongo.evolution" src/ubongo/authoring/` | no hits — authoring no longer imports evolution internals; both sandboxes import `CallBudget`/`parse_judgment` from `ubongo.evaluation`. |
 | S.7 | Single writer intact | `uv run pytest tests/test_agents_memory.py::test_strict_mode_blocks_non_memory_writer -q` | passes unmodified — the rule is about writers, not files. |
 | S.8 | Pytest passes | `uv run pytest` | 960 passed, no assertion changed (only import homes moved; the trace-table tests live in `tests/test_memory_trace.py`). |
+
+## v0.5 Phase 03 — The typed, resumable approval seam
+
+Governance approvals are no longer trapped in the channel that raised them ([Plans/v0.5-03-approval-seam.md](../../Plans/v0.5-03-approval-seam.md), [ADR-0018](../../docs/adr/0018-resumable-approval-seam.md)): a require_approval turn persists a `pending_approvals` record (the single source of truth), `Response.approval` is a typed `ApprovalRequest`, and one `master.resume_approval(decision_id, choice)` re-issues from the record. A turn gated in one channel can be approved in another. This section verifies cross-channel resume end to end.
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| T.1 | Gated one-shot persists a record | `rm -f data/ubongo.db`; `ubongo send "delete the entire vault" --persona casual` | the gated message on stdout; rc 1; a hint `approve later with: ubongo approve <id>` on stderr; `sqlite3 data/ubongo.db "SELECT decision_id, status FROM pending_approvals"` shows one `pending` row. |
+| T.2 | `ubongo pending` lists it | `ubongo pending` | the held turn listed with its `#<decision_id>`, persona, and a snippet; rc 0. |
+| T.3 | `ubongo approve <id>` delivers + flips both rows | `ubongo approve <id>` | the real composed answer prints; `sqlite3 ... "SELECT status FROM pending_approvals"` → `approved`; `"SELECT approval_response FROM governance_decisions ORDER BY id DESC LIMIT 1"` → `y`. |
+| T.4 | Cross-channel: gate in one-shot, approve in REPL | `ubongo send "delete the entire vault"` (rc 1), then in REPL: `/pending`, `/pending approve <id>` | `/pending` lists it; `/pending approve <id>` prints "Approved #<id>. Delivered:" + the real answer. (The exit criterion: raised in one channel, resolved in another.) |
+| T.5 | Decline does not deliver | `ubongo send "delete the entire vault"` then `ubongo decline <id>` | "Declined #<id>; nothing was done."; `pending_approvals.status` → `declined`; `governance_decisions.approval_response` → `n`; no assistant answer delivered. |
+| T.6 | Double-approve is a no-op | after T.3, `ubongo approve <id>` again | "No pending approval #<id> (unknown or already resolved)."; rc 1; no second answer, no duplicate turn. |
+| T.7 | Auto / reject turns write no pending row | `ubongo send "what is a write-ahead log" --persona architect`; `sqlite3 ... "SELECT COUNT(*) FROM pending_approvals"` | a normal answer; count unchanged (behaviour-neutral — only require_approval turns persist a record). |
+| T.8 | `/pending` in the help banner | REPL: `/foo` | the help banner lists `/pending [approve|decline <id>]`. |
+| T.9 | Pytest passes | `uv run pytest` | 980 passed (+20: `test_approval_seam.py`, `test_oneshot_pending.py`, the `/pending` REPL cases, the typed-seam updates). |

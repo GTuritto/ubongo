@@ -402,18 +402,23 @@ def test_handle_persists_reversibility_not_null():
 
 
 def test_handle_require_approval_attaches_approval_payload():
-    """A require_approval turn carries an ApprovalRequest dict on the Response."""
+    """A require_approval turn carries a typed ApprovalRequest on the Response
+    and persists a matching pending_approvals record (v0.5 phase 03)."""
+    from ubongo.governance.approval import ApprovalRequest
     benign = _classification(risk="low", task_type="question")
     with patch("ubongo.master.classifier.classify", return_value=benign), \
          patch("ubongo.agents.personas.complete", return_value=_completion("ok")):
         resp = master.handle("please delete the entire vault", "casual", auto_mode=False)
-    assert resp.approval is not None
-    assert set(resp.approval) == {"decision_id", "summary", "why"}
-    assert resp.approval["decision_id"] > 0
-    assert "risk=destructive" in resp.approval["summary"]
+    assert isinstance(resp.approval, ApprovalRequest)
+    assert resp.approval.decision_id > 0
+    assert "risk=destructive" in resp.approval.summary
     gd = _query_one("SELECT id, action FROM governance_decisions")
-    assert resp.approval["decision_id"] == gd["id"]
+    assert resp.approval.decision_id == gd["id"]
     assert gd["action"] == "require_approval"
+    pa = _query_one("SELECT decision_id, persona, status FROM pending_approvals")
+    assert pa["decision_id"] == gd["id"]
+    assert pa["persona"] == "casual"
+    assert pa["status"] == "pending"
 
 
 def test_handle_approved_bypasses_require_approval_gate():

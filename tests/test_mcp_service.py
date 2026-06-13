@@ -59,7 +59,7 @@ def test_send_turn_happy_path(_stub_turn):
     out = service.send_turn("hello", "architect")
     assert out == {
         "text": "answer", "ok": True, "persona": "architect",
-        "gated": False, "requires_user_decision": False,
+        "gated": False, "decision_id": None, "requires_user_decision": False,
     }
     assert _stub_turn["args"] == ("hello", "architect", False)
 
@@ -71,14 +71,17 @@ def test_send_turn_default_persona_and_auto(_stub_turn):
 
 
 def test_send_turn_gated_reports_and_is_not_approvable(_stub_turn):
+    from ubongo.governance.approval import ApprovalRequest
     _stub_turn["response"] = _response(
         "This looks destructive...", ok=True,
-        approval={"decision_id": 1, "summary": "s", "why": "w"},
+        approval=ApprovalRequest(decision_id=1, summary="s", why="w"),
     )
     out = service.send_turn("delete the entire vault")
     assert out["gated"] is True
-    # the approval payload is NOT forwarded over MCP
-    assert "approval" not in out and "decision_id" not in str(out)
+    # v0.5 phase 03: the decision_id IS forwarded (so a human channel can
+    # `ubongo approve 1`), but no approve action and no summary/why payload.
+    assert out["decision_id"] == 1
+    assert "approval" not in out and "summary" not in out and "why" not in out
 
 
 def test_send_turn_repair_exhausted(_stub_turn):
