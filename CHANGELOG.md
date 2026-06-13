@@ -18,6 +18,35 @@ entry below records what that version added. Newest first.
 
 ---
 
+## v0.1.6 — v0.5 groundwork: ledger, envelope, store split
+
+Date: 2026-06-13
+
+The first three phases of the **v0.5 trust-protocol** plan
+([Plans/v0.5-trust-protocol.md](Plans/v0.5-trust-protocol.md)), all preparatory and
+low-risk, folded into one release. (Phases 00 and 01 merged before the version was
+bumped; this entry captures all three so the tag sequence stays contiguous. From
+Phase 03 onward the bump rides in each phase's own PR, and Phase 03 — the typed
+approval seam — opens **v0.2**.)
+
+- **Phase 00 — Reconcile the ledger.** Archived the completed-but-unclosed
+  `complete-fanout-peer-replacement` openspec change, synced its spec, and restated
+  the runner's provisional fan-out-recovery wording as the accepted asymmetry
+  (single-hop peer replacement in all five fan-out modes; the full Repair ladder
+  stays sequential-only). Zero behavior change.
+- **Phase 01 — The outer envelope** ([ADR-0017](docs/adr/0017-deployment-envelope-podman-nftables.md)).
+  Deployment infrastructure under `deploy/envelope/`, zero `src/` LOC: a dedicated
+  `ubongo` user, rootless Podman quadlets with `.env` mounted read-only, and a
+  UID-keyed nftables egress allowlist (default `openrouter.ai`) so what leaves the
+  machine is enumerable and enforced below the model's discretion. Linux/Pi only;
+  the macOS dev machine is not enveloped.
+- **Phase 02 — Split the store.** Behavior-free refactor of `memory/store.py`
+  (1,990 lines / 92 functions) along its subsystem seams: `store.py` keeps the
+  per-turn core; `trace.py` absorbs the four trace tables and their builders;
+  `evolution_state.py`, `authoring_state.py`, and `index_state.py` own their
+  subsystems' rows; `evaluation.py` holds the judge plumbing both sandboxes shared.
+  Net `src/` LOC at baseline, single-writer rule untouched, 960 tests green.
+
 ## v0.1.5 — MCP client: the Connector agent
 
 Date: 2026-06-12
