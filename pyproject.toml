@@ -1,6 +1,6 @@
 [project]
 name = "ubongo"
-version = "0.5.2"
+version = "0.5.3"
 description = "A personal, mood-aware AI mind. Multi-agent, self-improving, self-extending CLI."
 requires-python = ">=3.11"
 readme = "README.md"
