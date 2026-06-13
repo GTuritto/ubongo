@@ -34,18 +34,21 @@ pyhint() {
 # --mcp the optional MCP server (lets other agents call Ubongo).
 WITH_WEB=0
 WITH_MCP=0
+WITH_TELEGRAM=0
 for arg in "$@"; do
   case "$arg" in
     --web) WITH_WEB=1 ;;
     --mcp) WITH_MCP=1 ;;
-    -h|--help) echo "Usage: ./install.sh [--web] [--mcp]"; exit 0 ;;
-    *) die "Unknown option: $arg (try --web / --mcp)" ;;
+    --telegram) WITH_TELEGRAM=1 ;;
+    -h|--help) echo "Usage: ./install.sh [--web] [--mcp] [--telegram]"; exit 0 ;;
+    *) die "Unknown option: $arg (try --web / --mcp / --telegram)" ;;
   esac
 done
 
 say "Installing Ubongo into: $APP_DIR"
 [ "$WITH_WEB" -eq 1 ] && say "Including the optional web UI (Streamlit)."
 [ "$WITH_MCP" -eq 1 ] && say "Including the optional MCP server."
+[ "$WITH_TELEGRAM" -eq 1 ] && say "Including the optional Telegram bot."
 
 # --- 1. Python >= 3.11 ------------------------------------------------------
 command -v python3 >/dev/null 2>&1 || \
@@ -75,6 +78,7 @@ python -m pip install --upgrade pip wheel >/dev/null
 EXTRAS=""
 [ "$WITH_WEB" -eq 1 ] && EXTRAS="web"
 [ "$WITH_MCP" -eq 1 ] && EXTRAS="${EXTRAS:+$EXTRAS,}mcp"
+[ "$WITH_TELEGRAM" -eq 1 ] && EXTRAS="${EXTRAS:+$EXTRAS,}telegram"
 if [ -n "$EXTRAS" ]; then
   python -m pip install -e ".[$EXTRAS]"
 else
@@ -143,6 +147,11 @@ if [ "$WITH_MCP" -eq 1 ]; then
 else
   echo "    MCP server:       re-run ./install.sh --mcp, then ./start-ubongo-mcp.sh"
 fi
-echo "    Service control:  ./ubongo-ctl.sh start|stop|restart|status [web|mcp]"
+if [ "$WITH_TELEGRAM" -eq 1 ]; then
+  echo "    Telegram bot:     ./start-ubongo-telegram.sh   (set TELEGRAM_BOT_TOKEN in .env + allowed_user_ids in settings.yaml)"
+else
+  echo "    Telegram bot:     re-run ./install.sh --telegram, then ./start-ubongo-telegram.sh"
+fi
+echo "    Service control:  ./ubongo-ctl.sh start|stop|restart|status [web|mcp|telegram]"
 echo "    Profiler:         /profile in the REPL (or UBONGO_PROFILE=cpu|mem|all in .env)"
 echo "    User manual:      docs/USER_MANUAL.md"

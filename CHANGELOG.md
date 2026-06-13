@@ -42,6 +42,28 @@ surfaces); the messaging channel is a later phase. The version sequence reads
 - Behaviour-neutral for every non-connector turn; additive schema, no migration;
   single-writer rule untouched. 993 tests green.
 
+## v0.5.4 — the Telegram channel (v0.5 trust-protocol, phase 04)
+
+Date: 2026-06-13
+
+The fifth channel and the first cloud-relayed one ([ADR-0020](docs/adr/0020-telegram-cloud-channel.md)):
+drive Ubongo from your phone, and — the point — receive approve-later prompts and
+grant first-encounter asks remotely. Fills the reserved v0.5.4 slot.
+
+- `telegram/service.py` is the network-free, unit-testable core (auth + the
+  `/approve|/decline|/pending|/grants` command router + turn handling); `telegram/bot.py`
+  is the only module touching the Bot API (a thin httpx long-poll loop, lazy import,
+  token from `TELEGRAM_BOT_TOKEN` in `.env`). `ubongo telegram` runs it.
+- No bypass: every authorized message goes through `channel.run_turn` → `master.handle`.
+  A gated turn surfaces the gated text and the decision_id; `/approve <id>` resolves it
+  via the Phase-03 seam (no re-implemented resume).
+- **Auth returns:** `telegram.allowed_user_ids` (empty = deny all, fail-closed). A minimal
+  `before_send` policy seam (`delivery_paused`) is wired; the quiet-hours engine is later.
+- Optional `[telegram]` extra (httpx), kept out of core; ctl + systemd unit +
+  `start-ubongo-telegram.sh` + `install.sh --telegram`; `api.telegram.org` added to the
+  egress allowlist (ADR-0017).
+- Additive — REPL/one-shot/web/MCP and orchestration unchanged. 1010 tests green.
+
 ## v0.5.3 — the typed, resumable approval seam (v0.5 trust-protocol, phase 03)
 
 Date: 2026-06-13
