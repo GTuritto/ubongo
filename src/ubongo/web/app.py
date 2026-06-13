@@ -32,8 +32,10 @@ USER = "user"
 def _init_state() -> None:
     if "messages" not in st.session_state:
         st.session_state.messages = []  # list[{"role", "content"}]
-    if "pending_approval" not in st.session_state:
-        st.session_state.pending_approval = None  # {"message","persona","auto_mode","approval"}
+    if "pending_decision_id" not in st.session_state:
+        # v0.5 phase 03: hold only the decision_id; the persisted
+        # pending_approvals record is the source of truth for the gated turn.
+        st.session_state.pending_decision_id = None
 
 
 def _render_history() -> None:
@@ -43,33 +45,37 @@ def _render_history() -> None:
 
 
 def _render_approval_gate() -> None:
-    """A turn that governance held for approval. Mirrors the REPL's y/n: Approve
-    re-issues with approved=True; Deny records the decline. Persists the choice to
-    governance_decisions.approval_response, like the REPL."""
-    from ubongo.memory import trace
+    """A turn that governance held for approval. Approve/Deny resume through the
+    one shared seam (`master.resume_approval`), which reads the persisted record
+    — the web channel holds only the decision_id, never the turn itself."""
+    from ubongo import master
+    from ubongo.governance import approval as gov_approval
 
-    pa = st.session_state.pending_approval
-    approval = pa["approval"]
+    decision_id = st.session_state.pending_decision_id
+    pending = gov_approval.get_pending(decision_id)
+    if pending is None or pending.status != "pending":
+        # Resolved elsewhere (another channel) while this tab sat open.
+        st.session_state.pending_decision_id = None
+        st.rerun()
+        return
     with st.chat_message(ASSISTANT):
         st.warning("This turn needs your approval before it runs.")
-        st.markdown(f"**{approval['summary']}**")
+        st.markdown(f"**{pending.summary}**")
         with st.expander("Why this needs approval"):
-            st.write(approval.get("why", "(no detail)"))
+            st.write(pending.why or "(no detail)")
         approve_col, deny_col = st.columns(2)
         if approve_col.button("Approve", type="primary", use_container_width=True):
-            trace.update_governance_decision(approval["decision_id"], "y")
-            resp = turn.run_turn(
-                pa["message"], pa["persona"], auto_mode=pa["auto_mode"], approved=True
-            )
-            st.session_state.messages.append({"role": ASSISTANT, "content": resp.text})
-            st.session_state.pending_approval = None
+            resumed = master.resume_approval(decision_id, "y")
+            text = resumed.text if resumed is not None else "_Already resolved._"
+            st.session_state.messages.append({"role": ASSISTANT, "content": text})
+            st.session_state.pending_decision_id = None
             st.rerun()
         if deny_col.button("Deny", use_container_width=True):
-            trace.update_governance_decision(approval["decision_id"], "n")
+            master.resume_approval(decision_id, "n")
             st.session_state.messages.append(
                 {"role": ASSISTANT, "content": "_Aborted; nothing was done._"}
             )
-            st.session_state.pending_approval = None
+            st.session_state.pending_decision_id = None
             st.rerun()
 
 
@@ -98,13 +104,13 @@ def main() -> None:
         )
         if st.button("Clear conversation", use_container_width=True):
             st.session_state.messages = []
-            st.session_state.pending_approval = None
+            st.session_state.pending_decision_id = None
             st.rerun()
 
     _render_history()
 
     # A pending approval blocks new input until the user decides.
-    if st.session_state.pending_approval is not None:
+    if st.session_state.pending_decision_id is not None:
         _render_approval_gate()
         return
 
@@ -121,14 +127,10 @@ def main() -> None:
             resp = turn.run_turn(prompt, persona, auto_mode=auto_mode)
 
         if resp.approval is not None:
-            # Stash the gated turn; rerun to render Approve/Deny buttons.
+            # The pending record is persisted; hold only its id and rerun to
+            # render Approve/Deny buttons.
             st.session_state.messages.append({"role": ASSISTANT, "content": resp.text})
-            st.session_state.pending_approval = {
-                "message": prompt,
-                "persona": persona,
-                "auto_mode": auto_mode,
-                "approval": resp.approval,
-            }
+            st.session_state.pending_decision_id = resp.approval.decision_id
             st.rerun()
         else:
             # Normal turn, reject, ask-clarification, or repair-exhausted: resp.text

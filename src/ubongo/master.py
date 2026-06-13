@@ -79,10 +79,12 @@ class Response:
     # last_error, failing_agent} extracted from repair_runs.
     requires_user_decision: bool = False
     repair_summary: dict | None = None
-    # Phase 15: set when governance returned `require_approval`. Carries the
-    # ApprovalRequest as a dict ({decision_id, summary, why}); the REPL prompts
-    # y/n/why off it. None on every non-gated turn.
-    approval: dict | None = None
+    # Phase 15 / v0.5 phase 03: set when governance returned `require_approval`.
+    # The typed `ApprovalRequest` (decision_id, summary, why); channels prompt
+    # y/n/why off it and resume via `resume_approval`. None on every non-gated
+    # turn. The matching `pending_approvals` record is the resumable source of
+    # truth — `approval` here is just the surface for the channel in hand.
+    approval: "governance_approval.ApprovalRequest | None" = None
 
 
 _REJECT_MESSAGE = (
@@ -587,12 +589,22 @@ class MasterAgent:
                 "decision_action": decision.action,
             },
         )
-        # Phase 15: when governance held the turn for approval, attach the
-        # ApprovalRequest so the REPL can prompt y/n/why off it.
-        approval_payload: dict | None = None
+        # Phase 15 / v0.5 phase 03: when governance held the turn for approval,
+        # attach the ApprovalRequest AND persist the resumable pending record.
+        # The record (not channel memory) is what `resume_approval` re-issues
+        # from, so a turn gated here can be approved in any channel later.
+        approval_request: "governance_approval.ApprovalRequest | None" = None
         if decision.action == Action.REQUIRE_APPROVAL.value:
-            approval_payload = asdict(
-                governance_approval.build_request(decision_id, decision, message)
+            approval_request = governance_approval.build_request(
+                decision_id, decision, message
+            )
+            trace.append_pending_approval(
+                decision_id,
+                message=message,
+                persona=chosen,
+                auto_mode=auto_mode,
+                summary=approval_request.summary,
+                why=approval_request.why,
             )
 
         return Response(
@@ -604,7 +616,7 @@ class MasterAgent:
             # Phase 13f: surface y/n retry intent only when Repair gave up.
             requires_user_decision=(not result.ok and repair_summary is not None),
             repair_summary=repair_summary,
-            approval=approval_payload,
+            approval=approval_request,
         )
 
 
@@ -622,3 +634,38 @@ def handle(
     return default_master.handle(
         message, persona_name, auto_mode, pending_skill, pending_workflow, approved
     )
+
+
+def resume_approval(decision_id: int, choice: str) -> Response | None:
+    """Resolve a pending require_approval turn from its persisted record — the
+    one resume path every channel shares (v0.5 phase 03).
+
+    `choice` is "y" (approve) or anything else (decline). Resolving writes both
+    `pending_approvals.status`/`resolved_at` and `governance_decisions.
+    approval_response`. On approve, the held turn is re-issued from the record
+    (its own message/persona/auto_mode) with `approved=True`, bypassing the
+    gate, and the delivered Response is returned. On decline — or an unknown or
+    already-resolved decision_id — returns None and re-runs nothing (idempotent:
+    no duplicate turn, no second answer).
+    """
+    pending = governance_approval.get_pending(decision_id)
+    if pending is None or pending.status != "pending":
+        return None
+    approve = choice.strip().lower() in ("y", "yes")
+    resolved = trace.resolve_pending_approval(
+        decision_id, "approved" if approve else "declined"
+    )
+    if not resolved:  # lost a race — someone else just resolved it
+        return None
+    trace.update_governance_decision(decision_id, "y" if approve else "n")
+    if not approve:
+        return None
+    resumed = default_master.handle(
+        pending.message, pending.persona, auto_mode=pending.auto_mode, approved=True
+    )
+    # resume_approval is a complete user-facing action (unlike bare handle, which
+    # the channel envelope flushes): deliver the re-issued turn through the queue
+    # so every channel — including ones with no run_turn wrapper around it, like
+    # `ubongo approve` — gets the ADR-0002 delivery + after_send.
+    queue.flush_delivered(resumed.delivery_token)
+    return resumed

@@ -25,6 +25,56 @@ class ApprovalRequest:
     why: str       # one paragraph, shown when the user types `why`
 
 
+@dataclass(frozen=True)
+class PendingApproval:
+    """A require_approval turn held for a decision the user has not yet made —
+    the persisted, resumable record (v0.5 phase 03). It carries everything
+    `master.resume_approval` needs to re-issue the turn, so resume no longer
+    depends on the requesting channel still holding it in memory.
+    """
+
+    decision_id: int
+    message: str
+    persona: str
+    auto_mode: bool
+    summary: str
+    why: str
+    status: str            # pending | approved | declined
+    created_at: str
+    resolved_at: str | None = None
+
+    @classmethod
+    def from_row(cls, row: dict) -> "PendingApproval":
+        return cls(
+            decision_id=row["decision_id"],
+            message=row["message"],
+            persona=row["persona"],
+            auto_mode=bool(row["auto_mode"]),
+            summary=row["summary"],
+            why=row["why"],
+            status=row["status"],
+            created_at=row["created_at"],
+            resolved_at=row.get("resolved_at"),
+        )
+
+    @property
+    def request(self) -> "ApprovalRequest":
+        """The y/n/why surface for this pending turn."""
+        return ApprovalRequest(self.decision_id, self.summary, self.why)
+
+
+def list_pending() -> list["PendingApproval"]:
+    """Every still-open approval, oldest first — the `/pending` surface."""
+    from ubongo.memory import trace
+    return [PendingApproval.from_row(r) for r in trace.open_pending_approvals()]
+
+
+def get_pending(decision_id: int) -> "PendingApproval | None":
+    from ubongo.memory import trace
+    row = trace.get_pending_approval(decision_id)
+    return PendingApproval.from_row(row) if row is not None else None
+
+
 def _reason_phrase(reason: str | None) -> str:
     if reason and reason in _REASON_PHRASES:
         return _REASON_PHRASES[reason]

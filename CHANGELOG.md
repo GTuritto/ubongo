@@ -18,6 +18,27 @@ entry below records what that version added. Newest first.
 
 ---
 
+## v0.5.3 — the typed, resumable approval seam (v0.5 trust-protocol, phase 03)
+
+Date: 2026-06-13
+
+Governance approvals stop being trapped in the channel that raised them
+([ADR-0018](docs/adr/0018-resumable-approval-seam.md)). The first v0.5 phase that
+changes runtime behaviour, and the prerequisite for approve-later over Telegram
+(phase 04) and standing jobs (phase 06).
+
+- A new additive `pending_approvals` table is the single source of truth for a
+  held turn (message, persona, auto_mode, summary, why, status). `Response.approval`
+  becomes a typed `ApprovalRequest`, and one `master.resume_approval(decision_id,
+  choice)` resolves the record + re-issues the turn from it (idempotent).
+- A turn gated in one channel can now be approved in another: REPL `/pending` +
+  `/pending approve|decline <id>`, web Approve/Deny (holding only the decision_id),
+  and `ubongo pending` / `ubongo approve|decline <id>` from the CLI. MCP surfaces
+  the `decision_id` so a human channel can resolve it (still never approvable over
+  MCP — ADR-0015 holds).
+- Behaviour-neutral for auto / reject / ask_clarification; additive schema, no
+  migration; single-writer rule untouched. 980 tests green (+20).
+
 ## v0.5.2 — store split (v0.5 trust-protocol, phase 02)
 
 Date: 2026-06-13

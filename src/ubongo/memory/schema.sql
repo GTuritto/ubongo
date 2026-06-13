@@ -79,6 +79,21 @@ CREATE TABLE IF NOT EXISTS governance_decisions (
   decided_at TIMESTAMP NOT NULL
 );
 
+-- v0.5 phase 03: the resumable approval record. One row per require_approval
+-- turn; the single source of truth for resuming a gated turn in any channel.
+CREATE TABLE IF NOT EXISTS pending_approvals (
+  decision_id INTEGER PRIMARY KEY REFERENCES governance_decisions(id),
+  message TEXT NOT NULL,
+  persona TEXT NOT NULL,
+  auto_mode INTEGER NOT NULL DEFAULT 0,
+  summary TEXT NOT NULL,
+  why TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'declined')),
+  created_at TIMESTAMP NOT NULL,
+  resolved_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_pending_approvals_status ON pending_approvals(status);
+
 CREATE TABLE IF NOT EXISTS repair_runs (
   id INTEGER PRIMARY KEY,
   workflow_run_id INTEGER NOT NULL REFERENCES workflow_runs(id),
