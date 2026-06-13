@@ -420,6 +420,17 @@ class MasterAgent:
         # the real answer is delivered. The trace records action=auto with
         # reason=approved_by_user.
         if approved and decision.action == Action.REQUIRE_APPROVAL.value:
+            # v0.5 phase 05: approving a first-encounter connector turn grants
+            # its capability class, so the *next* turn auto-proceeds. Done before
+            # the replace so we still see the grant_first_encounter reason.
+            # Best-effort: never blocks the turn; no-op for a non-connector turn
+            # or an already-granted class.
+            if str(decision.reason or "").startswith("grant_first_encounter"):
+                try:
+                    from ubongo.governance import grants as _grants
+                    _grants.grant_connector_turn(workflow)
+                except Exception:
+                    logger.warning("grant_on_approval_failed", exc_info=True)
             decision = replace(
                 decision, action=Action.AUTO.value, reason="approved_by_user"
             )

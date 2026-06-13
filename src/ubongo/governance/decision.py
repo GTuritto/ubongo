@@ -102,6 +102,22 @@ def decide(
     if gate_irreversible_high and risk is RiskLevel.HIGH and reversibility is Reversibility.IRREVERSIBLE:
         return Decision(Action.REQUIRE_APPROVAL.value, "irreversible_high_risk", **scored)
 
+    # Rule 2.5 (v0.5 phase 05) — the grant registry. A connector turn touching a
+    # capability class with no active grant asks once (first encounter); once
+    # granted, later turns in that class fall through to auto. Placed AFTER the
+    # safety rules so a destructive connector turn still gates on rule 1 even
+    # with a grant. The require_approval verdict here is converted to auto by
+    # master's existing `approved=True` bypass on the re-issue, which is also
+    # where the grant is written (so the *next* turn auto-proceeds).
+    from ubongo.governance import grants as _grants
+    ungranted = _grants.ungranted_classes(workflow)
+    if ungranted:
+        return Decision(
+            Action.REQUIRE_APPROVAL.value,
+            f"grant_first_encounter:{ungranted[0]}",
+            **scored,
+        )
+
     # Rule 3 — the Evaluator judged the answer too weak to stand.
     if has_evaluator_signal(workflow_result) and confidence < reject_below:
         return Decision(

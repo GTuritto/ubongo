@@ -112,21 +112,7 @@ def test_evaluate_config_budget_all_or_nothing(db, stub_pipeline) -> None:
                                            judge_model="j", budget=CallBudget(4)) is None
 
 
-# --- retry structural proxy -------------------------------------------------
-
-def test_retry_structural_proxy(db) -> None:
-    good = {"id": 1, "variant_text": "max_attempts: 3\npeer_replacements:\n  coding: architect\n  research: architect\n  critic: architect"}
-    bad = {"id": 2, "variant_text": "max_attempts: 9\npeer_replacements: {}"}
-    mg = sandbox.evaluate_retry_variant(good)
-    mb = sandbox.evaluate_retry_variant(bad)
-    assert mg is not None and mb is not None
-    assert mg.success_rate > mb.success_rate  # sane cap + coverage beats excessive cap
-
-
-def test_retry_target_evaluates_without_llm(db) -> None:
-    from ubongo.evolution import generator, lineage
-    vs = generator.generate("retry:repair", 3)
-    lineage.record_variants("retry:repair", vs)
-    rows = evolution_state.lineage_for_target("retry:repair", generation=1)
-    res = sandbox.evaluate_target(rows, "retry:repair", budget=CallBudget(0))  # budget 0: proxy needs none
-    assert res.evaluated == len(rows)
+# v0.5 phase 05: retry:repair (and its structural-proxy evaluator) was cut
+# (Amendment 2); the evaluator function no longer exists.
+def test_retry_proxy_is_gone() -> None:
+    assert not hasattr(sandbox, "evaluate_retry_variant")

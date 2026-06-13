@@ -29,14 +29,14 @@ def test_evolvable_targets_include_personas_and_config(db) -> None:
         assert p in ts
     # ...plus the Phase 19 config targets.
     assert "routing:default" in ts
-    assert "retry:repair" in ts
     assert any(t.startswith("toolchain:") for t in ts)
+    # v0.5 phase 05: retry:repair was cut (Amendment 2).
+    assert "retry:repair" not in ts
 
 
 def test_target_kinds(db) -> None:
     assert targets.target_kind("persona:architect") == targets.PROMPT
     assert targets.target_kind("routing:default") == targets.CONFIG
-    assert targets.target_kind("retry:repair") == targets.CONFIG
 
 
 def test_is_target(db) -> None:

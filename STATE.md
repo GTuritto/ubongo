@@ -118,7 +118,7 @@ each is either documented in an ADR or in a STATUS phase note.
 
 ## Decisions and why (the ADR record)
 
-The architectural "why" lives in `docs/adr/`. Eighteen ADRs, all Accepted:
+The architectural "why" lives in `docs/adr/`. Nineteen ADRs, all Accepted:
 
 - **0001 — Hand-rolled orchestration.** Plain Python + asyncio + an event bus, no framework. The whole
   system is small enough that a framework would add more surface than it removes.
@@ -167,7 +167,13 @@ The architectural "why" lives in `docs/adr/`. Eighteen ADRs, all Accepted:
   (in `trace.py`, keyed by `decision_id`) is the single source of truth for a held turn; `Response.approval`
   is a typed `ApprovalRequest`; `master.resume_approval` is the one re-issue path. A turn gated in one
   channel can be approved in another (`/pending`, web, `ubongo approve <id>`) — the prerequisite for
-  approve-later over Telegram.
+  approve-later over the messaging channel.
+- **0019 — The grant registry: persistent capability grants, checked at decision time.** A `grants` table
+  (`memory/grant_state.py`) holds standing consent for a capability class (`connector:<server>`); a new
+  decision rule, *after* the safety rules, gates a connector turn's first encounter and auto-proceeds once
+  granted. Approving a first-encounter writes the grant; `/grants` + `ubongo grants` manage them; revocation
+  re-arms the ask and survives restart. Server-granular (per-tool deferred, ADR-0016). Paired with the cut of
+  the weak `retry:repair` evolvable target (Amendment 2).
 
 Two CLAUDE.md rules worth restating because they constrained the build throughout: new capabilities default
 to CLI scripts behind the constrained-bash skill rather than first-class tools, and new v0.2+ behavior ships
@@ -198,7 +204,7 @@ as handlers on the named events rather than edits to the pipeline.
 
 - Phase-by-phase changelog and acceptance checklist: [STATUS.md](STATUS.md)
 - The contract for v0.1 scope: [UBONGO_BUILD.md](UBONGO_BUILD.md)
-- Decisions with rationale: [docs/adr/](docs/adr/) (0001–0018)
+- Decisions with rationale: [docs/adr/](docs/adr/) (0001–0019)
 - Living architecture (C4 + glossary): [docs/architecture/](docs/architecture/), [CONTEXT.md](CONTEXT.md)
 - Security contract and its known v0.1 limits: [docs/SECURITY.md](docs/SECURITY.md)
 - Cumulative manual smoke playbook: [tests/manual/smoke_test.md](tests/manual/smoke_test.md)

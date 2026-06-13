@@ -81,6 +81,29 @@ def list_pending() -> int:
     return 0
 
 
+def grants(revoke_id: int | None = None) -> int:
+    """`ubongo grants` lists active grants; `ubongo grants revoke <id>` revokes
+    one. The grant registry is DB-backed, so this works across sessions."""
+    from ubongo.memory import grant_state
+
+    if revoke_id is not None:
+        if grant_state.revoke(revoke_id):
+            print(f"Revoked grant #{revoke_id}. That capability will ask again next time.")
+            return 0
+        print(f"No active grant #{revoke_id} (unknown or already revoked).", file=sys.stderr)
+        return 1
+    rows = grant_state.active_grants()
+    if not rows:
+        print("No active grants. Connector capabilities ask on first use.")
+        return 0
+    print(f"Active grants ({len(rows)}):")
+    for g in rows:
+        print(f"  #{g['id']}  {g['created_at']}  {g['capability_class']:<24}  "
+              f"{g['consequence_class']:<12}  scope={g['scope']}")
+    print("Revoke with: ubongo grants revoke <id>")
+    return 0
+
+
 def resolve_pending(decision_id: int, approve: bool) -> int:
     """`ubongo approve|decline <id>` — resolve a held turn through the shared
     seam. On approve the delivered answer is printed; the record is the source
