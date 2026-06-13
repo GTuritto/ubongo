@@ -1,16 +1,16 @@
 # Changelog
 
-Ubongo versioning is **v0.MAJOR.PHASE** (pre-1.0):
+Ubongo versioning is **v0.PLAN.PHASE** (pre-1.0):
 
-- **MAJOR** bumps when a whole *build plan* completes. `v0.1` is the original
-  22-phase build (the multi-agent, self-improving CLI).
-- While the next build plan is in progress, **PHASE** (the third number)
-  increments by 1 for each completed phase. When that build plan ships, MAJOR
-  bumps and PHASE resets to 0.
-
-So while building toward **v0.2 (Telegram)**, the version walks `v0.1.1`,
-`v0.1.2`, …; when v0.2 ships it becomes `v0.2.0`, and the phases of the v0.3 build
-then walk `v0.2.1`, `v0.2.2`, ….
+- **PLAN** (the second number) names the *build plan*. `v0.1` is the original
+  22-phase build (the multi-agent, self-improving CLI); its post-build increments
+  walked `v0.1.1`…`v0.1.5` (web, skills, profiler, MCP server, MCP client). The
+  current plan is the **trust-protocol plan, designated v0.5**
+  ([Plans/v0.5-trust-protocol.md](Plans/v0.5-trust-protocol.md)) — so its releases
+  are the `v0.5.x` line. The PLAN number is the plan's chosen name, not a
+  sequential counter, which is why the series jumps `0.1.x → 0.5.x`.
+- **PHASE** (the third number) is the phase within that plan. It matches the phase
+  branch directly: branch `v0.5/02-store-split` ships as **`v0.5.2`**.
 
 The current version is the single line in [`VERSION`](VERSION) (kept in sync with
 `pyproject.toml`; the packaging script reads `VERSION` for the bundle name). Each
@@ -18,16 +18,16 @@ entry below records what that version added. Newest first.
 
 ---
 
-## v0.1.6 — v0.5 groundwork: ledger, envelope, store split
+## v0.5.2 — store split (v0.5 trust-protocol, phase 02)
 
 Date: 2026-06-13
 
-The first three phases of the **v0.5 trust-protocol** plan
-([Plans/v0.5-trust-protocol.md](Plans/v0.5-trust-protocol.md)), all preparatory and
-low-risk, folded into one release. (Phases 00 and 01 merged before the version was
-bumped; this entry captures all three so the tag sequence stays contiguous. From
-Phase 03 onward the bump rides in each phase's own PR, and Phase 03 — the typed
-approval seam — opens **v0.2**.)
+Opens the **v0.5.x** release line for the trust-protocol plan
+([Plans/v0.5-trust-protocol.md](Plans/v0.5-trust-protocol.md)); the version follows
+the phase branch (`v0.5/02-store-split` → `0.5.2`). Phases 00 (ledger) and 01
+(envelope) merged before the versioning was settled, so their would-be `0.5.0` /
+`0.5.1` tags were never cut; this entry records all three groundwork phases for
+completeness. From here the bump is computed in CI from the merged branch name.
 
 - **Phase 00 — Reconcile the ledger.** Archived the completed-but-unclosed
   `complete-fanout-peer-replacement` openspec change, synced its spec, and restated
