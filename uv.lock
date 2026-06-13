@@ -2511,7 +2511,7 @@ wheels = [
 
 [[package]]
 name = "ubongo"
-version = "0.5.3"
+version = "0.5.5"
 source = { editable = "." }
 dependencies = [
     { name = "litellm" },
