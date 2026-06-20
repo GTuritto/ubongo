@@ -40,6 +40,14 @@ _Avoid_: route result, plan (bare), workflow spec.
 The gate the Master Agent applies before composing: a matrix over `risk` / `confidence` / `reversibility` returning `auto` | `ask_clarification` | `require_approval` | `reject` (config in `governance.yaml`). `require_approval` becomes an interactive `y/n/why` prompt.
 _Avoid_: policy check, guardrail (bare).
 
+**Verbosity level** (`governance/verbosity.py`, v0.5 phase 07):
+A legible, manual-first response-length knob — governance config, not a learned behavior. A `verbosity:` block in `governance.yaml` maps a domain (the classifier's `task_type`, then `intent`) to a level (`terse | normal | deep`), with a default; `level_for` resolves it, `master.plan` sets it on the `Workflow`, the runner passes it as `AgentDirectives.verbosity`, and the **composer** persona appends one length line. `normal` is a no-op (keeps the natural voice). `/verbosity` shows the table; `/brief` / `/verbose` override one turn. A GP-evolvable `verbosity:<domain>` target is deferred (ADR-0022) — and safe whenever it lands, because promotion stays human-approved.
+_Avoid_: tone (that's the classifier signal), length cap (it shapes, not truncates).
+
+**Backup / instance** (`ubongo.backup`, v0.5 phase 07):
+An Ubongo **instance** is its data + config: `data/ubongo.db` + `vault/` + `config/`. `ubongo backup` writes a portable `tar.gz` of exactly those — **never `.env`** (secrets) and never `data/profiles/`. Restore unpacks into a fresh checkout; there is no install log (capabilities are the human-approved config allowlist). **Grants do not migrate**: restore re-arms them (revokes active grants in the restored DB) so a new envelope re-asks; `--keep-grants` is for same-machine recovery.
+_Avoid_: snapshot (bare), export (vague), clone (that's forking — deferred).
+
 ## CLI
 
 **Slash command / Command registry**:

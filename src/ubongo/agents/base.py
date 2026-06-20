@@ -35,6 +35,9 @@ class AgentDirectives:
     debate_role: str | None = None
     skill: str | None = None
     exec_command: str | None = None
+    # v0.5 phase 07: the resolved verbosity level for this turn (terse|deep);
+    # None / "normal" is a no-op. The composer persona appends one length line.
+    verbosity: str | None = None
 
 
 @dataclass(frozen=True)

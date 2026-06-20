@@ -104,6 +104,45 @@ def grants(revoke_id: int | None = None) -> int:
     return 0
 
 
+def backup(path: str | None = None) -> int:
+    """`ubongo backup [path]` — write a portable archive of the instance (DB +
+    vault + config; never .env). Defaults to the current directory."""
+    from pathlib import Path
+    from ubongo import backup as _backup
+
+    dest = Path(path) if path else Path.cwd()
+    try:
+        archive = _backup.create_backup(dest)
+    except Exception as exc:
+        print(f"Error: backup failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"Backup written: {archive}")
+    print("Restore into a fresh checkout with: ubongo restore <archive>  "
+          "(grants re-arm on the new envelope; --keep-grants to keep them).")
+    return 0
+
+
+def restore(archive: str, *, keep_grants: bool = False) -> int:
+    """`ubongo restore <archive>` — unpack a backup into the current checkout.
+    Grants re-arm (revoke) by default; --keep-grants preserves them."""
+    from pathlib import Path
+    from ubongo import backup as _backup
+
+    arc = Path(archive)
+    if not arc.exists():
+        print(f"Error: archive not found: {archive}", file=sys.stderr)
+        return 1
+    try:
+        revoked = _backup.restore_backup(arc, Path.cwd(), fresh_grants=not keep_grants)
+    except Exception as exc:
+        print(f"Error: restore failed: {exc}", file=sys.stderr)
+        return 1
+    note = (f"{revoked} grant(s) re-armed — connector capabilities ask again on this envelope."
+            if not keep_grants else "grants preserved (--keep-grants).")
+    print(f"Restored {archive} into {Path.cwd()}. {note}")
+    return 0
+
+
 def jobs(action: str = "status", name: str | None = None) -> int:
     """`ubongo jobs [status|list|pause|resume|off|run <name>]` — the CLI surface
     for the standing-jobs daemon (v0.5 phase 06). Shares the REPL renderers."""

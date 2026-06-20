@@ -39,6 +39,9 @@ nftables egress, Linux-only); **0018** the typed, persisted, resumable approval 
 (approve in any channel); **0019** the grant registry (standing consent, checked after
 the safety rules); **0020** Telegram, the first cloud-relayed channel; **0021** standing
 jobs — proactive output through the existing seams, with the quiet-hours + raise-TTL
-default-deny posture for "no human at run time."
+default-deny posture for "no human at run time"; and **0022** the contract and identity —
+verbosity as legible governance config (manual-first, GP-evolvable later under the human
+floor) and `ubongo backup` (an instance is its data + config; no secrets, grants re-arm on a
+new envelope). 0022 closes the v0.5 trust protocol.
 
 New decisions get the next number. Supersede rather than rewrite: set the old ADR's status to `Superseded by NNNN`.

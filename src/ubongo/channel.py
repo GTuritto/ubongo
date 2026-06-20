@@ -62,6 +62,7 @@ def run_turn(
     approved: bool = False,
     pending_skill: str | None = None,
     pending_workflow: str | None = None,
+    pending_verbosity: str | None = None,
     profile_cpu: bool | None = None,
 ) -> "tuple[master.Response, str | None]":
     """Run one full turn: optional cProfile wrap, `master.handle`, queue flush.
@@ -76,7 +77,7 @@ def run_turn(
         response, cpu_report = profiling.profile_call(
             master.handle, message, persona, auto_mode=auto_mode,
             pending_skill=pending_skill, pending_workflow=pending_workflow,
-            approved=approved,
+            approved=approved, pending_verbosity=pending_verbosity,
         )
         if cpu_report:
             logger.info("turn_cpu_profile",
@@ -85,7 +86,7 @@ def run_turn(
         response = master.handle(
             message, persona, auto_mode=auto_mode,
             pending_skill=pending_skill, pending_workflow=pending_workflow,
-            approved=approved,
+            approved=approved, pending_verbosity=pending_verbosity,
         )
         cpu_report = None
     queue.flush_delivered(response.delivery_token)

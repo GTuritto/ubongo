@@ -40,6 +40,9 @@ class Context:
     # Phase 12g: one-shot workflow override (set via /mode <workflow>).
     # Cleared after the next turn (mirrors pending_skill).
     pending_workflow: str | None = None
+    # Phase 07: one-shot verbosity override (set via /brief | /verbose). Wins
+    # over the domain default for the next turn only (mirrors pending_skill).
+    pending_verbosity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,9 @@ class Workflow:
     # JSON via asdict() so the trace records the mode parameters.
     rounds: int | None = None       # 12d: debate mode
     timeout_s: int | None = None    # 12e: speculative mode
+    # Phase 07: resolved verbosity level (terse|normal|deep) for this turn; the
+    # composer persona appends one length line. None == normal (no-op).
+    verbosity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -207,6 +213,14 @@ class MasterAgent:
         resolved_skill = skills.resolve(pinned=ctx.pending_skill, suggested=suggested_skill)
         skill_name = resolved_skill.name if resolved_skill else None
         persona = personas.get(wf_plan.persona)
+        # Phase 07: a one-shot /brief|/verbose override wins; else the per-domain
+        # verbosity from governance.yaml. Best-effort: a config error degrades to
+        # normal (None) rather than failing the turn.
+        try:
+            from ubongo.governance import verbosity as _verbosity
+            level = _verbosity.normalize(ctx.pending_verbosity) or _verbosity.level_for(classification)
+        except Exception:
+            level = None
         workflow = Workflow(
             persona=wf_plan.persona,
             model=persona.model,
@@ -215,6 +229,7 @@ class MasterAgent:
             agents=wf_plan.agents,
             rounds=wf_plan.rounds,
             timeout_s=wf_plan.timeout_s,
+            verbosity=level,
         )
         events.dispatch("after_plan", {"workflow": asdict(workflow)})
         return workflow
@@ -286,6 +301,7 @@ class MasterAgent:
         pending_skill: str | None = None,
         pending_workflow: str | None = None,
         approved: bool = False,
+        pending_verbosity: str | None = None,
     ) -> Response:
         """End-to-end orchestration. Returns a Response; caller prints + flushes.
 
@@ -301,7 +317,7 @@ class MasterAgent:
         with workflow_buffer() as buf:
             return self._handle_with_buffer(
                 buf, message, persona_name, auto_mode, pending_skill,
-                pending_workflow, approved,
+                pending_workflow, approved, pending_verbosity,
             )
 
     def _handle_with_buffer(
@@ -313,6 +329,7 @@ class MasterAgent:
         pending_skill: str | None = None,
         pending_workflow: str | None = None,
         approved: bool = False,
+        pending_verbosity: str | None = None,
     ) -> Response:
         ctx = Context(
             conversation_id=None,
@@ -320,6 +337,7 @@ class MasterAgent:
             auto_mode=auto_mode,
             pending_skill=pending_skill,
             pending_workflow=pending_workflow,
+            pending_verbosity=pending_verbosity,
         )
         started_at = store.now_iso()
         classification = self.classify(message, ctx)
@@ -334,6 +352,7 @@ class MasterAgent:
             auto_mode=auto_mode,
             pending_skill=pending_skill,
             pending_workflow=pending_workflow,
+            pending_verbosity=pending_verbosity,
         )
 
         # Phase 9e: INSERT workflow_runs with outcome='in_progress' before the
@@ -641,9 +660,11 @@ def handle(
     pending_skill: str | None = None,
     pending_workflow: str | None = None,
     approved: bool = False,
+    pending_verbosity: str | None = None,
 ) -> Response:
     return default_master.handle(
-        message, persona_name, auto_mode, pending_skill, pending_workflow, approved
+        message, persona_name, auto_mode, pending_skill, pending_workflow, approved,
+        pending_verbosity=pending_verbosity,
     )
 
 

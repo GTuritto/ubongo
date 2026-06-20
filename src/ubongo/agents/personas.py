@@ -144,6 +144,12 @@ class BasePersonaAgent:
         prompt_hint = input.directives.repair_prompt_hint
         if prompt_hint:
             sections.append("## Repair guidance\n\n" + prompt_hint)
+        # Phase 07: the per-domain verbosity knob, one directive line (terse/deep;
+        # normal is a no-op). Appended last so an explicit /brief|/verbose wins.
+        from ubongo.governance import verbosity as _verbosity
+        length_line = _verbosity.directive_text(input.directives.verbosity)
+        if length_line:
+            sections.append(length_line)
 
         return run_agent_llm(
             agent_name="persona",
