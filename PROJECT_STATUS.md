@@ -1,21 +1,35 @@
 # Ubongo — Status Briefing
 
-*2026-06-12. Grounded in the tree: 960 pytest tests collected green, ~15,400 LOC under `src/ubongo/`, `main` at v0.1.5.*
+*2026-06-20, from the code on branch `v0.5/04-telegram`. 1,010 tests collected (96 test modules). This is a fast catch-up, not an architecture doc.*
 
 ## Where we are against the plan
 
-The plan is [UBONGO_BUILD.md](UBONGO_BUILD.md): 22 phases across six tiers, one branch per phase. **All 22 phases are complete, merged, and certified (2026-06-04), with all 26 acceptance criteria met.** The project is now past its own plan: five post-v0.1 increments have landed on `main` (web UI v0.1.1, self-authored skills v0.1.2, profiler + service control v0.1.3, MCP server channel v0.1.4, MCP client / Connector agent v0.1.5), plus two architecture-deepening refactor passes. The next planned version, v0.2 (Telegram), has not started. So the honest answer is: v0.1 done, v0.2 not begun, and the gap filled with channels, observability, and self-extension work the v0.1 spec listed as out of scope — a drift STATE.md documents openly.
+v0.1 (the 22-phase CLI build) is certified complete and on `main`, along with a post-v0.1 layer (web UI, self-authored skills, profiler, MCP server, MCP client/Connector). The active work is the **v0.5 trust-protocol plan** ([Plans/v0.5-trust-protocol.md](Plans/v0.5-trust-protocol.md)), an eight-phase arc (00–07) that hardens the system for a cloud-relayed messaging channel and standing autonomous jobs. The phases are not built in strict numeric order.
 
-## What is implemented and working
+Done and merged to `main`: **Phase 00** (reconcile the ledger), **Phase 01** (the outer envelope — rootless Podman quadlets + nftables egress allowlist), **Phase 02** (split the store into five table-family modules + shared judgment parsing), **Phase 03** (the typed resumable approval seam), and **Phase 05** (the grant registry + the Connector armed; PR #51). Released versions ran up to v0.5.5.
 
-Everything shipped is exercised, not just present. The 960-test suite covers roughly one test module per source module, and the cumulative manual smoke playbook ([tests/manual/smoke_test.md](tests/manual/smoke_test.md)) was run end-to-end at certification. Working today: the full turn pipeline (classify → plan → execute → govern → compose → enqueue → memory) with ten-plus worker agents and all six execution modes; the Repair Agent's recovery ladder in sequential mode; the governance matrix with its interactive approval gate and the hardened shell sandbox; the GP self-improvement loop end to end (generation, sandboxed fitness over 33 held-out conversations, human-approved promotion with live swap); semantic recall via `sqlite-vec`, the vault-link graph, bidirectional vault sync with a conflict queue, and the unified audit; four channels (REPL, one-shot, Streamlit web, MCP server) all over the single `channel.run_turn` seam; skill self-authoring with quarantine and a manual approval gate; the local profiler, service-control scripts, and a CI pipeline with an automated smoke gate.
+In progress: **Phase 04 — Telegram** (the channel proper). It is committed on the current branch (`feat: the Telegram channel`, plus its plan commit) but **not yet merged to `main`** — no merge commit sits above it in the log, so the phase PR is still open per the branch-per-phase workflow. *Inferred from log shape; confirm with `gh pr status`.*
 
-## What is missing or unfinished
+Not started: **Phase 06** (standing jobs — the v0.3 proactive-output seam) and **Phase 07** (the contract and identity — backup/portability/the trust contract).
 
-**(a) Planned but not built.** v0.2 Telegram (transport, `before_send` policy handler, restored `allowed_user_ids`) — the seams exist, nothing started. With it: the notification policy engine, quiet hours, and catch-up summarizer. v0.3 proactive output. External integrations (Calendar, Gmail, Reddit, news) — `.env.example` reserves keys only.
+## What's implemented and working
 
-**(b) Partial or stubbed.** The openspec change ledger is stale: `openspec/changes/complete-fanout-peer-replacement/` claims three fan-out modes lack peer-replacement repair, but the code has it wired in all five modes with per-mode tests (`runner.py:568,636,753,881,1009`, `tests/test_runner.py`) — the change is implemented but never archived. The `retry:repair` evolution target is scored by a structural proxy, acknowledged as the weakest fitness signal. The Connector agent is opt-in only (`/mode connector_session`, never auto-routed) with per-call gating and tool allowlists explicitly deferred. Deepening candidates 09, 16, and 19 were deliberately dropped or parked.
+The v0.5 additions all carry tests, exercised not merely present:
 
-**(c) Known gaps.** Web and MCP channels have no auth/TLS (deliberate home-LAN posture, but a hard limit on exposure). MCP-driven turns cannot approve gated actions — machine callers stall on anything requiring approval. The ~15,000 LOC soft budget has been crossed for the first time (~15,400); the project's own stated remedy is to cut, and v0.2 should be a transport, not a subsystem. PR #19 (mutation testing) is parked on purpose, not abandoned. Minor doc rot: STATE.md says "twelve ADRs"; there are sixteen.
+- **Approval seam (Phase 03).** `test_approval_seam.py`, `test_governance_approval.py`, `test_repl_approval.py` cover the typed `ApprovalRequest`, the persisted `pending_approvals` record, and `master.resume_approval` — a turn gated in one channel resolved from another. This is the real cross-channel approve-later path, not a stub.
+- **Grant registry (Phase 05).** `test_grant_registry.py` exercises the `grants` table, the post-safety governance rule, grant-on-approval, revocation surviving restart, and the `/grants` + `ubongo grants` surfaces. The paired cut — deleting the `retry:repair` evolvable target — is done.
+- **Telegram channel (Phase 04).** `test_telegram_service.py` (the network-free core: `allowed_user_ids` auth, the `/approve|/decline|/pending|/grants` router, turn handling over `channel.run_turn`) and `test_telegram_bot.py` (the httpx long-poll Bot-API layer). `httpx` is an optional extra, lazily imported.
+- **Store split (Phase 02).** `store.py` dropped from ~1,990 to 592 lines; the sibling modules (`trace.py`, `evolution_state.py`, `authoring_state.py`, `index_state.py`) each have their own suites. Behavior-neutral; single-writer rule intact.
+- **The outer envelope (Phase 01).** `deploy/envelope/` ships the Containerfile, quadlets, nftables config, and the egress-refresh timer plus `INSTALL.md`, enforced on the Linux/Pi box — **not** covered by pytest (it lives outside `src/`), so its correctness rests on manual/deployment verification, not the suite.
 
-*Everything above was verified against tests, docs, and git log today except the two items flagged as inferred.*
+Everything from v0.1 and the post-v0.1 layer remains exercised: the Master pipeline, all six execution modes, the governance matrix, the GP and authoring loops, semantic recall, vault sync, and the four prior channels.
+
+## What's missing or unfinished
+
+**(a) Planned but not built.** Phase 06 (standing/proactive jobs) and Phase 07 (the trust contract + backup/identity/portability) are not started. The notification-policy engine (quiet hours, holds, catch-up summarizer) is still deferred.
+
+**(b) Partial or stubbed.** Telegram (Phase 04) is functionally complete with tests but unmerged — treat it as "ready for review," not shipped on `main`. Approval has no expiry/escalation: a `pending_approvals` row can sit unanswered indefinitely, which becomes a real gap once proactive jobs (Phase 06) can gate a turn with no human in the loop. Per-tool grant granularity is deferred — grants are server-granular only.
+
+**(c) Known gaps and constraints.** The egress envelope is enforcement outside the test suite, so a change to what the Connector or a CLI script can reach passes pytest yet may be silently blocked/allowed on the deployed box. The trust posture stays single-user: Telegram auth is a flat `allowed_user_ids` allowlist (empty = deny all), no per-request auth or TLS in the app. LOC is ~16,060, ~7% over the ~15,000 soft target — the project's own rule says cut, not expand, which puts Phase 06/07 scope under pressure.
+
+*Verified against the test inventory, git log, and the v0.5 plan on 2026-06-20. The one inference (Phase 04 PR still open) is flagged above.*

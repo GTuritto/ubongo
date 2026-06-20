@@ -4,7 +4,7 @@
 
 # Ubongo
 
-A personal, mood-aware AI mind that runs entirely on your own machine. *Ubongo* is Swahili for *brain*.
+A personal, intent-routed AI mind that runs entirely on your own machine. *Ubongo* is Swahili for *brain*.
 
 > Your own AI. It reads the room, remembers your history, governs its own risk, improves its own prompts, and even writes new skills for itself, and it never does anything irreversible without your say-so.
 
@@ -13,7 +13,7 @@ A personal, mood-aware AI mind that runs entirely on your own machine. *Ubongo* 
 Cloud assistants are rented, generic, and forgetful. Your conversations live on someone else's servers, the model is the same one everyone else gets, and tomorrow it has forgotten today. Ubongo is the opposite:
 
 - **Yours and local.** It runs on hardware you own (a Raspberry Pi is enough). Your conversations live in a local SQLite database and an Obsidian vault you control. No account, no cloud lock-in.
-- **Mood-aware.** It reads the tone of each message and answers in the right voice: deep and architectural, terse and operational, or warm and casual.
+- **Intent-routed.** It classifies each message (intent, task type, tone, risk) and dispatches it to the persona and execution mode that fit the work: deep and architectural, terse and operational, or direct and conversational.
 - **It remembers.** Every turn is persisted and semantically searchable. Ask "what did we decide about caching last week" and the relevant old turns come back, even after a restart.
 - **It improves itself, with you in control.** A background loop evolves its own prompts and routing and surfaces the winners; nothing changes until you approve it.
 - **It extends itself, with you in control.** It can draft brand-new skills for things you keep asking for; nothing becomes usable until you approve it.

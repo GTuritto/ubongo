@@ -4,7 +4,7 @@
 
 # Ubongo User Manual (v0.1.2)
 
-Ubongo is a personal, mood-aware AI mind that runs entirely on your own machine as a command-line app. *Ubongo* is Swahili for *brain*. It talks to you in one of three personas, remembers your conversations in a local database and an Obsidian-compatible Markdown vault, can run safe shell commands, gates risky actions behind your approval, and quietly tries to improve its own prompts over time — promoting changes only when you approve them.
+Ubongo is a personal, intent-routed AI mind that runs entirely on your own machine as a command-line app. *Ubongo* is Swahili for *brain*. It talks to you in one of three personas, remembers your conversations in a local database and an Obsidian-compatible Markdown vault, can run safe shell commands, gates risky actions behind your approval, and quietly tries to improve its own prompts over time — promoting changes only when you approve them.
 
 This manual covers installing and running Ubongo on a Raspberry Pi 5 (or any Debian/Ubuntu machine), and everything you can do once it's running.
 

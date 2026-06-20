@@ -1,6 +1,6 @@
 # C4 Level 1 — System Context
 
-Ubongo is a personal, mood-aware AI mind for a single user, running locally as a
+Ubongo is a personal, intent-routed AI mind for a single user, running locally as a
 CLI. It orchestrates a fleet of worker agents across multiple LLM calls, gates
 risky actions, and persists everything it does.
 
