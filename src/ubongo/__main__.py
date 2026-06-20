@@ -58,6 +58,15 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "telegram", help="Run the Telegram bot (long-poll; TELEGRAM_BOT_TOKEN in .env)"
     )
+    # v0.6 phase 00: the live console channel (FastAPI + SSE, LAN no-auth).
+    console_cmd = subparsers.add_parser(
+        "console", help="Run the live console (streaming browser front; --extra console)"
+    )
+    console_cmd.add_argument("--port", type=int,
+                             default=int(os.environ.get("UBONGO_CONSOLE_PORT", "8770")),
+                             help="HTTP port (default 8770, or UBONGO_CONSOLE_PORT)")
+    console_cmd.add_argument("--addr", default=os.environ.get("UBONGO_CONSOLE_ADDR", "0.0.0.0"),
+                             help="HTTP bind address (default 0.0.0.0, or UBONGO_CONSOLE_ADDR)")
     # v0.5 phase 03: the cross-channel approval surface. A turn gated in any
     # channel persists a record; these resolve it without the original channel.
     subparsers.add_parser("pending", help="List require_approval turns awaiting a decision")
@@ -117,6 +126,12 @@ def main(argv: list[str] | None = None) -> int:
         # friendly hint if it's missing.
         from ubongo.telegram import bot as telegram_bot
         return telegram_bot.run()
+
+    if args.command == "console":
+        # Lazy: FastAPI/uvicorn are the optional [console] extra; app.run reports
+        # a friendly hint if they're missing.
+        from ubongo.web.console import app as console_app
+        return console_app.run(port=args.port, addr=args.addr)
 
     if args.command == "pending":
         return oneshot.list_pending()

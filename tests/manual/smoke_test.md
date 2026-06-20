@@ -609,3 +609,17 @@ The final trust-protocol phase ([Plans/v0.5-07-contract-identity.md](../../Plans
 | X.5 | Backup is secret-free | `ubongo backup /tmp/ub` | writes `…/ubongo-backup-<stamp>.tar.gz`; `tar tzf` shows `data/ubongo.db`, `vault/`, `config/` and **no** `.env` and no `data/profiles/`. |
 | X.6 | Restore re-arms grants | (with an active grant) `ubongo restore <archive>` into a fresh dir | files reproduced; "N grant(s) re-armed"; the restored DB's grants are `revoked`. `--keep-grants` preserves them. |
 | X.7 | Pytest passes | `uv run pytest` | 1053 passed (`test_governance_verbosity.py` + `test_backup.py` included). |
+
+## v0.6 Phase 00 — The streaming seam (live console)
+
+Opens the v0.6 live-console line ([Plans/v0.6-00-streaming-seam.md](../../Plans/v0.6-00-streaming-seam.md), [ADR-0023](../../docs/adr/0023-live-console-event-streaming.md)): a browser front that streams a turn's pipeline events live over SSE. `web/console/stream_bridge.py` runs `channel.run_turn` on a background thread and forwards the named events; single-flight; the stream observes only. `web/console/app.py` is the only FastAPI module (optional `[console]` extra). Most steps are headless (the bridge is unit-tested); the live browser stream needs the extra + the server running.
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| Y.1 | Missing extra is friendly | (without the extra) `python -m ubongo console` | rc 1; "The console dependency is not installed." + install hint; no traceback. |
+| Y.2 | Events stream in order | `uv run pytest tests/test_stream_bridge.py -k order` | a scripted turn forwards its pipeline events in order, ending with a terminal `__end__` frame carrying `ok`. |
+| Y.3 | Single-flight | `uv run pytest tests/test_stream_bridge.py -k single_flight` | a second `start_turn` while one is active is refused (None); a new turn is accepted once the first ends. |
+| Y.4 | Exception cleans up | `uv run pytest tests/test_stream_bridge.py -k exception` | a turn that raises emits a terminal error frame and unregisters every forwarded-event handler — no leak, no hang. |
+| Y.5 | Core import clean | (without the extra) `python -c "from ubongo.web.console import stream_bridge"` | imports fine; FastAPI/uvicorn are imported only under `web/console/app.py`. |
+| Y.6 | Live browser stream (LAN) | `uv sync --extra console`; `ubongo console`; open `http://<host>:8770`, send a turn | the page streams `after_classify → after_plan → agent_* → after_send → end` live; a full governed turn (shows in `/trace`, the queue, the daily note). |
+| Y.7 | Pytest passes | `uv run pytest` | 1057 passed (`test_stream_bridge.py` included). |
