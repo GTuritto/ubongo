@@ -279,6 +279,44 @@ CREATE TABLE IF NOT EXISTS authoring_state (
   updated_at TIMESTAMP NOT NULL
 );
 
+-- v0.5 phase 06: standing jobs (proactive output). Runtime state for each
+-- config-defined job (config/jobs.yaml is the source of truth for schedule /
+-- grant bundle / prompt; this row tracks when it last ran and when it is next
+-- due, so scheduling survives a restart). Keyed by the job name.
+CREATE TABLE IF NOT EXISTS standing_jobs (
+  name TEXT PRIMARY KEY,
+  last_run TIMESTAMP,
+  next_run TIMESTAMP,
+  last_outcome TEXT,
+  created_at TIMESTAMP NOT NULL
+);
+
+-- v0.5 phase 06: one row per job cycle. outcome is the proactive-policy verdict:
+-- delivered (sent / queued for an open window), held (inside quiet hours, queued
+-- with a future deliver_after), parked (the turn gated; a pending_approvals
+-- record + a raise were written), skipped (a parked raise expired — default-deny),
+-- or error. decision_id links a parked run to its pending_approvals record.
+CREATE TABLE IF NOT EXISTS job_runs (
+  id INTEGER PRIMARY KEY,
+  job_name TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('delivered', 'held', 'parked', 'skipped', 'error')),
+  decision_id INTEGER REFERENCES governance_decisions(id),
+  detail TEXT,
+  started_at TIMESTAMP NOT NULL,
+  ended_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_job_runs_ended ON job_runs(ended_at);
+CREATE INDEX IF NOT EXISTS idx_job_runs_name ON job_runs(job_name);
+
+-- v0.5 phase 06: single-row control state for the standing-jobs daemon, persisted
+-- so it comes back paused after a restart (it never speaks unprompted until
+-- /jobs resume). Mirrors evolution_state / authoring_state.
+CREATE TABLE IF NOT EXISTS jobs_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  status TEXT NOT NULL CHECK (status IN ('running', 'paused', 'off')),
+  updated_at TIMESTAMP NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_summaries_conversation ON summaries(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_queue_undelivered ON notification_queue(delivered_at) WHERE delivered_at IS NULL;

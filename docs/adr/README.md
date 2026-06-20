@@ -34,4 +34,11 @@ pipeline, gates never approvable over MCP, LAN no-auth posture shared with the w
 opt-in routing, irreversible + per-server risk — the first-class tool layer stays
 unjustified.
 
+The **v0.5 trust protocol** adds: **0017** the deployment envelope (rootless Podman +
+nftables egress, Linux-only); **0018** the typed, persisted, resumable approval seam
+(approve in any channel); **0019** the grant registry (standing consent, checked after
+the safety rules); **0020** Telegram, the first cloud-relayed channel; **0021** standing
+jobs — proactive output through the existing seams, with the quiet-hours + raise-TTL
+default-deny posture for "no human at run time."
+
 New decisions get the next number. Supersede rather than rewrite: set the old ADR's status to `Superseded by NNNN`.

@@ -104,6 +104,16 @@ def grants(revoke_id: int | None = None) -> int:
     return 0
 
 
+def jobs(action: str = "status", name: str | None = None) -> int:
+    """`ubongo jobs [status|list|pause|resume|off|run <name>]` — the CLI surface
+    for the standing-jobs daemon (v0.5 phase 06). Shares the REPL renderers."""
+    from ubongo.jobs import commands as jobs_commands
+
+    line = f"jobs {action}" + (f" {name}" if name else "")
+    print(jobs_commands.render(line))
+    return 0
+
+
 def resolve_pending(decision_id: int, approve: bool) -> int:
     """`ubongo approve|decline <id>` — resolve a held turn through the shared
     seam. On approve the delivered answer is printed; the record is the source

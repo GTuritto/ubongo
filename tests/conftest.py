@@ -16,3 +16,7 @@ os.environ.setdefault("UBONGO_DISABLE_AUTHORING_EVAL", "1")
 
 # Authoring Phase 4: never start the autonomous authoring daemon during the suite.
 os.environ.setdefault("UBONGO_DISABLE_AUTHORING", "1")
+
+# v0.5 phase 06: never start the standing-jobs daemon during the suite (the
+# runner/loop are tested directly with master.handle mocked).
+os.environ.setdefault("UBONGO_DISABLE_JOBS", "1")

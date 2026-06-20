@@ -1,0 +1,35 @@
+# Standing jobs (v0.5 phase 06) — proactive, scheduled turns.
+#
+# Each job runs unprompted on its schedule, through the same governed seam as a
+# typed turn (channel core -> master.handle). Its grant_bundle is the set of
+# capability classes it is allowed to use without asking; a run that reaches
+# outside the bundle gates, parks, and raises itself for approve-later.
+#
+# This file is the source of truth for WHAT a job is. Runtime state (last run,
+# next due) lives in the DB (standing_jobs). Daemon-wide knobs (quiet hours, the
+# raise TTL, the throttle) live under `jobs:` in settings.yaml.
+#
+# Fields:
+#   name           unique job id
+#   enabled        false keeps it defined but dormant (default false — opt in)
+#   schedule_seconds  minimum seconds between runs (86400 = daily)
+#   grant_bundle   capability classes approved once at first run (e.g. connector:<server>)
+#   persona        the voice the job composes in
+#   prompt         the task the job runs as its turn
+
+jobs:
+  # The worked example and acceptance test. Disabled until a Connector news
+  # server is configured in settings.yaml::mcp.servers and its grant exists.
+  # External reach goes through the Connector (ADR-0016), not a shell script —
+  # the sandbox blocks network by design.
+  - name: news-digest
+    enabled: false
+    schedule_seconds: 86400
+    grant_bundle:
+      - connector:news
+    persona: operator
+    workflow: connector_session
+    prompt: >
+      Fetch today's top technology headlines through the available tools and
+      compose a tight 5-bullet digest. Lead with the single most important item.
+      No padding; skip anything you could not verify from a source.

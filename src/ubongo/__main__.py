@@ -70,6 +70,12 @@ def _build_parser() -> argparse.ArgumentParser:
     grants_sub = grants_cmd.add_subparsers(dest="grants_action")
     grants_revoke = grants_sub.add_parser("revoke", help="Revoke a grant by id")
     grants_revoke.add_argument("grant_id", type=int)
+    # v0.5 phase 06: the standing-jobs surface (read + control; definitions live
+    # in config/jobs.yaml).
+    jobs_cmd = subparsers.add_parser("jobs", help="List/control standing jobs")
+    jobs_cmd.add_argument("action", nargs="?", default="status",
+                          help="status | list | pause | resume | off | run")
+    jobs_cmd.add_argument("name", nargs="?", help="job name (for `run`)")
     return parser
 
 
@@ -114,6 +120,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "grants":
         revoke_id = args.grant_id if getattr(args, "grants_action", None) == "revoke" else None
         return oneshot.grants(revoke_id=revoke_id)
+    if args.command == "jobs":
+        return oneshot.jobs(getattr(args, "action", "status"), getattr(args, "name", None))
 
     startup_profile = profiling.resolve_startup_profile(
         getattr(args, "profile", None), os.environ.get("UBONGO_PROFILE")

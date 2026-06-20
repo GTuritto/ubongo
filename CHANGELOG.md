@@ -18,6 +18,37 @@ entry below records what that version added. Newest first.
 
 ---
 
+## v0.5.6 — standing jobs (v0.5 trust-protocol, phase 06)
+
+Date: 2026-06-20
+
+The first time Ubongo speaks unprompted ([ADR-0021](docs/adr/0021-standing-jobs-proactive-output.md)):
+proactive output through the reserved seams. A fourth `DaemonLoop` runs scheduled
+jobs through `master.handle` (governed, persisted, no bypass) and delivers via
+`notification_queue`. Additive over the daemon lifecycle, the queue (ADR-0002),
+the resumable approval seam (ADR-0018), and the grant registry (ADR-0019).
+
+- `StandingJobsLoop` (a fourth daemon) boots **paused** like its siblings; nothing
+  speaks unprompted until `/jobs resume`. Throttled by the shared rolling-hour
+  budget + cron gate; `UBONGO_DISABLE_JOBS=1` keeps the suite daemon-free.
+- Jobs are config-defined (`config/jobs.yaml`): name, schedule, grant_bundle,
+  persona, optional workflow, prompt. Runtime state in `standing_jobs` / `job_runs`
+  / `jobs_state` (a new table-family module, the Phase-02 pattern). `/jobs
+  [status|list|pause|resume|off|run <name>]` + `ubongo jobs` are read + control only.
+- **Definition-time grant bundle**: a job's `connector:<server>` classes are
+  approved once through the Phase-03 seam; a run reaching outside the bundle
+  re-gates → **park-and-raise** (the job parks, raises itself for approve-later;
+  approving delivers on the next cycle, reusing the resume seam).
+- **Approval-expiry posture** (the "no human at run time" safety core): quiet hours
+  hold a send behind a future `deliver_after`; a parked raise's TTL `expires_at`
+  auto-declines it (**default-deny**) so nothing waits forever or fires at 3am.
+  Both enforced by the queue's existing deliverability filter.
+- Proactive delivery is the queue + a drain (distinct `source`), read by the REPL
+  as a launch catch-up and by the Telegram bot each poll. External reach is the
+  Connector (the news-digest example, disabled by default). No new transport.
+- Additive schema, no migration; the pipeline and every channel are unchanged for
+  typed turns. 1039 tests green (`test_jobs_state.py` + `test_standing_jobs.py`).
+
 ## v0.5.5 — the grant registry (v0.5 trust-protocol, phase 05)
 
 Date: 2026-06-13

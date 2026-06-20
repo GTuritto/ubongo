@@ -17,6 +17,7 @@ _ENV_REF = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_SETTINGS_PATH = _REPO_ROOT / "config" / "settings.yaml"
 _DEFAULT_GOVERNANCE_PATH = _REPO_ROOT / "config" / "governance.yaml"
+_DEFAULT_JOBS_PATH = _REPO_ROOT / "config" / "jobs.yaml"
 
 _cache: dict[Path, dict[str, Any]] = {}
 _dotenv_loaded = False
@@ -122,6 +123,39 @@ def load_authoring(path: Path | None = None, *, force_reload: bool = False) -> d
     through one named entry point. Empty dict if the block is absent.
     """
     return load_config(path, force_reload=force_reload).get("authoring", {})
+
+
+def load_jobs(path: Path | None = None, *, force_reload: bool = False) -> dict[str, Any]:
+    """Return the `jobs:` block from settings.yaml (v0.5 phase 06) — the standing-
+    jobs daemon knobs (enabled, cron, quiet_hours, raise_ttl_hours,
+    max_runs_per_hour). Mirrors `load_evolution()`. Empty dict if absent."""
+    return load_config(path, force_reload=force_reload).get("jobs", {})
+
+
+def load_job_definitions(path: Path | None = None, *, force_reload: bool = False) -> list[dict[str, Any]]:
+    """Load the standing-job definitions from config/jobs.yaml (v0.5 phase 06).
+
+    Each entry: `name`, `schedule` (interval seconds), `grant_bundle` (capability
+    classes), `prompt`, and an `enabled` flag. The file is optional — a missing
+    file means no jobs (returns []). Parse errors raise ConfigError so the daemon
+    fails friendly rather than spawning malformed work.
+    """
+    _ensure_dotenv()
+    jobs_path = (path or _DEFAULT_JOBS_PATH).resolve()
+    if jobs_path in _cache and not force_reload:
+        return _cache[jobs_path].get("jobs", [])
+    if not jobs_path.exists():
+        return []
+    try:
+        with jobs_path.open("r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"jobs.yaml is not valid YAML: {exc}") from exc
+    if not isinstance(raw, dict) or not isinstance(raw.get("jobs", []), list):
+        raise ConfigError("jobs.yaml: expected a top-level `jobs:` list")
+    cfg = _resolve_env_refs(raw)
+    _cache[jobs_path] = cfg
+    return cfg.get("jobs", [])
 
 
 def reload() -> None:

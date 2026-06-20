@@ -14,6 +14,7 @@ from ubongo.memory import store
 from ubongo.memory import trace
 from ubongo.authoring import commands as authoring_commands
 from ubongo.evolution import commands as evolution_commands
+from ubongo.jobs import commands as jobs_commands
 from ubongo.memory import commands as memory_commands
 
 logger = logging.getLogger("ubongo.repl")
@@ -713,6 +714,7 @@ COMMANDS: dict[str, Command] = {
     "mode":         Command(_cmd_mode, "/mode <workflow>"),
     **evolution_commands.COMMANDS,
     **authoring_commands.COMMANDS,
+    **jobs_commands.COMMANDS,
     **memory_commands.COMMANDS,
     "reload":       Command(_cmd_reload, "/reload"),
 }
@@ -819,6 +821,16 @@ def run(default_persona: str = DEFAULT_PERSONA, *, startup_profile: str | None =
     _authoring_loop = AuthoringLoop()
     _authoring_loop.start()
 
+    # v0.5 phase 06: start the standing-jobs daemon when jobs.enabled. Boots
+    # paused (persisted), so nothing speaks unprompted until /jobs resume.
+    from ubongo.jobs.loop import StandingJobsLoop
+    _jobs_loop = StandingJobsLoop()
+    _jobs_loop.start()
+
+    # v0.5 phase 06: catch-up. Any proactive messages a job queued while no
+    # channel was listening (or held past quiet hours) surface now, on launch.
+    _drain_proactive_catchup()
+
     try:
         return _repl_loop(
             persona, auto_mode, pending_skill, pending_workflow,
@@ -828,6 +840,24 @@ def run(default_persona: str = DEFAULT_PERSONA, *, startup_profile: str | None =
         _evolution_loop.stop()
         _vault_watcher.stop()
         _authoring_loop.stop()
+        _jobs_loop.stop()
+
+
+def _drain_proactive_catchup() -> None:
+    """Print and mark delivered any deliverable proactive rows (job output /
+    approval raises) at REPL launch — the catch-up surface for proactive output
+    when no live channel was draining (ADR-0002 keeps it in the queue)."""
+    from ubongo.jobs import delivery
+
+    def _send(row) -> None:
+        print(f"[proactive] {row.content}")
+
+    try:
+        n = delivery.drain_proactive(_send)
+        if n:
+            logger.info("proactive_catchup", extra={"delivered": n})
+    except Exception:
+        logger.warning("proactive_catchup_failed", exc_info=True)
 
 
 def _repl_loop(persona, auto_mode, pending_skill, pending_workflow,

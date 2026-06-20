@@ -179,6 +179,13 @@ The architectural "why" lives in `docs/adr/`. Twenty ADRs, all Accepted:
   turn handling), `bot.py` the only Bot-API module (httpx long-poll, lazy import, token in `.env`). Auth
   returns via `allowed_user_ids` (empty = deny all). Approve-later/grant asks reach the phone over the
   Phase-03 seam; no orchestration bypass. The Phase-01 egress envelope makes the cloud relay acceptable.
+- **0021 — Standing jobs: proactive output through the existing seams.** The first time Ubongo speaks
+  unprompted. A fourth `DaemonLoop` (`jobs/`, boots paused) runs config-defined jobs (`config/jobs.yaml`)
+  through `master.handle` and delivers via `notification_queue`. Definition-time grant bundles (approved
+  once via ADR-0018/0019); a run reaching outside the bundle parks and raises itself for approve-later. The
+  "no human at run time" posture: quiet hours hold sends, a parked raise's TTL auto-declines (default-deny),
+  both enforced by the queue's deliverability filter. Proactive output is a distinct queue source drained by
+  the REPL catch-up / the Telegram bot; external reach is the Connector. Additive; no orchestration change.
 
 Two CLAUDE.md rules worth restating because they constrained the build throughout: new capabilities default
 to CLI scripts behind the constrained-bash skill rather than first-class tools, and new v0.2+ behavior ships
