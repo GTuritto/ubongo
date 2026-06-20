@@ -44,4 +44,8 @@ verbosity as legible governance config (manual-first, GP-evolvable later under t
 floor) and `ubongo backup` (an instance is its data + config; no secrets, grants re-arm on a
 new envelope). 0022 closes the v0.5 trust protocol.
 
+The **v0.6 live-console** line opens with **0023**: per-turn event streaming over the bus
+(a background-task turn whose named events forward to the browser over SSE), single-flight,
+LAN no-auth — the transport the live agent-roster/activity/approval/sources panels ride on.
+
 New decisions get the next number. Supersede rather than rewrite: set the old ADR's status to `Superseded by NNNN`.
