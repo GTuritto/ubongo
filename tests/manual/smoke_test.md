@@ -595,3 +595,17 @@ The first time Ubongo speaks unprompted ([Plans/v0.5-06-standing-jobs.md](../../
 | W.8 | Control + CLI surfaces | `/jobs pause\|resume\|off`; `ubongo jobs`, `ubongo jobs run news-digest` | status flips and persists; the CLI mirrors the REPL renderers; `run <unknown>` says "Unknown job". |
 | W.9 | Live news digest (Pi, needs a Connector news server) | enable `news-digest` + a `connector:news` server; `/jobs resume`; wait a cycle | the digest fetches via the Connector, delivers proactively (or to Telegram); revoking the grant parks + raises it. |
 | W.10 | Pytest passes | `uv run pytest` | 1039 passed (`test_jobs_state.py` + `test_standing_jobs.py` included). |
+
+## v0.5 Phase 07 — The contract and identity
+
+The final trust-protocol phase ([Plans/v0.5-07-contract-identity.md](../../Plans/v0.5-07-contract-identity.md), [ADR-0022](../../docs/adr/0022-contract-and-identity.md)): a per-domain verbosity knob as governance config (terse/normal/deep by `task_type`, threaded into the composer persona as one line; `/verbosity` read, `/brief`/`/verbose` one-shot), and `ubongo backup` (an instance is its data + config — DB + vault + config, never `.env`; restore re-arms grants on a new envelope). Fork / naming / inter-instance exchange are designed-but-deferred.
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| X.1 | Verbosity table | `/verbosity` | prints `default=normal` and the per-domain rows from governance.yaml (technical/coding=deep, casual/command=terse). |
+| X.2 | Deep vs terse differ | `ubongo send "explain write-ahead logging" --persona architect` (technical→deep) vs a casual one-liner | the deep-mapped technical answer reads longer/structured; a terse-mapped turn reads short. |
+| X.3 | One-shot override | REPL `/brief`, then a normally-deep technical question | "Next turn will be terse."; that turn is short; the following turn returns to the domain default. |
+| X.4 | Graceful default | blank/missing `verbosity:` block (or unmapped domain) | the turn runs at `normal` (no length line) — no error. |
+| X.5 | Backup is secret-free | `ubongo backup /tmp/ub` | writes `…/ubongo-backup-<stamp>.tar.gz`; `tar tzf` shows `data/ubongo.db`, `vault/`, `config/` and **no** `.env` and no `data/profiles/`. |
+| X.6 | Restore re-arms grants | (with an active grant) `ubongo restore <archive>` into a fresh dir | files reproduced; "N grant(s) re-armed"; the restored DB's grants are `revoked`. `--keep-grants` preserves them. |
+| X.7 | Pytest passes | `uv run pytest` | 1053 passed (`test_governance_verbosity.py` + `test_backup.py` included). |

@@ -118,6 +118,7 @@ class WorkflowRunner:
             repair_prompt_hint=repair_prompt_hint,
             max_tokens_override=max_tokens_override,
             debate_role=debate_role,
+            verbosity=getattr(workflow, "verbosity", None),
         )
         input = AgentInput(
             message=message,

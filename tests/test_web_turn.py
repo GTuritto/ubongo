@@ -31,6 +31,7 @@ def test_run_turn_calls_master_then_flushes():
     m_handle.assert_called_once_with(
         "hi", "casual", auto_mode=False,
         pending_skill=None, pending_workflow=None, approved=False,
+        pending_verbosity=None,
     )
     m_flush.assert_called_once_with(resp.delivery_token)
 
@@ -43,6 +44,7 @@ def test_run_turn_forwards_approved_flag():
     m_handle.assert_called_once_with(
         "delete the vault", "casual", auto_mode=True,
         pending_skill=None, pending_workflow=None, approved=True,
+        pending_verbosity=None,
     )
 
 

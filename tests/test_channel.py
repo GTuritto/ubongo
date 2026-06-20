@@ -30,11 +30,11 @@ def _stub(monkeypatch):
     calls = {}
 
     def handle(message, persona, auto_mode=False, pending_skill=None,
-               pending_workflow=None, approved=False):
+               pending_workflow=None, approved=False, pending_verbosity=None):
         calls["kwargs"] = dict(
             message=message, persona=persona, auto_mode=auto_mode,
             pending_skill=pending_skill, pending_workflow=pending_workflow,
-            approved=approved,
+            approved=approved, pending_verbosity=pending_verbosity,
         )
         return _response()
 
@@ -76,6 +76,7 @@ def test_run_turn_passes_everything_through_and_flushes(_stub):
     assert _stub["kwargs"] == dict(
         message="msg", persona="operator", auto_mode=True,
         pending_skill="s", pending_workflow="w", approved=True,
+        pending_verbosity=None,
     )
     assert _stub["flushed"] == [response.delivery_token]
 

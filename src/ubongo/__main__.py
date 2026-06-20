@@ -76,6 +76,13 @@ def _build_parser() -> argparse.ArgumentParser:
     jobs_cmd.add_argument("action", nargs="?", default="status",
                           help="status | list | pause | resume | off | run")
     jobs_cmd.add_argument("name", nargs="?", help="job name (for `run`)")
+    # v0.5 phase 07: backup / restore (an instance is its data + config).
+    backup_cmd = subparsers.add_parser("backup", help="Write a portable backup (DB + vault + config; no .env)")
+    backup_cmd.add_argument("path", nargs="?", help="destination dir or archive path (default: cwd)")
+    restore_cmd = subparsers.add_parser("restore", help="Restore a backup into the current checkout")
+    restore_cmd.add_argument("archive", help="backup archive (.tar.gz)")
+    restore_cmd.add_argument("--keep-grants", action="store_true",
+                             help="keep grants instead of re-arming them (same-machine recovery)")
     return parser
 
 
@@ -122,6 +129,10 @@ def main(argv: list[str] | None = None) -> int:
         return oneshot.grants(revoke_id=revoke_id)
     if args.command == "jobs":
         return oneshot.jobs(getattr(args, "action", "status"), getattr(args, "name", None))
+    if args.command == "backup":
+        return oneshot.backup(getattr(args, "path", None))
+    if args.command == "restore":
+        return oneshot.restore(args.archive, keep_grants=getattr(args, "keep_grants", False))
 
     startup_profile = profiling.resolve_startup_profile(
         getattr(args, "profile", None), os.environ.get("UBONGO_PROFILE")

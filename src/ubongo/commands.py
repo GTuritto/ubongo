@@ -29,6 +29,9 @@ class ReplState:
     pending_skill: str | None
     pending_workflow: str | None
     keep_going: bool = True
+    # Phase 07: one-shot verbosity override set by /brief | /verbose, consumed and
+    # cleared after the next turn (mirrors pending_skill / pending_workflow).
+    pending_verbosity: str | None = None
     # Candidate 10: when True, each turn's master.handle runs under cProfile
     # (/profile cpu on|off). Defaulted so existing constructions stay valid.
     cpu_profile: bool = False

@@ -45,3 +45,18 @@ destructive_keywords:
   - "drop database"
   - "format "
   - "truncate"
+
+# v0.5 phase 07: verbosity per domain (a legible, manual-first length knob).
+# Resolved by governance/verbosity.py and threaded into the persona's system
+# prompt as one directive line. The level is matched by the classifier's
+# task_type first, then its intent, then the default. `normal` is a no-op (keeps
+# the persona's natural length); only terse/deep add a line. Hand-edited here; a
+# GP-evolvable `verbosity:<domain>` target is deferred (ADR-0022).
+verbosity:
+  default: normal
+  levels:
+    # domain (task_type or intent) -> terse | normal | deep
+    coding: deep
+    technical: deep
+    casual: terse
+    command: terse

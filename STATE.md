@@ -186,6 +186,12 @@ The architectural "why" lives in `docs/adr/`. Twenty ADRs, all Accepted:
   "no human at run time" posture: quiet hours hold sends, a parked raise's TTL auto-declines (default-deny),
   both enforced by the queue's deliverability filter. Proactive output is a distinct queue source drained by
   the REPL catch-up / the Telegram bot; external reach is the Connector. Additive; no orchestration change.
+- **0022 — The contract and identity (the final trust-protocol phase).** Verbosity per domain as
+  governance config (`governance.yaml` → `governance/verbosity.py` → one persona length line;
+  `/verbosity`, `/brief`, `/verbose`), manual-first, GP-evolvable later under the human floor. An
+  instance is its data + config: `ubongo backup` writes a portable archive of DB + vault + config
+  (never `.env`, never `data/profiles/`); restore re-arms grants on a new envelope. Fork / naming /
+  inter-instance exchange are designed-but-deferred. **The v0.5 trust protocol is complete (00–07).**
 
 Two CLAUDE.md rules worth restating because they constrained the build throughout: new capabilities default
 to CLI scripts behind the constrained-bash skill rather than first-class tools, and new v0.2+ behavior ships

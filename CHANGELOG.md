@@ -18,6 +18,30 @@ entry below records what that version added. Newest first.
 
 ---
 
+## v0.5.7 — the contract and identity (v0.5 trust-protocol, phase 07)
+
+Date: 2026-06-20
+
+The final phase, deliberately light ([ADR-0022](docs/adr/0022-contract-and-identity.md)) —
+and the close of the v0.5 trust protocol.
+
+- **Verbosity per domain, as governance config.** A `verbosity:` block in `governance.yaml`
+  maps a domain (classifier `task_type`, then `intent`) to `terse | normal | deep`. Resolved
+  by `governance/verbosity.py`, set on the `Workflow`, passed as a typed
+  `AgentDirectives.verbosity`, and appended by the composer persona as one length line
+  (`normal` is a no-op — it never rewrites the voice). `/verbosity` shows the live table;
+  `/brief` and `/verbose` override one turn. Manual-first; a GP-evolvable `verbosity:<domain>`
+  target is deferred (it would stay human-approved, so the boundary can't move itself).
+- **`ubongo backup` / `ubongo restore`.** An instance is its data + config: backup writes a
+  portable `tar.gz` of `data/ubongo.db` + `vault/` + `config/`, never `.env` and never the
+  disposable `data/profiles/`. Restore unpacks into a checkout and **re-arms grants** by
+  default (a moved instance crosses a new trust boundary; `--keep-grants` for same-machine
+  recovery). No install log — capabilities are the human-approved config allowlist.
+- Fork / naming / inter-instance exchange recorded as designed-but-deferred (ADR-0022).
+- Additive; every channel + orchestration unchanged (the verbosity directive degrades to
+  normal when absent). 1053 tests green (`test_governance_verbosity.py` + `test_backup.py`).
+- **The v0.5 trust protocol is complete** — phases 00–07 merged.
+
 ## v0.5.6 — standing jobs (v0.5 trust-protocol, phase 06)
 
 Date: 2026-06-20

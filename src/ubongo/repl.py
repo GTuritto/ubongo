@@ -506,6 +506,33 @@ def _cmd_policy(line: str, state: ReplState) -> str | None:
     return _render_policy()
 
 
+def _cmd_verbosity(line: str, state: ReplState) -> str | None:
+    """Phase 07: print the live per-domain verbosity table (read-only — the knob
+    is hand-edited in governance.yaml). `/brief` and `/verbose` override one turn."""
+    from ubongo.governance import verbosity
+
+    default = verbosity.default_level()
+    levels = verbosity.levels_map()
+    lines = [f"Verbosity (governance.yaml): default={default}"]
+    if levels:
+        for domain, level in sorted(levels.items()):
+            lines.append(f"  {domain:<16} {level}")
+    else:
+        lines.append("  (no per-domain overrides; every turn uses the default)")
+    lines.append("Override one turn with /brief or /verbose. Edit governance.yaml + /reload to change the table.")
+    return "\n".join(lines)
+
+
+def _cmd_brief(line: str, state: ReplState) -> str | None:
+    state.pending_verbosity = "terse"
+    return "Next turn will be terse."
+
+
+def _cmd_verbose(line: str, state: ReplState) -> str | None:
+    state.pending_verbosity = "deep"
+    return "Next turn will be in depth."
+
+
 def _cmd_grants(line: str, state: ReplState) -> str | None:
     """v0.5 phase 05: the grant registry surface. `/grants` lists active grants;
     `/grants revoke <id>` revokes one (re-arming the first-encounter ask)."""
@@ -705,6 +732,9 @@ COMMANDS: dict[str, Command] = {
     "queue":        Command(_cmd_queue, "/queue [N]"),
     "decisions":    Command(_cmd_decisions, "/decisions [N]"),
     "policy":       Command(_cmd_policy, "/policy"),
+    "verbosity":    Command(_cmd_verbosity, "/verbosity"),
+    "brief":        Command(_cmd_brief, "/brief"),
+    "verbose":      Command(_cmd_verbose, "/verbose"),
     "pending":      Command(_cmd_pending, "/pending [approve|decline <id>]"),
     "grants":       Command(_cmd_grants, "/grants [revoke <id>]"),
     "agents":       Command(_cmd_agents, "/agents"),
@@ -907,10 +937,12 @@ def _repl_loop(persona, auto_mode, pending_skill, pending_workflow,
             stripped, state.persona, auto_mode=state.auto_mode,
             pending_skill=state.pending_skill,
             pending_workflow=state.pending_workflow,
+            pending_verbosity=state.pending_verbosity,
             profile_cpu=state.cpu_profile,
         )
         state.pending_skill = None  # one-shot
         state.pending_workflow = None  # one-shot
+        state.pending_verbosity = None  # one-shot
         print(response.text)
         if state.auto_mode:
             state.persona = response.persona
