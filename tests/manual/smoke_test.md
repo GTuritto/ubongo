@@ -561,3 +561,20 @@ Persistent capability grants replace ask-every-time fatigue ([Plans/v0.5-05-gran
 | U.8 | retry:repair is gone | REPL `/optimize` | the target list shows `persona:*`, `routing:default`, `toolchain:*` — **no `retry:repair`**. |
 | U.9 | CLI grants surface | `ubongo grants`; `ubongo grants revoke <id>` | lists active grants / revokes by id; unknown id exits non-zero with a clean message. |
 | U.10 | Pytest passes | `uv run pytest` | 993 passed (grant registry + the retry:repair cut; `test_grant_registry.py` included). |
+
+## v0.5 Phase 04 — The Telegram channel
+
+The fifth channel and the first cloud-relayed one ([Plans/v0.5-04-telegram.md](../../Plans/v0.5-04-telegram.md), [ADR-0020](../../docs/adr/0020-telegram-cloud-channel.md)): drive Ubongo from your phone, with approve-later and grant first-encounter asks reaching you remotely. Additive over `channel.run_turn` (no orchestration change). `telegram/service.py` is the network-free core; `telegram/bot.py` is the only Bot-API module (httpx long-poll, lazy import, token from `.env`). Auth returns via `telegram.allowed_user_ids` (empty = deny all). Most steps are headless (service mocked); the live bot needs a real token + a Pi, like the MCP HTTP and envelope checks.
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| V.1 | Missing extra / no token is friendly | `python -m ubongo telegram` (no `TELEGRAM_BOT_TOKEN`) | rc 1; "Error: TELEGRAM_BOT_TOKEN not set in .env." (or, without the extra, the install hint); no traceback. |
+| V.2 | Unauthorized user refused, no turn | `uv run pytest tests/test_telegram_service.py -k unauthorized` | `handle_message` returns "Not authorized." and `channel.run_turn` is never called (empty `allowed_user_ids` denies all). |
+| V.3 | Authorized normal turn, no bypass | `uv run pytest tests/test_telegram_service.py -k normal_turn` | the turn routes through `channel.run_turn(..., auto_mode=True)` → `master.handle`; reply is the composed text. |
+| V.4 | Gated turn surfaces the decision_id | `uv run pytest tests/test_telegram_service.py -k gated` | the reply carries the gated text plus `/approve <id>` and `/decline <id>`; `/approve <id>` resolves via `master.resume_approval`. |
+| V.5 | Command router | `uv run pytest tests/test_telegram_service.py -k "pending or approve or decline or grants"` | `/pending`, `/approve`, `/decline`, `/grants` resolve through the Phase-03/05 seams (no re-implemented resume). |
+| V.6 | Bot loop pumps updates (transport mocked) | `uv run pytest tests/test_telegram_bot.py` | a parsed `getUpdates` payload drives `service.handle_message` and a `sendMessage`; a handler exception still replies; a paused channel suppresses delivery. |
+| V.7 | SDK isolation | (with the extra absent) `uv run pytest` | green — `httpx` is imported only inside `bot.py`; `service.py` and the core import without `[telegram]`. |
+| V.8 | ctl + service control (Pi) | `./ubongo-ctl.sh start telegram`, `status telegram`, `stop telegram` | start backgrounds the bot (pidfile `data/ubongo-telegram.pid`); status exits 0; stop terminates. (Needs the token; Pi/host with the extra.) |
+| V.9 | Live round-trip (Pi, needs token) | set `TELEGRAM_BOT_TOKEN` + your id in `allowed_user_ids`; `./start-ubongo-telegram.sh`; message the bot | an authorized chat gets a real composed reply; an unlisted user gets "Not authorized."; a destructive prompt gates and `/approve <id>` delivers; a connector first-encounter asks and is grantable from the phone. |
+| V.10 | Pytest passes | `uv run pytest` | 1010 passed (`test_telegram_service.py` + `test_telegram_bot.py` included). |

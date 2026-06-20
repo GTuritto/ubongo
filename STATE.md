@@ -118,7 +118,7 @@ each is either documented in an ADR or in a STATUS phase note.
 
 ## Decisions and why (the ADR record)
 
-The architectural "why" lives in `docs/adr/`. Nineteen ADRs, all Accepted:
+The architectural "why" lives in `docs/adr/`. Twenty ADRs, all Accepted:
 
 - **0001 — Hand-rolled orchestration.** Plain Python + asyncio + an event bus, no framework. The whole
   system is small enough that a framework would add more surface than it removes.
@@ -174,6 +174,11 @@ The architectural "why" lives in `docs/adr/`. Nineteen ADRs, all Accepted:
   granted. Approving a first-encounter writes the grant; `/grants` + `ubongo grants` manage them; revocation
   re-arms the ask and survives restart. Server-granular (per-tool deferred, ADR-0016). Paired with the cut of
   the weak `retry:repair` evolvable target (Amendment 2).
+- **0020 — Telegram: the first cloud-relayed channel, additive over the one seam.** The fifth channel
+  (`telegram/`): `service.py` the network-free core (auth + `/approve|/decline|/pending|/grants` router +
+  turn handling), `bot.py` the only Bot-API module (httpx long-poll, lazy import, token in `.env`). Auth
+  returns via `allowed_user_ids` (empty = deny all). Approve-later/grant asks reach the phone over the
+  Phase-03 seam; no orchestration bypass. The Phase-01 egress envelope makes the cloud relay acceptable.
 
 Two CLAUDE.md rules worth restating because they constrained the build throughout: new capabilities default
 to CLI scripts behind the constrained-bash skill rather than first-class tools, and new v0.2+ behavior ships
@@ -204,7 +209,7 @@ as handlers on the named events rather than edits to the pipeline.
 
 - Phase-by-phase changelog and acceptance checklist: [STATUS.md](STATUS.md)
 - The contract for v0.1 scope: [UBONGO_BUILD.md](UBONGO_BUILD.md)
-- Decisions with rationale: [docs/adr/](docs/adr/) (0001–0019)
+- Decisions with rationale: [docs/adr/](docs/adr/) (0001–0020)
 - Living architecture (C4 + glossary): [docs/architecture/](docs/architecture/), [CONTEXT.md](CONTEXT.md)
 - Security contract and its known v0.1 limits: [docs/SECURITY.md](docs/SECURITY.md)
 - Cumulative manual smoke playbook: [tests/manual/smoke_test.md](tests/manual/smoke_test.md)

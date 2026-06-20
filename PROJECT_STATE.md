@@ -1,114 +1,102 @@
 # Ubongo — State of Project Briefing
 
-*Written 2026-06-12 for a strategy conversation about what to build next. Ground truth checked against the tree: 960 pytest tests collected green, 15,396 LOC under `src/ubongo/`, `main` at v0.1.5.*
+*Written 2026-06-20 for a strategy conversation about what to build next. Ground truth checked against the tree on branch `v0.5/04-telegram`: 1,010 tests collected, ~16,060 LOC under `src/ubongo/`, 20 accepted ADRs. `main` is at v0.5.5.*
 
 ## Status
 
 ### Where we are against the plan
 
-The plan is explicit: [UBONGO_BUILD.md](UBONGO_BUILD.md) defines v0.1 as 22 phases (0–21) across six tiers, each built on its own `phase-N-<name>` branch and merged by the user. **All 22 phases are done and certified (2026-06-04); all 26 acceptance criteria met.** Since then a post-v0.1 layer has accreted on `main`, version-stamped v0.1.1 through v0.1.5: a Streamlit web channel, self-authored skills (the `authoring/` package), a local profiler + service control, an MCP *server* channel (Ubongo as a server), and an MCP *client* (the Connector agent — Ubongo consuming external servers). Two architecture-deepening refactor passes also landed (candidates 01–06/08, then 14/15/17/18).
+There have been two plans. The first, [UBONGO_BUILD.md](UBONGO_BUILD.md), defined v0.1 as 22 phases across six tiers; it is **done and certified (2026-06-04)**, followed by an accreted post-v0.1 layer (web channel, self-authored skills, profiler, MCP server, MCP client/Connector). The second, and the one that matters now, is the **v0.5 trust-protocol plan** ([Plans/v0.5-trust-protocol.md](Plans/v0.5-trust-protocol.md)): an eight-phase arc (00–07) that hardens Ubongo for a cloud-relayed messaging channel and standing autonomous jobs. It ships as the `v0.5.x` line, version derived from the phase branch name in CI.
 
-So the project sits in an interstitial phase the plan does not name: v0.1 is finished, v0.2 (Telegram) has not started, and the gap has been filled with channels, observability, and self-extension work that the v0.1 spec explicitly listed as out of scope. [STATE.md](STATE.md) is candid about this drift and is itself fresh (dated today); it is the best companion document to this one.
+Phases built and merged to `main`: **00** (reconcile the ledger — the stale fan-out-repair proposal that misled prior reviews is archived), **01** (the outer envelope: rootless Podman quadlets + UID-keyed nftables egress allowlist, Linux/Pi only), **02** (split the 1,990-line `store.py` into five table-family modules + shared judgment parsing), **03** (the typed, persisted, resumable approval seam), and **05** (the grant registry + the Connector armed). Note the non-numeric build order: 05 merged before 04.
+
+In flight: **Phase 04 — Telegram**, the channel proper. It is committed on the current branch with full tests but **not yet merged** — the phase PR is still open per the branch-per-phase workflow. *(Inferred from log shape; confirm with `gh pr status`.)*
+
+Not started: **Phase 06** (standing jobs — the proactive-output seam, the old v0.3) and **Phase 07** (the contract and identity — backup/portability + a verbosity-per-domain governance knob, deliberately last and partly designed-deferred).
 
 ### What is implemented and working
 
-Everything below is exercised by the 960-test pytest suite (roughly one test module per source module, plus REPL, live-swap, recovery, evaluation, sync, audit, and authoring suites) and by a cumulative manual smoke playbook ([tests/manual/smoke_test.md](tests/manual/smoke_test.md)) that was run end-to-end at certification:
+Exercised by the 1,010-test suite (roughly one module per source module, plus REPL, live-swap, recovery, evaluation, sync, audit, authoring, and now approval/grant/telegram suites):
 
-- **The full turn pipeline**: classify → plan → execute → govern → compose → enqueue → memory commit, with ten-plus registered worker agents and all six execution modes (sequential, parallel, competitive, collaborative, debate, speculative).
-- **Self-healing**: a Repair Agent with a seven-category failure taxonomy and an ordered recovery ladder in sequential mode; write-buffer rollback on failure.
-- **Governance**: a five-rule risk/confidence/reversibility decision matrix from `governance.yaml`, an interactive y/n/why approval gate, and a hardened shell sandbox (allowlist, no metacharacters, no traversal, empty child PATH, 10s timeout).
-- **The GP self-improvement loop**: variant generation over prompt and config targets, sandboxed fitness evaluation against 33 held-out conversations, an autonomous-but-paused background loop, and human-approved promotion with live swap via `active_evolutions`.
-- **Memory**: SQLite canonical store, Markdown vault projection, `sqlite-vec` semantic recall folded into turn context, a `[[wikilink]]` graph, bidirectional vault sync via a polling watcher with a conflict queue, and a unified audit file.
-- **Four channels** over one seam: REPL, one-shot, web (Streamlit, optional extra), and MCP server (stdio + streamable HTTP), all thin adapters over `channel.run_turn`.
-- **Self-extension**: `/author` plus an authoring daemon that drafts new skills into quarantine; approval (`/skill-candidates`) is the only path to live.
-- **Operations**: a stdlib-only profiler (`/profile` stats/cpu/mem), `ubongo-ctl.sh`, systemd units, a CI pipeline with an automated smoke gate, and version-driven releases.
+- **The full turn pipeline** ([master.py](src/ubongo/master.py)): classify → plan → execute → govern → compose → commit → enqueue, with ten-plus worker agents and all six execution modes; peer-replacement repair wired into all five fan-out modes plus the full ladder in sequential.
+- **Governance** with a five-rule risk/confidence/reversibility matrix, the hardened shell sandbox, and — new in v0.5 — a **resumable approval seam** (`test_approval_seam.py`, `test_repl_approval.py`): a gated turn writes a `pending_approvals` record and can be approved from any channel via `master.resume_approval`.
+- **The grant registry** (`test_grant_registry.py`): standing per-server consent for `connector:<server>`, checked by a governance rule *after* the safety rules; grant-on-approval, `/grants` + `ubongo grants`, revocation that re-arms the ask and survives restart.
+- **Five channels** over one `channel.run_turn` seam: REPL, one-shot, web (Streamlit), MCP server, and Telegram (`test_telegram_service.py`/`test_telegram_bot.py` — network-free core + httpx long-poll, both behind the optional `httpx` extra).
+- **The GP self-improvement loop** and **the authoring loop**, both background daemons that boot paused, with human-approved promotion (live swap via `active_evolutions`) and human-approved skill materialization (quarantine → `/skill-candidates`).
+- **Memory**: SQLite canonical (single writer = Memory Agent), Markdown vault projection, `sqlite-vec` semantic recall, the `[[wikilink]]` graph, bidirectional vault sync with a conflict queue, unified audit.
+- **The outer envelope** ([deploy/envelope/](deploy/envelope/)): Containerfile, quadlets, nftables config, egress-refresh timer — real and deployed, but enforced *outside* `src/` and **not** covered by pytest.
 
 ### What is missing or unfinished
 
-**(a) Planned but not built** — the roadmap beyond v0.1, none of it started:
-- v0.2 Telegram: a new transport, a `before_send` policy handler, restored `allowed_user_ids` auth. The seams (channel core, event bus, notification queue) exist and were built for exactly this.
-- v0.2 notification policy engine, quiet hours, holds, catch-up summarizer.
-- v0.3 proactive output (the queue seam exists; nothing proactive is wired).
-- External integrations (Calendar, Gmail, Reddit, news) — `.env.example` reserves keys; nothing implemented. The Connector agent now provides the governed path these would use.
+**(a) Planned but not built.** Phase 06 (standing/proactive jobs) and Phase 07 (trust contract, backup/identity, verbosity knob). The notification-policy engine (quiet hours, holds, catch-up summarizer) rides with them. External integrations (Calendar, Gmail, Reddit, news) — `.env.example` reserves keys; the Connector is the governed path they would use, but none are built.
 
-**(b) Partial or stubbed:**
-- **The openspec ledger is out of sync with the code.** `openspec/changes/complete-fanout-peer-replacement/` proposes wiring peer-replacement repair into competitive, debate, and speculative modes — but the code already has it: peer-only recovery is wired into all five fan-out modes (`runner.py:568,636,753,881,1009`), with dedicated tests for peer replacement and the unrecoverable case in each mode in `tests/test_runner.py`. The change is implemented but never archived; the remaining work is bookkeeping, not code.
-- **`retry:repair` fitness is a structural proxy**, not behavioral — offline samples can't induce real failures. Flagged in ADR-0007 as the weakest evolution signal.
-- **The Connector agent is opt-in only** (`/mode connector_session`, never auto-routed), and per-tool pre-execution gating was explicitly deferred (ADR-0016): a high-risk server's *result* needs approval, but individual calls are not gated before they happen.
-- **Deepening candidates deliberately not done**: candidate 16 dropped, candidate 19 (split a growing `store.py`) trigger-parked, candidate 09 (decompose the turn body) judged speculative, candidate 07 dropped after its premise was disproven.
-- Speculative mode's "cross-session correction message" is satisfied within-turn only (proactive output is v0.3).
+**(b) Partial or stubbed.** Telegram is feature-complete with tests but **unmerged** — ready for review, not shipped on `main`. The Connector is opt-in only (`/mode connector_session`, never auto-routed); per-tool pre-execution gating and tool-level allowlists are deferred (grants are server-granular). The `retry:repair` evolvable target was **deleted** in Phase 05 (its fitness was a structural proxy) — so that prior weak-signal item is resolved by removal, not improvement.
 
-**(c) Known gaps, accepted by design but real:**
-- The web and MCP channels have **no auth and no TLS** (single-user home-LAN posture, ADR-0015). Any exposure ambition reopens this.
-- MCP-driven turns **cannot approve gated actions** — a `require_approval` turn returns `gated=true` and stalls until a human channel approves. Correct, but it means machine callers hit a wall on anything risky.
-- What leaves the machine via Connector tool arguments is whatever the Connector's model plans — documented in SECURITY.md as a real consideration, controlled only by per-server `risk`/`enabled` flags.
-- **The LOC soft budget (~15,000) has been crossed for the first time** (~15,400). STATE.md's own verdict: acceptable for the MCP work, but the budget is spent; v0.2 should add a transport, not another subsystem.
-- PR #19 (mutation testing) is parked for hardware reasons — open by intent, not forgotten.
-- Minor doc rot: STATE.md says "twelve ADRs"; there are sixteen.
+**(c) Known gaps and constraints.** Approval has **no expiry, escalation, or quiet-hours policy** — a `pending_approvals` row can sit forever; harmless today, a real gap the moment Phase 06 lets a proactive job gate a turn with no human in any loop. The egress envelope is enforcement the test suite cannot see, so a change to what the Connector or a CLI script reaches passes pytest yet may be silently blocked/allowed on the box; and it is Linux-only by design — macOS has no equivalent. Trust posture stays single-user: Telegram auth is a flat `allowed_user_ids` allowlist (empty = deny all), no per-request auth or TLS in the app. LOC is ~16,060, ~7% over the ~15,000 soft target.
 
 ## Architecture
 
 ### Component map and data flow
 
-A turn flows through one seam, regardless of channel:
-
 ```
-REPL / one-shot / web / MCP server          (presentation only)
+REPL / one-shot / web / MCP server / Telegram      (presentation only)
         └── channel.py  — bootstrap() + run_turn(): the no-bypass envelope
-              └── master.py — classify → plan → execute → govern → compose → enqueue → memory
-                    ├── classifier.py     tone/intent classification (deterministic fallback)
+              └── master.py — classify → plan → execute → govern → compose → commit → enqueue
+                    ├── classifier.py     tone/intent (deterministic fallback)
                     ├── router.py         plan_workflow(): routing.yaml + hysteresis + /mode → WorkflowPlan
-                    ├── runner.py         WorkflowRunner: six execution-mode strategies over the agent fleet
-                    ├── governance/       risk/confidence/reversibility matrix + interactive approval gate
-                    ├── agents/           ten+ workers; composer=True attribute selects the user-facing text;
-                    │                     agents/llm_run.py is the one model-call envelope; connector.py is
-                    │                     the only door to external MCP servers (via mcp/client.py)
-                    ├── memory/           store.py (SQLite, single writer = Memory Agent), vault projection,
-                    │                     sqlite-vec embeddings, graph.py, vault_watch.py, write_buffer.py
-                    └── delivery/         notification_queue — every outbound message, even sync CLI replies
+                    ├── runner.py         WorkflowRunner: six execution-mode strategies (largest module, 1,121 ln)
+                    ├── governance/       risk/confidence/reversibility matrix; approval.py (resumable seam);
+                    │                     grants.py (post-safety grant rule)
+                    ├── agents/           workers; composer=True selects user-facing text; llm_run.py is the one
+                    │                     model-call envelope; connector.py is the only door out (via mcp/client.py)
+                    ├── memory/           store.py + trace.py + evolution_state/authoring_state/index_state/grant_state
+                    │                     (single writer = Memory Agent); vault.py, embeddings.py, graph.py, vault_watch.py
+                    └── delivery/         notification_queue — every outbound message, even sync replies
 ```
 
-The supporting machinery: `events.py` (the named-event bus that v0.2+ behavior must hook), `commands.py` (the slash-command registry), `invoke.py` (shared agent-invocation core), `llm.py` (LiteLLM wrapper: one retry, token accounting, before/after events), `sandbox.py` (all shell-safety enforcement, in code the LLM cannot rewrite), `daemon.py` (one `DaemonLoop` lifecycle behind the three background daemons), `evolution/` (GP loop, manual entry, fitness, promotions), `authoring/` (skill drafting, quarantine, approval), `profiling.py`, `mcp/` (server.py + client.py, the only modules importing the optional MCP SDK), `web/` (Streamlit, optional extra).
+Supporting machinery: `events.py` (named-event bus; the hook surface for new behavior), `commands.py` (slash-command registry), `invoke.py` (shared agent-invocation core), `llm.py` (LiteLLM wrapper: one retry, token accounting), `sandbox.py` (all shell safety, in code the LLM cannot rewrite), `daemon.py` (one `DaemonLoop` behind the three daemons), `evolution/`, `authoring/`, `profiling.py`, `mcp/` (server + client, the only modules importing the optional MCP SDK), `telegram/`, `web/`.
 
-The extension points are deliberate and few: new channels adapt over `channel.run_turn`; new v0.2+ behavior registers handlers on the named events; new tools default to CLI scripts behind the constrained-bash skill (first-class tools require justification — a bar the Connector decision explicitly upheld, ADR-0016); evolvable behavior is addressed by target strings the live-swap read paths consult.
+The extension points are few and deliberate: new channels adapt over `channel.run_turn`; new behavior registers handlers on named events; new tools default to CLI scripts behind constrained-bash; external services go through the Connector only; evolvable behavior is addressed by target strings the live-swap read paths consult; new approval surfaces resolve the one `pending_approvals` record.
 
 ### Stack
 
-Python 3.11+ managed by uv. LiteLLM over OpenRouter for all model calls. Stdlib SQLite plus `sqlite-vec` (lazily loaded, degrades to recency-only recall). YAML config, secrets only in `.env`. Optional extras: `streamlit` (web), the `mcp` SDK (both MCP directions). **Deliberately absent**: LangGraph, Temporal, Ray, Redis, Docker — orchestration is hand-rolled asyncio plus an event bus (ADR-0001). Nothing in the dependency tree is exotic; the load-bearing unusual choice is `sqlite-vec` for embeddings inside the canonical SQLite file.
+Python 3.11+ under uv. LiteLLM over OpenRouter for all model calls (one `complete()` chokepoint). Stdlib SQLite + `sqlite-vec` (lazily loaded; degrades to recency-only recall). PyYAML config, secrets in `.env`. Optional, lazily-imported extras: `streamlit` (web), `mcp` SDK (both MCP directions), `httpx` (Telegram). **Deliberately absent**: LangGraph/Temporal/Ray/Redis/Docker-in-app — hand-rolled asyncio + event bus. Load-bearing-but-quiet: LiteLLM (one provider seam for everything) and `sqlite-vec` (embeddings inside the canonical file, which is why "memory" is one component). New for v0.5: the deployment envelope (Podman + nftables) is a non-code dependency that is now the real network boundary.
 
 ## Decisions and constraints
 
-Sixteen accepted ADRs in [docs/adr/](docs/adr/). The ones that close off paths, which is what matters for a what-next conversation:
+Twenty accepted ADRs in [docs/adr/](docs/adr/). The ones that close off paths — which is what a what-next conversation needs:
 
-- **0001 Hand-rolled orchestration** — no framework will be adopted; new orchestration complexity must be paid for in plain Python.
-- **0002 Single writer + queue** — the Memory Agent is the only writer to durable state; every outbound message flows through `notification_queue`. Any feature that wants to write memory directly or send directly is wrong by construction.
-- **0005 Shell safety in `sandbox.py`, not SKILL.md** — enforcement lives in code the LLM cannot rewrite. ADR-0016 reaffirmed this by *rejecting* a CLI bridge for MCP because it would carve a network hole into the sandbox.
-- **0006 + 0013 The human approval boundary** — neither the GP loop nor the authoring daemon ever promotes anything to production autonomously; both boot paused. The sandbox allowlist is a human-only change.
-- **0008 Live swap via `active_evolutions`** — behavior change from evolution is one DB row consulted by read paths, trivially rollback-able.
-- **0014/0015/0016 The post-v0.1 trio** — observability is local-only; new channels are additive adapters over the one seam; external tools live behind exactly one Connector seam, and the first-class tool layer was *deferred, not granted* (adopting it would rewrite the model-call envelope and dissolve the single governance point for "this turn touched the outside world").
+- **0001 Hand-rolled orchestration** — no framework; new orchestration complexity is paid in plain Python.
+- **0002 Single writer + queue** — Memory Agent is the only durable writer; every outbound message flows through the queue. Writing memory or sending output directly is wrong by construction. This is the seam Phase 06 proactive jobs inherit.
+- **0005 Shell safety in `sandbox.py`** — enforcement in code the LLM cannot rewrite; ADR-0016 reaffirmed it by *rejecting* a CLI bridge for MCP.
+- **0006 + 0013 The human approval boundary** — neither the GP loop nor the authoring daemon promotes anything autonomously; both boot paused; the sandbox allowlist is a human-only change. Phase 07's "learned legibility" is explicitly constrained by this: the dangerous half of learning one's own boundaries is structurally impossible here.
+- **0008 Live swap via `active_evolutions`** — evolution behavior change is one DB row, trivially rolled back.
+- **0016 External tools behind one Connector seam** — the first-class tool layer was *deferred, not granted*; the CLI bridge *rejected*. Connector workflows score irreversible; turn risk escalates to the highest enabled server's declared risk.
+- **0017 The outer envelope** — egress control below the application, Linux-only; what makes the cloud relay acceptable.
+- **0018 The resumable approval seam** — approval is a persisted record with one re-issue path; the prerequisite for approve-later and cross-channel approval.
+- **0019 The grant registry** — standing consent checked *after* the safety rules (a grant can never auto-proceed something the matrix would reject); paired with the `retry:repair` cut.
+- **0020 Telegram** — the first cloud-relayed channel, additive over the one seam; auth via `allowed_user_ids`.
 
-Two CLAUDE.md rules constrain everything above and below: new capabilities default to CLI scripts behind constrained-bash, and new v0.2+ behavior ships as event handlers, not pipeline edits.
+Two CLAUDE.md rules bound everything: new capabilities default to CLI scripts behind constrained-bash, and new behavior ships as event handlers, not pipeline edits.
 
 ### The core invariant
 
-**Every consequential action passes through exactly one governed seam, and nothing changes the system itself without explicit human approval.** Turns go through `master.handle` via the channel core (no bypass); durable writes go through the Memory Agent; outbound messages go through the queue; external calls go through the Connector; self-modification (evolved prompts/config, authored skills) goes through quarantine plus a human gate. A new feature that adds a second path around any of these seams violates the project's reason for being.
+**Every consequential action passes through exactly one governed seam, and nothing changes the system itself — or reaches a new external capability — without explicit human approval.** Turns go through `master.handle` via the channel core; durable writes through the Memory Agent; outbound through the queue; external calls through the Connector; shell through `sandbox.py`; approval through the one `pending_approvals` record; self-modification and first external reach through quarantine/grant plus a human gate. A new feature that opens a second path around any of these, or lets a loop promote its own output, violates the project's reason for being.
 
 ## Open ground
 
-This is where a strategy conversation has room:
+This is where the strategy conversation has room:
 
-1. **The v0.2 question is "when," not "what."** Telegram's shape is fully pre-decided (transport adapter, `before_send` policy handler, restored auth) and the seams are built. The real decision is whether to do it next, or whether the post-v0.1 pattern — channels, MCP, self-extension — continues. The spec's own discipline argues for Telegram; the commit history shows the gravitational pull is elsewhere.
+1. **Merge Telegram, then the fork is real: Phase 06 (standing jobs) vs. Phase 07 (contract/identity).** Phase 04 is the last channel the plan names; once merged, the remaining arc is proactive output and then portability. Phase 06 is the higher-leverage and higher-risk move — it is the first time Ubongo speaks unprompted.
 
-2. **The LOC budget is spent and the project knows it.** First crossing of the 15k soft target. STATE.md ties the shrink trigger to candidate 19 (a growing `store.py`). Anything proposed next should either be net-negative on `src/` or be the transport v0.2 was always meant to be. "Cut, don't expand the budget" is the project's stated answer.
+2. **Proactive output collides head-on with the approval gap.** The resumable seam (0018) assumes someone eventually answers; a standing job that triggers a `require_approval` turn at 3am with no human present has nowhere to go. Phase 06 cannot ship without an expiry/escalation/quiet-hours posture (default-deny or auto-expire) that does not exist today. This is the single most important unresolved design question, and it is squarely in front of the next phase.
 
-3. **The openspec ledger needs reconciling.** The fan-out peer-replacement change is implemented and tested in the tree but never archived, which means the repo's own change ledger asserts a recovery gap that no longer exists. Cheap to fix, and worth doing before the stale proposal misleads another review (it misled this one's first draft).
+3. **The Connector is deliberately half-armed, and the integrations that would arm it are the obvious next product pull.** No auto-routing, no per-call pre-execution gating, server-granular grants only. The moment Calendar/Gmail become real, per-tool granularity (deferred in 0016/0019) comes due — and it interacts with #2, because a proactive job using a granted connector is exactly the no-human-present case.
 
-4. **The Connector is deliberately half-armed.** Not auto-routed, no per-call pre-execution gating, no tool-level allowlists (deferred until real Compendium tool names exist). The moment external integrations (Calendar, Gmail) become real, these deferrals come due — and they interact with the approval-over-MCP gap (machine channels cannot approve).
+4. **The LOC budget is spent and the named fracture is already fixed.** The store split (Phase 02) cashed the one trigger-parked deepening candidate; there is no obvious next cut. At ~7% over, Phase 06/07 must be net-light or paired with a cut. "Standing jobs" is a subsystem, not a transport — the first thing in a while that genuinely pushes the budget.
 
-5. **Two self-modification loops exist but boot paused.** Whether the GP loop and authoring daemon are actually *used* — whether promotions and authored skills are happening in practice — is not visible from the tree. If they are not being exercised, that is a product question (the self-improving premise is the project's identity) before it is a technical one. *(Inferred: the tree shows the machinery and its tests, not its usage.)*
+5. **The self-modification loops boot paused, and whether they are actually exercised is not visible from the tree.** If promotions and authored skills are not happening in practice, the self-improving premise — the project's identity — is dormant, which is a product question before a technical one. *(Inferred: the tree shows machinery and tests, not usage.)*
 
-6. **The fitness signal for `retry:repair` is structurally weak** and acknowledged as such. Making it behavioral would require fault injection, which is real work for a target of unclear value — a candidate for cutting rather than fixing.
+6. **Enforcement is increasingly outside the test suite.** The egress envelope and the Telegram relay are real boundaries that pytest cannot see, and Phase 07's backup/portability story leans on the Phase 02 layering rather than code. As the system grows operational surface, "green suite" certifies less of the actual trust posture than it used to.
 
-7. **The trust posture is load-bearing and fragile to ambition.** Four channels, no auth, LAN-only by declaration. Telegram (a cloud-relayed channel) is the first feature that genuinely breaks the "everything is local" frame — `allowed_user_ids` is the planned answer, but the secrets/exposure surface grows either way.
-
-*Inference flags: everything in Status/Architecture was verified against the tree, tests, ADRs, and git log today, including the fan-out recovery call sites and their tests. The one remaining inferred claim is the usage of the self-modification loops (not derivable from the repo).*
+*Inference flags: Status/Architecture/Decisions verified against the tree, tests, ADRs, and git log on 2026-06-20. Two inferred claims, both flagged inline: Phase 04's PR is still open (from log shape), and the self-modification loops' real-world usage (not derivable from the repo).*

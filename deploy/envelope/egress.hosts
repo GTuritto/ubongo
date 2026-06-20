@@ -7,3 +7,7 @@
 
 # Every model and embedding call (LiteLLM → OpenRouter):
 openrouter.ai
+
+# The Telegram bot channel (v0.5 phase 04), when `ubongo telegram` is running.
+# Remove this line if you don't run the Telegram bot.
+api.telegram.org

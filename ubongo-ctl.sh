@@ -4,10 +4,10 @@
 # background services with a pidfile and a log file each (the interactive REPL
 # stays foreground; you leave it with /exit).
 #
-#   ./ubongo-ctl.sh start [web|mcp]     # background a service (default: web)
-#   ./ubongo-ctl.sh stop [web|mcp]      # TERM, wait up to 10s, KILL fallback
-#   ./ubongo-ctl.sh restart [web|mcp]
-#   ./ubongo-ctl.sh status [web|mcp]    # exit 0 when running, 1 when not
+#   ./ubongo-ctl.sh start [web|mcp|telegram]  # background a service (default: web)
+#   ./ubongo-ctl.sh stop [web|mcp|telegram]   # TERM, wait up to 10s, KILL fallback
+#   ./ubongo-ctl.sh restart [web|mcp|telegram]
+#   ./ubongo-ctl.sh status [web|mcp|telegram] # exit 0 when running, 1 when not
 #
 # Services: web (Streamlit chat page, start-ubongo-web.sh) and mcp (the MCP
 # server over streamable HTTP, start-ubongo-mcp.sh). For reboot-survival on
@@ -20,8 +20,8 @@ cd "$DIR"
 
 SVC="${2:-web}"
 case "$SVC" in
-  web|mcp) ;;
-  *) echo "Unknown service: $SVC (web|mcp)" >&2; exit 2 ;;
+  web|mcp|telegram) ;;
+  *) echo "Unknown service: $SVC (web|mcp|telegram)" >&2; exit 2 ;;
 esac
 LAUNCHER="./start-ubongo-$SVC.sh"
 PIDFILE="data/ubongo-$SVC.pid"
@@ -98,7 +98,7 @@ case "${1:-}" in
   restart) stop; start ;;
   status)  status ;;
   *)
-    echo "Usage: $0 start|stop|restart|status [web|mcp]" >&2
+    echo "Usage: $0 start|stop|restart|status [web|mcp|telegram]" >&2
     exit 2
     ;;
 esac

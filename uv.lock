@@ -2524,6 +2524,9 @@ dependencies = [
 mcp = [
     { name = "mcp" },
 ]
+telegram = [
+    { name = "httpx" },
+]
 web = [
     { name = "streamlit" },
 ]
@@ -2535,6 +2538,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", marker = "extra == 'telegram'", specifier = ">=0.27" },
     { name = "litellm", specifier = ">=1.50" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2" },
     { name = "python-dotenv", specifier = ">=1.0" },
@@ -2542,7 +2546,7 @@ requires-dist = [
     { name = "sqlite-vec", specifier = ">=0.1.6" },
     { name = "streamlit", marker = "extra == 'web'", specifier = ">=1.30" },
 ]
-provides-extras = ["web", "mcp"]
+provides-extras = ["web", "mcp", "telegram"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0" }]

@@ -151,6 +151,15 @@ mcp:
   #     risk: medium
   #     enabled: false
 
+# v0.5 phase 04: the Telegram channel (`ubongo telegram`). The bot token is a
+# secret and lives in .env (TELEGRAM_BOT_TOKEN), never here. allowed_user_ids
+# gates who may drive the bot — an EMPTY list denies everyone (fail-closed);
+# put your numeric Telegram user id(s) here. delivery_paused is the minimal
+# before_send policy switch (the quiet-hours engine is a later phase).
+telegram:
+  allowed_user_ids: []
+  delivery_paused: false
+
 logging:
   level: INFO
   format: json
