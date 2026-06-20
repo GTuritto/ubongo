@@ -160,6 +160,22 @@ telegram:
   allowed_user_ids: []
   delivery_paused: false
 
+# v0.5 phase 06: the standing-jobs daemon (proactive output). Boots PAUSED like
+# the GP / authoring loops; nothing speaks unprompted until `/jobs resume`. Job
+# definitions live in config/jobs.yaml; these are the daemon-wide knobs.
+#   quiet_hours    [start, end] local 24h hours; sends inside the window are held
+#                  (queued with a future deliver_after) and surface as a catch-up
+#   raise_ttl_hours a parked raise auto-declines (default-deny) after this long,
+#                  and the job retries on its next schedule
+#   max_runs_per_hour  rolling-hour throttle on job cycles
+#   cron           null = continuous (tick-paced); int = min seconds between cycles
+jobs:
+  enabled: true
+  cron: 60
+  max_runs_per_hour: 20
+  raise_ttl_hours: 24
+  quiet_hours: [23, 7]
+
 logging:
   level: INFO
   format: json

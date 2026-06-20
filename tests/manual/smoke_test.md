@@ -578,3 +578,20 @@ The fifth channel and the first cloud-relayed one ([Plans/v0.5-04-telegram.md](.
 | V.8 | ctl + service control (Pi) | `./ubongo-ctl.sh start telegram`, `status telegram`, `stop telegram` | start backgrounds the bot (pidfile `data/ubongo-telegram.pid`); status exits 0; stop terminates. (Needs the token; Pi/host with the extra.) |
 | V.9 | Live round-trip (Pi, needs token) | set `TELEGRAM_BOT_TOKEN` + your id in `allowed_user_ids`; `./start-ubongo-telegram.sh`; message the bot | an authorized chat gets a real composed reply; an unlisted user gets "Not authorized."; a destructive prompt gates and `/approve <id>` delivers; a connector first-encounter asks and is grantable from the phone. |
 | V.10 | Pytest passes | `uv run pytest` | 1010 passed (`test_telegram_service.py` + `test_telegram_bot.py` included). |
+
+## v0.5 Phase 06 — Standing jobs (proactive output)
+
+The first time Ubongo speaks unprompted ([Plans/v0.5-06-standing-jobs.md](../../Plans/v0.5-06-standing-jobs.md), [ADR-0021](../../docs/adr/0021-standing-jobs-proactive-output.md)): a fourth `DaemonLoop` runs config-defined jobs (`config/jobs.yaml`) on their schedule through `master.handle` and delivers via `notification_queue`. Boots PAUSED. A job's grant_bundle is approved once; a run reaching outside it parks and raises itself for approve-later. Quiet hours hold sends; a parked raise auto-declines after its TTL (default-deny). Most steps are headless (master.handle mocked); the live news digest needs a Connector news server + a Pi, like the other external checks.
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| W.1 | Boots paused | launch REPL (`jobs.enabled: true`); `/jobs status` | `status=paused`; the loop never runs unprompted on launch; the news-digest job listed as `disabled`. |
+| W.2 | Granted job delivers + narrates | `uv run pytest tests/test_standing_jobs.py -k delivered` | a due job runs through `master.handle`, enqueues a `proactive` row, records a `delivered` job_run, and reschedules `next_run`. |
+| W.3 | Missing-bundle job parks + raises | `uv run pytest tests/test_standing_jobs.py -k parks` | the gated turn writes a `pending_approvals` record; the job_run is `parked` with the `decision_id`; a `proactive-raise` row naming `/approve <id>` is enqueued with a TTL. |
+| W.4 | Approve-later resumes | (manual) `/jobs run news-digest`, then `/approve <id>` | the parked raise is approved through `master.resume_approval`; the answer is delivered (reuses Phase 03/05 — no re-implemented resume). |
+| W.5 | Quiet-hours hold + catch-up | `uv run pytest tests/test_standing_jobs.py -k "held or drain_skips"` | a send inside quiet hours is queued with a future `deliver_after` (not yet deliverable); it surfaces later via the drain / REPL launch catch-up. |
+| W.6 | Raise TTL auto-declines (default-deny) | `uv run pytest tests/test_standing_jobs.py -k sweep` | a parked raise past `raise_ttl_hours` is auto-declined (`master.resume_approval(id, "n")`), logged as a `skipped` job_run; the job retries next schedule. |
+| W.7 | Safety still gates a destructive job | (covered by the governance matrix; a destructive job turn hits rule 1) | the grant bundle never overrides the safety rules; a destructive turn gates regardless of grant. |
+| W.8 | Control + CLI surfaces | `/jobs pause\|resume\|off`; `ubongo jobs`, `ubongo jobs run news-digest` | status flips and persists; the CLI mirrors the REPL renderers; `run <unknown>` says "Unknown job". |
+| W.9 | Live news digest (Pi, needs a Connector news server) | enable `news-digest` + a `connector:news` server; `/jobs resume`; wait a cycle | the digest fetches via the Connector, delivers proactively (or to Telegram); revoking the grant parks + raises it. |
+| W.10 | Pytest passes | `uv run pytest` | 1039 passed (`test_jobs_state.py` + `test_standing_jobs.py` included). |

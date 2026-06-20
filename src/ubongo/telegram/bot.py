@@ -57,6 +57,11 @@ def run() -> int:
             for update in updates:
                 offset = max(offset, update.get("update_id", 0) + 1)
                 _handle_one(client, token, update)
+            # v0.5 phase 06: push any deliverable proactive messages (standing-job
+            # output, approval raises) to the allowed users. For a private chat
+            # the chat_id equals the user id. Quiet-hours holds + raise TTLs are
+            # already enforced by the queue's deliverability filter.
+            _drain_proactive(client, token, allowed)
 
 
 def channel_bootstrap() -> None:
@@ -92,6 +97,22 @@ def _handle_one(client, token: str, update: dict) -> None:
         logger.info("telegram_delivery_suppressed", extra={"user_id": user_id})
         return
     _send_message(client, token, chat_id, reply)
+
+
+def _drain_proactive(client, token: str, allowed) -> None:
+    """Send deliverable proactive rows to every allowed user (deny-all = none)."""
+    if not allowed:
+        return
+    from ubongo.jobs import delivery
+
+    def _send(row) -> None:
+        for user_id in allowed:
+            _send_message(client, token, user_id, f"[proactive] {row.content}")
+
+    try:
+        delivery.drain_proactive(_send)
+    except Exception:
+        logger.warning("telegram_proactive_drain_failed", exc_info=True)
 
 
 def _send_message(client, token: str, chat_id: int, text: str) -> None:
