@@ -147,6 +147,28 @@ _Avoid_: collision (use only in prose), merge conflict (git connotation).
 One categorized row in the unified `vault/system/audit.md` — `category ∈ governance | evolution | sync`. A human-readable record of every gated decision, promotion, and ingest; the file is the source of truth, `/audit` tails it.
 _Avoid_: log (bare), event (reserved for the event bus).
 
+## Development workflow (ForgeLoop, ADR-0023)
+
+**ForgeLoop**:
+The docs-first workflow standard this repo develops under, adopted in [ADR-0023](docs/adr/0023-adopt-forgeloop-workflow-standard.md). The Ubongo-adapted operating spine is [AGENTS.md](AGENTS.md); the source repo (compact core, full reference, template pack) lives at `/Volumes/giuseppeM1mini-External/Coding/ForgeLoop`. ForgeLoop governs how the _repo_ is changed, not how a turn runs.
+_Avoid_: forge (bare — reserved for the future harness mode, [Plans/forgeloop-harness.md](Plans/forgeloop-harness.md)), workflow (bare — that's a runtime `Workflow`).
+
+**Rigor mode**:
+ForgeLoop's ceremony tier for development work — `Docs-only | Mechanical | Low-risk | Standard | Strict | Release-critical` — declared in every plan header alongside the work classification. Renamed from ForgeLoop's "execution mode" because in Ubongo an **execution mode** is the WorkflowRunner's dispatch strategy (`sequential` … `speculative`); the two never mix. Trust-spine work (governance, sandbox, egress, approvals, grants, self-modification) is `Strict` minimum.
+_Avoid_: execution mode (for process ceremony), ceremony tier (say rigor mode).
+
+**Work classification**:
+The first line of any plan: `greenfield` (a new capability), `brownfield` (existing behavior to protect), or `maintenance` (repair, cleanup, docs, dependencies). Chosen before the rigor mode, because brownfield work carries compatibility duties greenfield work doesn't.
+_Avoid_: task type (that's the classifier's turn signal), category.
+
+**Tool mode**:
+Who builds and who critiques: `Single-tool` (one agent, separate passes), `Multi-tool` (one builds, another critiques), `Human-plus-tool` (Ubongo's default — the agent builds, Giuseppe reviews, approves gates, and merges). The role matters more than the vendor; note the mirror in the runtime, where Coding builds and Evaluator/Critic critique.
+_Avoid_: pairing, review mode.
+
+**Execution report**:
+The evidence a phase hands back. In Ubongo this is not a separate artifact: the PR body (what + why + verification), the checked QA criteria in the plan, and the phase's smoke section in [tests/manual/smoke_test.md](tests/manual/smoke_test.md) together are the execution report.
+_Avoid_: status update, summary (bare).
+
 ## Example dialogue
 
 > **Dev:** When the GP loop says a persona variant "beat baseline," what actually changes after I approve it?

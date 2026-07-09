@@ -609,3 +609,13 @@ The final trust-protocol phase ([Plans/v0.5-07-contract-identity.md](../../Plans
 | X.5 | Backup is secret-free | `ubongo backup /tmp/ub` | writes `…/ubongo-backup-<stamp>.tar.gz`; `tar tzf` shows `data/ubongo.db`, `vault/`, `config/` and **no** `.env` and no `data/profiles/`. |
 | X.6 | Restore re-arms grants | (with an active grant) `ubongo restore <archive>` into a fresh dir | files reproduced; "N grant(s) re-armed"; the restored DB's grants are `revoked`. `--keep-grants` preserves them. |
 | X.7 | Pytest passes | `uv run pytest` | 1053 passed (`test_governance_verbosity.py` + `test_backup.py` included). |
+
+## ForgeLoop adoption — docs integrity (docs/forgeloop-adoption)
+
+The workflow-standard adoption ([Plans/forgeloop-adoption.md](../../Plans/forgeloop-adoption.md), [ADR-0023](../../docs/adr/0023-adopt-forgeloop-workflow-standard.md)): the tool-agnostic `AGENTS.md` spine, the `docs/00-index.md` map, the rigor-mode rename in `CONTEXT.md`, and the plan-header requirement. Docs-only — no runtime surface; the checks are link integrity and a cold-load comprehension test.
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| Y.1 | Links resolve | `uv run python -c "import re,pathlib; files=['AGENTS.md','docs/00-index.md']; missing=[f'{f}: {t}' for f in files for t in re.findall(r'\]\(([^)#]+)', pathlib.Path(f).read_text()) if not t.startswith('http') and not (pathlib.Path(f).parent / t).exists()]; print(missing or 'all links resolve')"` | `all links resolve`. |
+| Y.2 | Cold-load test | fresh agent session given only `AGENTS.md` → `CONTEXT.md` → `docs/00-index.md`; ask for the active plan line, the current phase, and the approval gate rules | correct answers (via the PROJECT_STATUS.md pointer) without opening `UBONGO_BUILD.md` or the ForgeLoop reference. |
+| Y.3 | Runtime untouched | `git diff main --stat -- src/ tests/` on the branch (docs excepted: this playbook); `uv run pytest` | no `src/` changes; suite green with the same count as the previous phase. |

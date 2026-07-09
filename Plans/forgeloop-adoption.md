@@ -1,9 +1,11 @@
 # ForgeLoop adoption — the workflow standard (docs-only)
 
-Status: **PLAN, awaiting approval.** Docs-only phase, branch `docs/forgeloop-adoption` (no
+Status: **APPROVED 2026-07-09 (recommendations 1–3 as stated), implemented.** Docs-only phase, branch `docs/forgeloop-adoption` (no
 version bump — the branch does not match the `v0.X/NN` release pattern, same as the logo PRs).
 Part 1 of a two-part sequence; part 2 (Ubongo as the executable ForgeLoop harness) is drafted
 separately in [forgeloop-harness.md](forgeloop-harness.md) and is not sequenced by this plan.
+
+Work classification: maintenance. Rigor mode: Docs-only.
 
 Source: the ForgeLoop repo at `/Volumes/giuseppeM1mini-External/Coding/ForgeLoop` — a docs-first
 workflow standard (compact `FORGELOOP_CORE.md` spine, full reference in
@@ -90,19 +92,19 @@ Work classification: maintenance. Rigor mode: Docs-only (this plan eats its own 
 
 ### Acceptance criteria (exit = all checked)
 
-- [ ] **AC-1** `AGENTS.md` exists, under ~80 lines, tool-agnostic, and contains no rule that
+- [x] **AC-1** `AGENTS.md` exists, under ~80 lines, tool-agnostic, and contains no rule that
       contradicts `CLAUDE.md`; overlapping concepts link to their canonical home instead of
       restating it.
-- [ ] **AC-2** `docs/00-index.md` maps every top-level doc and marks historical docs as
+- [x] **AC-2** `docs/00-index.md` maps every top-level doc and marks historical docs as
       historical; every relative link in `AGENTS.md` and the index resolves.
-- [ ] **AC-3** `CONTEXT.md` defines the adopted terms and the rigor-mode rename; the term
+- [x] **AC-3** `CONTEXT.md` defines the adopted terms and the rigor-mode rename; the term
       "execution mode" remains unambiguous everywhere it appears.
-- [ ] **AC-4** ADR-0023 is accepted, carries the full reconciliation map, and records what was
+- [x] **AC-4** ADR-0023 is accepted, carries the full reconciliation map, and records what was
       deliberately *not* adopted.
-- [ ] **AC-5** The cold-load test passes: an agent given only `AGENTS.md` → `CONTEXT.md` →
+- [x] **AC-5** The cold-load test passes: an agent given only `AGENTS.md` → `CONTEXT.md` →
       `docs/00-index.md` can state the active plan line, the current phase, and the approval
       gate rules without reading `UBONGO_BUILD.md` or the full ForgeLoop reference.
-- [ ] **AC-6** No runtime file changed; the pytest suite is untouched and green.
+- [x] **AC-6** No runtime file changed; the pytest suite is untouched and green.
 
 ### Smoke addition
 

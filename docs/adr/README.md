@@ -44,4 +44,10 @@ verbosity as legible governance config (manual-first, GP-evolvable later under t
 floor) and `ubongo backup` (an instance is its data + config; no secrets, grants re-arm on a
 new envelope). 0022 closes the v0.5 trust protocol.
 
+After v0.5: **0023** adopts ForgeLoop as the development workflow standard — the
+tool-agnostic `AGENTS.md` spine, work classification and rigor modes in every plan
+header (renamed from ForgeLoop's "execution modes" to avoid colliding with the
+runner's dispatch modes), the `docs/00-index.md` map, native artifacts kept,
+templates referenced at the source rather than vendored.
+
 New decisions get the next number. Supersede rather than rewrite: set the old ADR's status to `Superseded by NNNN`.
