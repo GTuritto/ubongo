@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<!-- Ubongo console (v0.6 phase 00) — the bare event-log front. Later phases add
+     the live agent roster, the activity panel, the approval button, and sources.
+     For now it streams the turn's pipeline events as they fire. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Ubongo console</title>
+  <style>
+    body { font-family: ui-monospace, monospace; margin: 2rem; background: #0d0f12; color: #d6dae0; }
+    h1 { font-size: 1.1rem; color: #8fb7ff; }
+    #row { display: flex; gap: .5rem; margin-bottom: 1rem; }
+    #msg { flex: 1; padding: .5rem; background: #161a20; color: #d6dae0; border: 1px solid #2a313b; border-radius: 4px; }
+    select, button { padding: .5rem; background: #161a20; color: #d6dae0; border: 1px solid #2a313b; border-radius: 4px; }
+    button { cursor: pointer; }
+    #log { background: #11141a; border: 1px solid #2a313b; border-radius: 4px; padding: 1rem; white-space: pre-wrap; min-height: 12rem; }
+    .ev { color: #9fe0a0; } .agent { color: #ffcf7a; } .end { color: #8fb7ff; } .err { color: #ff8a8a; }
+  </style>
+</head>
+<body>
+  <h1>Ubongo console — live turn</h1>
+  <div id="row">
+    <input id="msg" placeholder="Ask Ubongo…" autofocus>
+    <select id="persona">
+      <option value="operator">operator</option>
+      <option value="architect">architect</option>
+      <option value="casual">casual</option>
+    </select>
+    <button id="send">Send</button>
+  </div>
+  <div id="log"></div>
+  <script>
+    const log = document.getElementById('log');
+    function line(text, cls) {
+      const d = document.createElement('div');
+      d.className = cls || 'ev'; d.textContent = text; log.appendChild(d);
+    }
+    async function send() {
+      const message = document.getElementById('msg').value.trim();
+      if (!message) return;
+      const persona = document.getElementById('persona').value;
+      log.textContent = '';
+      line('> ' + message);
+      let res;
+      try {
+        res = await fetch('/turn', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({message, persona})
+        });
+      } catch (e) { line('request failed: ' + e, 'err'); return; }
+      if (res.status === 409) { line('a turn is already streaming — wait for it', 'err'); return; }
+      const {stream_id, error} = await res.json();
+      if (error) { line(error, 'err'); return; }
+      const es = new EventSource('/stream/' + stream_id);
+      es.onmessage = (m) => {
+        const ev = JSON.parse(m.data);
+        if (ev.event === '__end__') {
+          line('— turn ' + (ev.ok ? 'done' : 'ended (not ok)') + (ev.error ? ': ' + ev.error : ''), 'end');
+          es.close(); return;
+        }
+        if (ev.event === '__error__') { line(ev.reason, 'err'); es.close(); return; }
+        if (ev.event && ev.event.startsWith('agent_')) {
+          line('  ' + ev.event + '  ' + (ev.agent || '') + (ev.ok === false ? ' (failed)' : ''), 'agent');
+        } else {
+          const extra = Object.entries(ev).filter(([k]) => k !== 'event').map(([k, v]) => k + '=' + v).join(' ');
+          line(ev.event + (extra ? '  ' + extra : ''));
+        }
+      };
+      es.onerror = () => { es.close(); };
+    }
+    document.getElementById('send').addEventListener('click', send);
+    document.getElementById('msg').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+  </script>
+</body>
+</html>

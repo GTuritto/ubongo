@@ -20,8 +20,8 @@ cd "$DIR"
 
 SVC="${2:-web}"
 case "$SVC" in
-  web|mcp|telegram) ;;
-  *) echo "Unknown service: $SVC (web|mcp|telegram)" >&2; exit 2 ;;
+  web|mcp|telegram|console) ;;
+  *) echo "Unknown service: $SVC (web|mcp|telegram|console)" >&2; exit 2 ;;
 esac
 LAUNCHER="./start-ubongo-$SVC.sh"
 PIDFILE="data/ubongo-$SVC.pid"
@@ -98,7 +98,7 @@ case "${1:-}" in
   restart) stop; start ;;
   status)  status ;;
   *)
-    echo "Usage: $0 start|stop|restart|status [web|mcp|telegram]" >&2
+    echo "Usage: $0 start|stop|restart|status [web|mcp|telegram|console]" >&2
     exit 2
     ;;
 esac
