@@ -17,7 +17,7 @@ Exercised by the 1,057-test suite (roughly one module per source module). The re
 
 ## What's missing or unfinished
 
-**(a) Planned but not built.** v0.6 Phases 01–05: the live **agent roster** panel (the headline feature), the **activity stream + response render**, **approval + sources** panels, **optional token-streaming** (the only phase touching `llm.py`), and **retiring Streamlit**. The console today is a bare event log, not the rich UI the plan describes.
+**(a) Planned but not built.** v0.6 Phases 01–05: the live **agent roster** panel (the headline feature), the **activity stream + response render**, **approval + sources** panels, **optional token-streaming** (the only phase touching `llm.py`), and **retiring Streamlit**. The console today is a bare event log, not the rich UI the plan describes. **Newly drafted and re-sequenced ahead of v0.6/01-05:** the **Signal channel** (a proposed **v0.7** line, [Plans/signal-channel.md](Plans/signal-channel.md), [ADR-0024](docs/adr/0024-signal-channel.md) Proposed) — the privacy-respecting messaging channel over a locally-run signal-cli sidecar, Telegram-pattern, dedicated number. Docs-only so far; nothing built.
 
 **(b) Partial or stubbed.** The console (Phase 00) is complete *as a transport* but unmerged. Standing jobs' news-digest example is config-shipped but **disabled** (needs a real Connector MCP news server; the live path is Pi-only). The Connector stays opt-in (`/mode connector_session`), grants are server-granular only, and verbosity is manual-only (the GP-evolvable `verbosity:<domain>` target is deferred).
 

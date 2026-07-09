@@ -50,4 +50,12 @@ header (renamed from ForgeLoop's "execution modes" to avoid colliding with the
 runner's dispatch modes), the `docs/00-index.md` map, native artifacts kept,
 templates referenced at the source rather than vendored.
 
+**0024** (Proposed — roadmap prep, not yet accepted) — the Signal channel: the
+privacy-respecting messaging channel Giuseppe prefers, an additive adapter over the one turn seam
+in the Telegram pattern (ADR-0020). The one structural difference is that the transport is a
+locally-run signal-cli sidecar spoken to over JSON-RPC, not a pip SDK; a dedicated number,
+fail-closed `allowed_numbers`, no secret in config. Drafted for the v0.7 line
+([Plans/signal-channel.md](../../Plans/signal-channel.md)); it stays Proposed until that line is
+approved and built, and it does *not* supersede 0020 (Telegram stays a peer channel).
+
 New decisions get the next number. Supersede rather than rewrite: set the old ADR's status to `Superseded by NNNN`.

@@ -22,6 +22,9 @@ One doc per phase or line under [Plans/](../Plans/); the active line and positio
 [PROJECT_STATUS.md](../PROJECT_STATUS.md).
 
 - Active line: [Plans/v0.6-live-console.md](../Plans/v0.6-live-console.md).
+- Proposed next line: [Plans/signal-channel.md](../Plans/signal-channel.md) — v0.7, the Signal
+  channel (draft, prioritized ahead of v0.6/01-05; see [ADR-0024](adr/0024-signal-channel.md),
+  Proposed).
 - Prior lines: [Plans/v0.5-trust-protocol.md](../Plans/v0.5-trust-protocol.md) (complete),
   the v0.1 per-phase plans (historical).
 - Draft, unsequenced: [Plans/pluggable-execution-backend.md](../Plans/pluggable-execution-backend.md),
