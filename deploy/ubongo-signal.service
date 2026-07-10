@@ -1,0 +1,32 @@
+# Ubongo Signal channel — systemd unit for the Pi / Ubuntu deployment.
+#
+# Same install recipe as deploy/ubongo-web.service (edit the two paths, copy to
+# ~/.config/systemd/user/, daemon-reload, enable --now, enable-linger). This
+# unit and `ubongo-ctl.sh ... signal` are alternatives; do not run both at once.
+#
+# This runs the Ubongo *channel*, which talks JSON-RPC to a signal-cli daemon.
+# Start the daemon separately (deploy/ubongo-signal-cli.service) — this unit
+# Wants+After it so the socket exists first. Auth is real: only the numbers in
+# settings.yaml::signal.allowed_numbers may use it (ADR-0024). There is NO token
+# in .env — the credential is signal-cli's own keystore. Cloud-relayed like
+# Telegram: behind the egress envelope, Signal's hosts must be allowlisted
+# (ADR-0017; see deploy/envelope/egress.hosts).
+
+[Unit]
+Description=Ubongo Signal channel
+After=network-online.target ubongo-signal-cli.service
+Wants=network-online.target ubongo-signal-cli.service
+
+[Service]
+Type=exec
+# EDIT these two paths to your install location:
+WorkingDirectory=/home/pi/ubongo
+ExecStart=/home/pi/ubongo/start-ubongo-signal.sh
+# The app loads .env itself via dotenv; this makes any UBONGO_* knobs visible to
+# the launcher too. (Signal needs no secret here.)
+EnvironmentFile=-/home/pi/ubongo/.env
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

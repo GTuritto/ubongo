@@ -35,13 +35,17 @@ pyhint() {
 WITH_WEB=0
 WITH_MCP=0
 WITH_TELEGRAM=0
+WITH_SIGNAL=0
 for arg in "$@"; do
   case "$arg" in
     --web) WITH_WEB=1 ;;
     --mcp) WITH_MCP=1 ;;
     --telegram) WITH_TELEGRAM=1 ;;
-    -h|--help) echo "Usage: ./install.sh [--web] [--mcp] [--telegram]"; exit 0 ;;
-    *) die "Unknown option: $arg (try --web / --mcp / --telegram)" ;;
+    # Signal has no pip extra — the client is pure stdlib; the only prerequisite
+    # is the external signal-cli daemon (see docs/signal-setup.md).
+    --signal) WITH_SIGNAL=1 ;;
+    -h|--help) echo "Usage: ./install.sh [--web] [--mcp] [--telegram] [--signal]"; exit 0 ;;
+    *) die "Unknown option: $arg (try --web / --mcp / --telegram / --signal)" ;;
   esac
 done
 
@@ -49,6 +53,7 @@ say "Installing Ubongo into: $APP_DIR"
 [ "$WITH_WEB" -eq 1 ] && say "Including the optional web UI (Streamlit)."
 [ "$WITH_MCP" -eq 1 ] && say "Including the optional MCP server."
 [ "$WITH_TELEGRAM" -eq 1 ] && say "Including the optional Telegram bot."
+[ "$WITH_SIGNAL" -eq 1 ] && say "Signal channel selected (no pip extra; needs the signal-cli daemon — see docs/signal-setup.md)."
 
 # --- 1. Python >= 3.11 ------------------------------------------------------
 command -v python3 >/dev/null 2>&1 || \
@@ -152,6 +157,7 @@ if [ "$WITH_TELEGRAM" -eq 1 ]; then
 else
   echo "    Telegram bot:     re-run ./install.sh --telegram, then ./start-ubongo-telegram.sh"
 fi
-echo "    Service control:  ./ubongo-ctl.sh start|stop|restart|status [web|mcp|telegram]"
+echo "    Signal channel:   set up signal-cli (docs/signal-setup.md) + signal.{account,socket,allowed_numbers} in settings.yaml, then ./start-ubongo-signal.sh"
+echo "    Service control:  ./ubongo-ctl.sh start|stop|restart|status [web|mcp|telegram|console|signal]"
 echo "    Profiler:         /profile in the REPL (or UBONGO_PROFILE=cpu|mem|all in .env)"
 echo "    User manual:      docs/USER_MANUAL.md"

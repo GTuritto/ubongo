@@ -28,7 +28,7 @@ The original v0.1 build spec is [UBONGO_BUILD.md](UBONGO_BUILD.md) (source of tr
 - A production system or SaaS product.
 - A multi-user or team tool. One user, single-flight.
 - A distributed system (no Docker-in-app, no Kubernetes, no Temporal, no Redis) and no orchestration framework (no LangGraph, no Ray) — hand-rolled asyncio plus an event bus.
-- Indiscriminately multi-channel. Channels are added deliberately, one additive adapter at a time. Telegram shipped in v0.5 (ADR-0020); the user prefers privacy-respecting platforms (Signal/Matrix over Meta/Facebook) — confirm the exact platform before building any new messaging channel.
+- Indiscriminately multi-channel. Channels are added deliberately, one additive adapter at a time. Telegram shipped in v0.5 (ADR-0020) and **Signal** — the preferred privacy-respecting platform — in v0.7 (ADR-0024, a signal-cli sidecar over JSON-RPC; Signal/Matrix over Meta/Facebook). Confirm the exact platform before building any new messaging channel.
 
 A feature with no home in a current `Plans/` phase or a prior accepted ADR is out of scope. The trust posture is single-user LAN / private-relay: no per-request auth or TLS in-app.
 

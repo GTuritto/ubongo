@@ -1,0 +1,32 @@
+# signal-cli daemon — the Signal transport sidecar (systemd unit).
+#
+# This is the external prerequisite for the Ubongo Signal channel: signal-cli
+# running in daemon mode, exposing a JSON-RPC UNIX socket that
+# deploy/ubongo-signal.service connects to. It is NOT part of the Ubongo Python
+# app — it is the signal-cli binary (a JVM process) holding the registered
+# number's keystore.
+#
+# One-time setup (register the dedicated number, solve the captcha, verify) is in
+# docs/signal-setup.md. This unit only runs the daemon after registration.
+#
+# Install: edit ACCOUNT, the socket path, and the signal-cli path below; copy to
+# ~/.config/systemd/user/; daemon-reload; enable --now. The socket path here MUST
+# match settings.yaml::signal.socket.
+
+[Unit]
+Description=signal-cli daemon (Signal transport for Ubongo)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+# EDIT: the registered dedicated number, the socket path, and signal-cli's path.
+Environment=SIGNAL_ACCOUNT=+15550000000
+Environment=SIGNAL_SOCKET=/run/ubongo/signal.sock
+RuntimeDirectory=ubongo
+ExecStart=/usr/local/bin/signal-cli -a ${SIGNAL_ACCOUNT} daemon --socket ${SIGNAL_SOCKET}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

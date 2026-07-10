@@ -87,6 +87,24 @@ unlisted sender gets "Not authorized." and no turn runs.
 If the daemon socket is missing or `signal.socket` is unset, `ubongo signal`
 prints a hint and exits with code 1 (no traceback).
 
-> **Scope (Phase 00):** a normal turn round-trips. Approve-later over Signal (the
-> `/approve|/decline|/pending|/grants` command router), the `[signal]` extra, and
-> the ctl/systemd ops surfaces land in Phase 01.
+## Testing without a real number (the deferred live check)
+
+The full live round-trip has been deferred (registering a dedicated number is
+setup-heavy). Two options for when we do it:
+
+- **[Mock-Signal-Server](https://github.com/signalapp/Mock-Signal-Server)** —
+  Signal's official mock service. It can stand in for Signal's servers so the
+  signal-cli daemon + this channel can be exercised end to end **without
+  registering a real number** — the most promising path to an automated or
+  low-setup E2E check. (To evaluate when we pick the live test back up.)
+- A real dedicated number per the steps above — the production path.
+
+Ubongo's own logic (auth, the command router, approve-later, the transport
+parse/frame) is already unit-tested; the mock/live check covers the daemon socket
+pump these tests can't.
+
+> **Related (not this channel):** signal-cli is also packaged as MCP servers
+> (e.g. `mcpmarket.com/server/signal-cli`, `lobehub.com/mcp/foxl-ai-signal-cli`).
+> Those expose signal-cli as *tools* and fit Ubongo's **outbound Connector** door
+> (Ubongo *sending* Signal messages), not this **inbound channel** (driving Ubongo
+> *from* Signal). A possible later complement, not a replacement for this channel.
