@@ -48,4 +48,17 @@ The **v0.6 live-console** line opens with **0023**: per-turn event streaming ove
 (a background-task turn whose named events forward to the browser over SSE), single-flight,
 LAN no-auth — the transport the live agent-roster/activity/approval/sources panels ride on.
 
-New decisions get the next number. Supersede rather than rewrite: set the old ADR's status to `Superseded by NNNN`.
+## ForgeLoop workflow decisions (FL- series)
+
+ForgeLoop workflow/process decisions use a separate **FL-** namespace, kept out of the numeric
+product/architecture series above so a decision about *how the repo is changed* never collides
+with a decision about *what the product is* (as 0023 nearly did). **FL-0001** adopts ForgeLoop as
+the development workflow standard — the tool-agnostic `AGENTS.md` spine, work classification and
+rigor modes in every plan header (renamed from ForgeLoop's "execution modes" to avoid colliding
+with the runner's dispatch modes), the `docs/00-index.md` map, native artifacts kept, templates
+referenced at the source rather than vendored. Later ForgeLoop decisions (e.g. the executable
+harness) continue FL-0002, FL-0003, …
+
+New decisions get the next number in the appropriate series (numeric for product/architecture,
+FL- for ForgeLoop workflow). Supersede rather than rewrite: set the old ADR's status to
+`Superseded by NNNN`.

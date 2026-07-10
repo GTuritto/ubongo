@@ -623,3 +623,13 @@ Opens the v0.6 live-console line ([Plans/v0.6-00-streaming-seam.md](../../Plans/
 | Y.5 | Core import clean | (without the extra) `python -c "from ubongo.web.console import stream_bridge"` | imports fine; FastAPI/uvicorn are imported only under `web/console/app.py`. |
 | Y.6 | Live browser stream (LAN) | `uv sync --extra console`; `ubongo console`; open `http://<host>:8770`, send a turn | the page streams `after_classify → after_plan → agent_* → after_send → end` live; a full governed turn (shows in `/trace`, the queue, the daily note). |
 | Y.7 | Pytest passes | `uv run pytest` | 1057 passed (`test_stream_bridge.py` included). |
+
+## ForgeLoop adoption — docs integrity (docs/forgeloop-adoption, FL-0001)
+
+The workflow-standard adoption ([Plans/forgeloop-adoption.md](../../Plans/forgeloop-adoption.md), [ADR-FL-0001](../../docs/adr/FL-0001-adopt-forgeloop-workflow-standard.md)): the tool-agnostic `AGENTS.md` spine, the `docs/00-index.md` map, the rigor-mode rename in `CONTEXT.md`, and the plan-header requirement. Docs-only — no runtime surface; the checks are link integrity and a cold-load comprehension test.
+
+| # | Step | Command | Expected |
+| --- | --- | --- | --- |
+| Z.1 | Links resolve | `uv run python -c "import re,pathlib; files=['AGENTS.md','docs/00-index.md']; missing=[f'{f}: {t}' for f in files for t in re.findall(r'\]\(([^)#]+)', pathlib.Path(f).read_text()) if not t.startswith('http') and not (pathlib.Path(f).parent / t).exists()]; print(missing or 'all links resolve')"` | `all links resolve`. |
+| Z.2 | Cold-load test | fresh agent session given only `AGENTS.md` → `CONTEXT.md` → `docs/00-index.md`; ask for the active plan line, the current phase, and the approval gate rules | correct answers (via the PROJECT_STATUS.md pointer) without opening `UBONGO_BUILD.md` or the ForgeLoop reference. |
+| Z.3 | Runtime untouched | `git diff main --stat -- src/ tests/` on the branch (docs excepted: this playbook); `uv run pytest` | no `src/` changes; suite green with the same count as the previous phase. |

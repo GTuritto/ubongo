@@ -1,28 +1,36 @@
 # Ubongo — Context for Claude Code Sessions
 
-Ubongo is a personal, intent-routed AI mind for one user (Giuseppe Turitto), running locally as a CLI. v0.1 is **a multi-agent orchestration platform** and **a self-improving runtime** in one package: a Master Agent dispatches a fleet of disposable worker agents across six execution modes; a governance layer gates risk; a continuous Genetic Programming loop evolves prompts, routing rules, tool chains, and retry strategies, with human approval before any promotion. CLI is the v0.1 channel (REPL plus one-shot); web, MCP, and (v0.5) Telegram channels were added post-v0.1 as additive adapters over the one turn seam.
+Ubongo is a personal, intent-routed AI mind for one user (Giuseppe Turitto), running locally and CLI-first. It is **a multi-agent orchestration platform** and **a self-improving runtime** in one package: a Master Agent runs every turn through a fixed governed pipeline, dispatching a fleet of disposable worker agents across six execution modes; a governance layer gates risk and reversibility; a continuous Genetic Programming loop evolves prompts and routing/tool-chain/retry config, and a second loop drafts new skills — both behind a human approval boundary. What began as a CLI is now reachable over **six additive channels** (REPL, one-shot, Streamlit web, MCP server, Telegram, and a streaming browser console), each a thin adapter over one turn seam. Nothing the system produces about itself, and no new external reach, goes live without explicit human approval.
 
-## Status
+## Status and Source of Truth
 
-See [STATUS.md](STATUS.md) for the phase-by-phase changelog. **v0.1 is COMPLETE** (certified 2026-06-04) — all 22 phases (0–21) built and merged to `main`, all 26 v0.1 acceptance criteria met. Post-v0.1 layers on `main` as of 2026-06-11: the web UI (v0.1.1), self-authored skills (v0.1.2), the local profiler + service control (v0.1.3, ADR-0014), the MCP server channel (v0.1.4, ADR-0015), the MCP client / Connector agent (v0.1.5, ADR-0016), and the second architecture-deepening pass (candidates 14-18). Current size ~15,400 LOC under `src/` (just over the soft target — see STATE.md), 960 / 960 pytest green. Every tier is done: Foundation (0–7), Multi-Agent (8–12, ten workers + all six execution modes), Self-Healing (13, the repair ladder), Governance (14–15, the decision matrix + interactive approval gate + hardened sandbox), Self-Improvement (16–19, the closed human-approved GP loop over prompts and routing/tool-chain/retry config with live swap), and Wiki Memory + Polish (20–21, sqlite-vec semantic recall + vault-link graph + bidirectional vault sync + unified audit). The next work is **v0.2 (Telegram)** — additive on the existing event/queue seams, out of v0.1 scope. The build ran across 22 phases with per-phase testing plans in [UBONGO_BUILD.md](UBONGO_BUILD.md).
+The living state docs are regenerated and are the freshest truth — read these first:
 
-The build specification is [UBONGO_BUILD.md](UBONGO_BUILD.md). Treat it as the source of truth for v0.1 scope. The conceptual origin is [UBONGO_VISION.md](UBONGO_VISION.md) — the design exposition that v0.1 now realizes.
+- [PROJECT_STATUS.md](PROJECT_STATUS.md) — fast catch-up: plan position, what works, what's missing.
+- [PROJECT_STATE.md](PROJECT_STATE.md) — full state for "what to build next" strategy.
+- [PROJECT_ARCHITECTURE.md](PROJECT_ARCHITECTURE.md) — component map, seams, decisions, the core invariant.
+- [CONTEXT.md](CONTEXT.md) — domain glossary. [docs/adr/](docs/adr/) — 23 accepted ADRs, the settled decisions.
+- [STATUS.md](STATUS.md) / [STATE.md](STATE.md) — the v0.1-era phase changelog. **Historical** (last current at v0.1.5); use the `PROJECT_*` docs for anything after v0.1.
+
+Where we are (verify the exact number in PROJECT_STATUS.md — versions move fast): **v0.1** (the 22-phase CLI build) is certified on `main`, plus a post-v0.1 layer (web UI, self-authored skills, profiler, MCP server, MCP client / Connector). **v0.5 — the trust protocol** is complete and merged on `main` (outer egress envelope, store split, resumable approval seam, Telegram, grant registry, standing jobs, contract/identity). The active line is **v0.6 — the live console** ([Plans/v0.6-live-console.md](Plans/v0.6-live-console.md)), a six-phase streaming-UI plan; Phase 00 (the streaming seam) is built and in review.
+
+The original v0.1 build spec is [UBONGO_BUILD.md](UBONGO_BUILD.md) (source of truth for v0.1 scope only); the conceptual origin is [UBONGO_VISION.md](UBONGO_VISION.md). Work after v0.1 is plan-driven under [Plans/](Plans/), one numbered phase line per plan.
 
 ## What Ubongo Is
 
-- A multi-agent orchestration platform (Master Agent + worker agents: Research, Coding, Evaluator, Repair, Memory, Critic, Execution, Persona).
-- A self-improving runtime (continuous GP loop with sandboxed evaluation and human-approved promotions).
-- A CLI (REPL + one-shot) for one user, locally.
-- A memory-centric system (SQLite canonical, Markdown vault projected, embeddings indexed via `sqlite-vec`, vault-link graph).
+- A multi-agent orchestration platform (Master Agent + workers: Research, Coding, Evaluator, Critic, Execution, Repair, Memory, three Personas, and the Connector).
+- A self-improving runtime (a continuous GP loop over prompts/config and an authoring loop over new skills, both sandboxed and human-approved).
+- A six-channel, CLI-first system for one user, locally (REPL + one-shot, plus web, MCP, Telegram, and the streaming console as additive adapters).
+- A memory-centric system (SQLite canonical, Markdown vault projected, embeddings indexed via `sqlite-vec`, vault-link graph), with one writer.
 
-## What Ubongo Is Not (v0.1)
+## What Ubongo Is Not
 
-- A multi-channel system. CLI only in v0.1; Telegram is v0.2; Slack/WhatsApp/Discord/web/voice are not on the roadmap.
 - A production system or SaaS product.
-- A multi-user or team tool.
-- A distributed system (no Docker, no Kubernetes, no Temporal, no Redis).
+- A multi-user or team tool. One user, single-flight.
+- A distributed system (no Docker-in-app, no Kubernetes, no Temporal, no Redis) and no orchestration framework (no LangGraph, no Ray) — hand-rolled asyncio plus an event bus.
+- Indiscriminately multi-channel. Channels are added deliberately, one additive adapter at a time. Telegram shipped in v0.5 (ADR-0020); the user prefers privacy-respecting platforms (Signal/Matrix over Meta/Facebook) — confirm the exact platform before building any new messaging channel.
 
-If a feature isn't explicitly listed in `UBONGO_BUILD.md`'s 22 phases or its acceptance criteria, it's out of scope for v0.1.
+A feature with no home in a current `Plans/` phase or a prior accepted ADR is out of scope. The trust posture is single-user LAN / private-relay: no per-request auth or TLS in-app.
 
 ## Conventions
 
@@ -34,61 +42,62 @@ User communication preferences (also in `config/UBONGO.md`):
 - No emojis unless the user uses them first.
 - Minimal markdown in conversational output.
 
+## Development Workflow: ForgeLoop
+
+The repo develops under the ForgeLoop standard (ADR-FL-0001). The tool-agnostic operating spine is [AGENTS.md](AGENTS.md) — source-of-truth order, work classification, rigor modes, tool modes, the non-negotiables — and the documentation map is [docs/00-index.md](docs/00-index.md). Every new plan states its work classification and rigor mode in its header; trust-spine work is `Strict` minimum. "Rigor mode" is ForgeLoop's ceremony tier, not the WorkflowRunner's six execution modes (the rename is recorded in [CONTEXT.md](CONTEXT.md)).
+
 ## Architectural Rules
 
-- **Master Agent orchestrates**: classify → plan → execute (workflow runner) → governance gate → compose → enqueue. No bypass paths.
-- **Memory Agent is the only writer** to durable memory (SQLite, vault, embeddings). Other agents return findings; Memory Agent commits.
-- **Every outbound message goes through `notification_queue`**, even synchronous CLI responses. Telegram (v0.2) and proactive jobs (v0.3) inherit this.
+- **One turn seam, no bypass.** Every turn, from every channel, enters through `channel.run_turn` (`bootstrap()` loads config/logging once; the channel layer is presentation only). No channel handles a turn its own way.
+- **Master Agent orchestrates**: classify → plan → execute (workflow runner) → govern → compose → commit → enqueue. No bypass paths.
+- **Memory Agent is the only writer** to durable memory (SQLite, vault, embeddings, and the subsystem state tables). Other agents return findings; Memory Agent commits.
+- **Every outbound message goes through `notification_queue`**, even synchronous CLI replies. Telegram, the streaming console, and proactive standing-jobs output all inherit this seam.
 - **Every workflow / agent run / governance decision / evolution variant is persisted**. Tracing is not optional.
 - **Secrets only in `.env`**. Config never contains secrets.
-- **New behavior in v0.2+ ships as event handlers** registered on the named events (`before_classify`, `after_classify`, `before_plan`, `after_plan`, `before_execute`, `after_execute`, `before_govern`, `after_govern`, `before_compose`, `after_compose`, `before_send`, `after_send`, `agent_started`, `agent_completed`, `agent_failed`, `evolution_generation`, `evolution_promotion`).
-- **New tools default to CLI scripts invoked through the constrained-bash skill**, not first-class tool definitions. First-class tools require justification.
-- **Shell-execution safety lives in `src/ubongo/sandbox.py`, not in `SKILL.md` bodies.** A SKILL.md body is markdown the LLM-side reads; anything that affects what runs on the user's machine must be enforced in code that the LLM cannot rewrite. Phase 11 ships an explicit allowlist + no shell metacharacters + no path traversal + restricted PATH + repo-root cwd + 10s timeout. Phase 15 will harden further; the seam stays in one module.
-- **Composer attribute on agents (Phase 10).** `WorkflowResult.text` comes from the last agent whose class declares `composer = True` (read via `getattr(agent, "composer", False)`). Validators (Evaluator, Critic) and helpers (Research, Execution) contribute `prior_findings` without claiming the response.
-- **No Telegram-specific code in v0.1.** When Telegram lands in v0.2, it should be additive: a new transport, a `before_send` policy handler, restored `allowed_user_ids` auth.
-- **Hand-rolled orchestration.** No LangGraph, no Temporal, no Ray. Plain Python with `asyncio` and an event bus.
-- **GP-driven self-improvement is approved, not autonomous.** The loop runs in the background, but no variant promotes to production without explicit user approval via `/improvements`.
+- **New channels are additive over `channel.run_turn`.** New behavior ships as event handlers registered on the named events in `src/ubongo/events.py` (canonical list there) — `before_classify` / `after_classify`, `before_plan` / `after_plan`, `before_execute` / `after_execute`, `before_govern` / `after_govern`, `before_compose` / `after_compose`, `before_send` / `after_send`, `before_llm` / `after_llm`, `agent_started` / `agent_completed` / `agent_failed`, `evolution_generation` / `evolution_promotion`. The console's streaming and standing jobs' proactive policy are both event handlers, not pipeline edits.
+- **New tools default to CLI scripts invoked through the constrained-bash skill**, not first-class tool definitions. First-class tools require justification (deferred by ADR-0016).
+- **External reach is one door each way.** Inbound is the MCP server (`mcp/server.py`); outbound is the **Connector agent only** (`agents/connector.py` over `mcp/client.py`, ADR-0016) — opt-in via `/mode connector_session`, scored irreversible, risk per server.
+- **Shell-execution safety lives in `src/ubongo/sandbox.py`, not in `SKILL.md` bodies** (ADR-0005). A SKILL.md body is markdown the LLM-side reads; anything that affects what runs on the user's machine is enforced in code the LLM cannot rewrite — explicit allowlist, no shell metacharacters, no path traversal, empty child PATH, repo-root cwd, 10s timeout. The seam stays in one module; the allowlist is a human-only change.
+- **Composer attribute on agents.** `WorkflowResult.text` comes from the last agent whose class declares `composer = True` (read via `getattr(agent, "composer", False)`). Validators (Evaluator, Critic) and helpers (Research, Execution, Connector) contribute `prior_findings` without claiming the response.
+- **The trust spine.** Egress control sits below the app (the outer envelope, ADR-0017: rootless Podman + nftables on Linux/Pi). A gated turn is a persisted, resumable `pending_approvals` record approvable from any channel (ADR-0018). Standing consent is the grant registry, checked *after* the safety rules (ADR-0019).
+- **Hand-rolled orchestration.** No LangGraph, no Temporal, no Ray. Plain Python with `asyncio` and an event bus (ADR-0001).
+- **Self-modification is approved, not autonomous.** The GP loop and the authoring loop run in the background but boot **paused**; no variant promotes and no authored skill becomes discoverable without explicit user approval (`/improvements`, `/skill-candidates`). The four daemons share one `DaemonLoop` lifecycle.
+
+## The Core Invariant
+
+One governed seam per kind of consequence, with a human gate on self-modification and on first external reach. Turns through `master.handle`; durable writes through the Memory Agent; outbound through the queue; external calls through the Connector; shell through `sandbox.py`; approvals through the one `pending_approvals` record. A change that routes around any of these seams, or lets a loop promote its own output, violates the architecture's reason for existing.
 
 ## Branch Workflow
 
-Every implementation phase (Phase 0 through Phase 21) is built on its own branch:
+Every implementation phase is built on its own branch, off the latest `main`:
 
-- Branch name: `phase-N-<short-name>` (e.g., `phase-0-skeleton`, `phase-8-master`, `phase-18-gp-loop`). Names are listed in [UBONGO_BUILD.md](UBONGO_BUILD.md) per phase.
-- Branch off the latest `main` at phase start.
-- **Open the GitHub PR as a draft right after the first commit on the branch** (typically the `Plan: ...` commit), base `main`, title `Phase N — <Phase title>`, body links the plan in `Plans/`. Keep it draft until the phase's testing plan + smoke test pass; then mark ready for review. The PR is the live review surface that grows commit-by-commit, not a forum that materializes only at the end.
+- Branch name: `vX.Y/NN-<short-name>` (e.g. `v0.6/00-streaming-seam`, `v0.5/04-telegram`). The version rides the branch name (`v0.X/NN-name` → `0.X.NN`) and CI bumps it on merge (`release.sh` / `.github/workflows/release.yml` tags from `VERSION` on `main`). Earlier v0.1 phases used `phase-N-<name>`; that scheme is historical.
+- **Open the GitHub PR as a draft right after the first commit on the branch** (typically the `Plan: ...` commit), base `main`, title for the phase, body linking the plan in `Plans/`. Keep it draft until the phase's testing plan + smoke test pass; then mark ready. The PR is the live review surface that grows commit-by-commit.
 - All commits for that phase land on the branch. Do not commit to `main` from a phase in progress.
-- The user reviews when the phase's testing plan and smoke test pass.
-- The user merges the branch into `main`. Do not merge yourself.
-- Don't start phase N+1 until phase N's branch is merged.
+- "Prepare a new phase" is a docs-only PR: branch, plan in `Plans/` (with its smoke test), and a draft PR — no implementation until the plan is approved.
+- The user reviews when the phase's testing plan and smoke test pass, and the user merges the branch into `main`. Do not merge yourself. ("Merge the PR" means merge the branch into `main`.)
+- Don't start phase N+1 until phase N's branch is merged. Bump the version before merge.
 
-## Build Phases (overview)
+## Plans and Phases
 
-22 phases organized into 6 tiers; full detail in [UBONGO_BUILD.md](UBONGO_BUILD.md).
-
-- **Tier 1 — Foundation (0–7):** skeleton, CLI echo, LLM, classifier, memory, vault, skills, queue.
-- **Tier 2 — Multi-Agent System (8–12):** Master Agent, workers (Research/Memory, then Evaluator/Critic/Personas, then Coding/Execution/Repair), all six execution modes.
-- **Tier 3 — Self-Healing (13):** Repair Agent activated.
-- **Tier 4 — Governance (14–15):** risk + confidence scoring, approval gates + sandboxing.
-- **Tier 5 — Self-Improvement (16–19):** variant generation, sandboxed evaluation + fitness, GP loop, target expansion + promotions.
-- **Tier 6 — Wiki Memory + Polish (20–21):** embeddings + graph, bidirectional vault sync + audit.
-
-Don't start Phase N+1 until Phase N's testing plan and smoke test pass and the branch is merged.
+v0.1 was 22 phases across six tiers (Foundation, Multi-Agent, Self-Healing, Governance, Self-Improvement, Wiki Memory + Polish) — full detail in [UBONGO_BUILD.md](UBONGO_BUILD.md), historical changelog in [STATUS.md](STATUS.md). Everything since is plan-driven: each plan in [Plans/](Plans/) is a numbered phase line (v0.5 trust protocol, v0.6 live console). For the active line and current position, read [PROJECT_STATUS.md](PROJECT_STATUS.md) and the relevant `Plans/v0.X-*.md`. Phases are strictly ordered; don't start N+1 until N is merged.
 
 ## LOC Budget
 
-Soft target: under ~15,000 lines of Python (excluding tests). The full multi-agent + GP scope makes the prior 2500-line target obsolete; 15k is realistic. If significantly over, the spec is doing too much and the answer is to cut, not to expand the budget.
+Soft target: under ~15,000 lines of Python (excluding tests). The codebase is now **~17,400 LOC, roughly 16% over** — the full multi-agent + GP + trust + multi-channel scope has outgrown the target, and the rule is "cut, don't expand," not raise the ceiling. The one scheduled clawback is v0.6 Phase 05 (retire Streamlit). Treat new subsystems as budget pressure: a new *transport* over an existing seam is cheap; a new *subsystem* widens the gap and needs justification.
 
 ## Testing
 
-Each phase has a testing plan with concrete scenarios in [UBONGO_BUILD.md](UBONGO_BUILD.md). End-to-end manual testability after every phase: the cumulative playbook lives at `tests/manual/smoke_test.md` and grows phase by phase. Pytest tests for each module are listed in the spec's `tests/` layout. Held-out conversation samples for evolution evaluation live at `tests/manual/fixtures/sample_conversations.json` (curated, anonymized).
+Each phase has a testing plan with concrete scenarios in its `Plans/` doc (v0.1's are in [UBONGO_BUILD.md](UBONGO_BUILD.md)). End-to-end manual testability after every phase: the cumulative playbook lives at `tests/manual/smoke_test.md` and grows phase by phase. Pytest covers roughly one module per source module (~1,057 tests). Held-out conversation samples for evolution evaluation live at `tests/manual/fixtures/sample_conversations.json`. Note: enforcement increasingly lives *outside* the suite — the egress envelope and the live relays (Telegram, console SSE) are real boundaries pytest cannot see; a green suite certifies less of the trust/operational posture than it did at v0.1.
 
 ## Development Environment
 
-- OS: macOS 25.4.0
+- OS: macOS (Darwin 25.5.0)
 - Shell: /bin/zsh
 - Path format: Unix
 - File system: Case-sensitive (default)
 - Line endings: LF
+- Python 3.11+ under uv.
 
 ## Agent skills
 
