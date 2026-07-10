@@ -1,11 +1,11 @@
 # 0024 — Signal: the privacy-respecting messaging channel over a signal-cli sidecar
 
-Status: Proposed
-Date: 2026-07-09
+Status: Accepted
+Date: 2026-07-10
 
-> Draft ADR for roadmap prep. Records the *intended* decision so the plan
-> ([Plans/signal-channel.md](../../Plans/signal-channel.md)) has a decision home; it is not
-> Accepted until the v0.7 line is approved and built. Do not treat as settled.
+> Accepted with the v0.7 line: Phase 00 (the signal-cli sidecar + turn round-trip) and Phase 01
+> (the command router + approve-later over Signal, ops, egress, and this acceptance) are built
+> and merged. The plan is [Plans/signal-channel.md](../../Plans/signal-channel.md).
 
 ## Context
 
@@ -21,7 +21,7 @@ registry (ADR-0019), and the `before_send` policy seam. Telegram proved the patt
 signal-cli is a **separate process**, not a Python SDK — which is the one thing that makes Signal
 structurally different from Telegram.
 
-## Decision (proposed)
+## Decision
 
 Signal ships as an additive adapter, structured exactly like the Telegram channel (ADR-0020),
 with the transport pointed at a locally-run signal-cli daemon:

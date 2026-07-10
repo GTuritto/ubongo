@@ -4,14 +4,16 @@
 # background services with a pidfile and a log file each (the interactive REPL
 # stays foreground; you leave it with /exit).
 #
-#   ./ubongo-ctl.sh start [web|mcp|telegram]  # background a service (default: web)
-#   ./ubongo-ctl.sh stop [web|mcp|telegram]   # TERM, wait up to 10s, KILL fallback
-#   ./ubongo-ctl.sh restart [web|mcp|telegram]
-#   ./ubongo-ctl.sh status [web|mcp|telegram] # exit 0 when running, 1 when not
+#   ./ubongo-ctl.sh start [web|mcp|telegram|console|signal]  # background a service (default: web)
+#   ./ubongo-ctl.sh stop [web|mcp|telegram|console|signal]   # TERM, wait up to 10s, KILL fallback
+#   ./ubongo-ctl.sh restart [web|mcp|telegram|console|signal]
+#   ./ubongo-ctl.sh status [web|mcp|telegram|console|signal] # exit 0 when running, 1 when not
 #
-# Services: web (Streamlit chat page, start-ubongo-web.sh) and mcp (the MCP
-# server over streamable HTTP, start-ubongo-mcp.sh). For reboot-survival on
-# the Pi/Ubuntu box, prefer the systemd units in deploy/; this script is the
+# Services: web (Streamlit chat page), mcp (the MCP server over streamable HTTP),
+# telegram/console/signal (the messaging + streaming channels), each via its
+# start-ubongo-<svc>.sh. The Signal channel also needs the signal-cli daemon
+# running (deploy/ubongo-signal-cli.service). For reboot-survival on the
+# Pi/Ubuntu box, prefer the systemd units in deploy/; this script is the
 # everywhere-else alternative.
 set -euo pipefail
 
@@ -20,8 +22,8 @@ cd "$DIR"
 
 SVC="${2:-web}"
 case "$SVC" in
-  web|mcp|telegram|console) ;;
-  *) echo "Unknown service: $SVC (web|mcp|telegram|console)" >&2; exit 2 ;;
+  web|mcp|telegram|console|signal) ;;
+  *) echo "Unknown service: $SVC (web|mcp|telegram|console|signal)" >&2; exit 2 ;;
 esac
 LAUNCHER="./start-ubongo-$SVC.sh"
 PIDFILE="data/ubongo-$SVC.pid"
@@ -98,7 +100,7 @@ case "${1:-}" in
   restart) stop; start ;;
   status)  status ;;
   *)
-    echo "Usage: $0 start|stop|restart|status [web|mcp|telegram|console]" >&2
+    echo "Usage: $0 start|stop|restart|status [web|mcp|telegram|console|signal]" >&2
     exit 2
     ;;
 esac

@@ -11,3 +11,12 @@ openrouter.ai
 # The Telegram bot channel (v0.5 phase 04), when `ubongo telegram` is running.
 # Remove this line if you don't run the Telegram bot.
 api.telegram.org
+
+# The Signal channel (v0.7). It is the signal-cli *daemon* (not Ubongo) that
+# reaches these — the daemon runs inside the envelope, so its hosts are the
+# enumerable answer (ADR-0024/0017). Remove these lines if you don't run Signal.
+chat.signal.org
+storage.signal.org
+cdn.signal.org
+cdn2.signal.org
+cdn3.signal.org
