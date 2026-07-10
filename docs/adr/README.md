@@ -48,6 +48,14 @@ The **v0.6 live-console** line opens with **0023**: per-turn event streaming ove
 (a background-task turn whose named events forward to the browser over SSE), single-flight,
 LAN no-auth — the transport the live agent-roster/activity/approval/sources panels ride on.
 
+**0024** (Proposed — roadmap prep, not yet accepted) — the Signal channel: the
+privacy-respecting messaging channel Giuseppe prefers, an additive adapter over the one turn seam
+in the Telegram pattern (ADR-0020). The one structural difference is that the transport is a
+locally-run signal-cli sidecar spoken to over JSON-RPC, not a pip SDK; a dedicated number,
+fail-closed `allowed_numbers`, no secret in config. Drafted for the v0.7 line
+([Plans/signal-channel.md](../../Plans/signal-channel.md)); it stays Proposed until that line is
+approved and built, and it does *not* supersede 0020 (Telegram stays a peer channel).
+
 ## ForgeLoop workflow decisions (FL- series)
 
 ForgeLoop workflow/process decisions use a separate **FL-** namespace, kept out of the numeric
