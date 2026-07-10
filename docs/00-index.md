@@ -24,8 +24,10 @@ One doc per phase or line under [Plans/](../Plans/); the active line and positio
 - Active line: [Plans/v0.6-live-console.md](../Plans/v0.6-live-console.md).
 - Prior lines: [Plans/v0.5-trust-protocol.md](../Plans/v0.5-trust-protocol.md) (complete),
   the v0.1 per-phase plans (historical).
-- Draft, unsequenced: [Plans/pluggable-execution-backend.md](../Plans/pluggable-execution-backend.md),
-  [Plans/forgeloop-harness.md](../Plans/forgeloop-harness.md).
+- Finalized for approval (v0.8 candidate, ForgeLoop part 2):
+  [Plans/forgeloop-harness.md](../Plans/forgeloop-harness.md) — the executable forge; gated on
+  part 1 (#57) merging and the v0.6 Phase 05 clawback.
+- Draft, unsequenced: [Plans/pluggable-execution-backend.md](../Plans/pluggable-execution-backend.md).
 
 ## Decisions
 
