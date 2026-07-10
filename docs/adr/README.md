@@ -44,11 +44,9 @@ verbosity as legible governance config (manual-first, GP-evolvable later under t
 floor) and `ubongo backup` (an instance is its data + config; no secrets, grants re-arm on a
 new envelope). 0022 closes the v0.5 trust protocol.
 
-After v0.5: **0023** adopts ForgeLoop as the development workflow standard — the
-tool-agnostic `AGENTS.md` spine, work classification and rigor modes in every plan
-header (renamed from ForgeLoop's "execution modes" to avoid colliding with the
-runner's dispatch modes), the `docs/00-index.md` map, native artifacts kept,
-templates referenced at the source rather than vendored.
+The **v0.6 live-console** line opens with **0023**: per-turn event streaming over the bus
+(a background-task turn whose named events forward to the browser over SSE), single-flight,
+LAN no-auth — the transport the live agent-roster/activity/approval/sources panels ride on.
 
 **0024** (Proposed — roadmap prep, not yet accepted) — the Signal channel: the
 privacy-respecting messaging channel Giuseppe prefers, an additive adapter over the one turn seam
@@ -58,4 +56,17 @@ fail-closed `allowed_numbers`, no secret in config. Drafted for the v0.7 line
 ([Plans/signal-channel.md](../../Plans/signal-channel.md)); it stays Proposed until that line is
 approved and built, and it does *not* supersede 0020 (Telegram stays a peer channel).
 
-New decisions get the next number. Supersede rather than rewrite: set the old ADR's status to `Superseded by NNNN`.
+## ForgeLoop workflow decisions (FL- series)
+
+ForgeLoop workflow/process decisions use a separate **FL-** namespace, kept out of the numeric
+product/architecture series above so a decision about *how the repo is changed* never collides
+with a decision about *what the product is* (as 0023 nearly did). **FL-0001** adopts ForgeLoop as
+the development workflow standard — the tool-agnostic `AGENTS.md` spine, work classification and
+rigor modes in every plan header (renamed from ForgeLoop's "execution modes" to avoid colliding
+with the runner's dispatch modes), the `docs/00-index.md` map, native artifacts kept, templates
+referenced at the source rather than vendored. Later ForgeLoop decisions (e.g. the executable
+harness) continue FL-0002, FL-0003, …
+
+New decisions get the next number in the appropriate series (numeric for product/architecture,
+FL- for ForgeLoop workflow). Supersede rather than rewrite: set the old ADR's status to
+`Superseded by NNNN`.

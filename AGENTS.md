@@ -1,7 +1,7 @@
 # Ubongo — Agent Operating Spine
 
 The workflow standard for any coding agent working on this repo (Claude Code, Codex, or another
-tool), adapted from ForgeLoop ([ADR-0023](docs/adr/0023-adopt-forgeloop-workflow-standard.md)
+tool), adapted from ForgeLoop ([ADR-FL-0001](docs/adr/FL-0001-adopt-forgeloop-workflow-standard.md)
 records the adoption and the full mapping). Repo-specific rules stay canonical in
 [CLAUDE.md](CLAUDE.md) and are linked, not restated.
 
