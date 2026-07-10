@@ -160,6 +160,21 @@ telegram:
   allowed_user_ids: []
   delivery_paused: false
 
+# v0.7 phase 00: the Signal channel (`ubongo signal`). Unlike Telegram there is no
+# token here — the credential is signal-cli's own on-disk keystore. This channel
+# talks to a locally-run signal-cli daemon over a JSON-RPC UNIX socket (see
+# docs/signal-setup.md to register a dedicated number and start the daemon).
+#   account         the dedicated E.164 number this instance is registered as
+#   socket          path to the signal-cli daemon's JSON-RPC UNIX socket
+#   allowed_numbers who may drive the channel — an EMPTY list denies everyone
+#                   (fail-closed); put your own E.164 number(s) here
+#   delivery_paused the minimal before_send policy switch (as with Telegram)
+signal:
+  account: ""
+  socket: ""
+  allowed_numbers: []
+  delivery_paused: false
+
 # v0.5 phase 06: the standing-jobs daemon (proactive output). Boots PAUSED like
 # the GP / authoring loops; nothing speaks unprompted until `/jobs resume`. Job
 # definitions live in config/jobs.yaml; these are the daemon-wide knobs.
