@@ -58,6 +58,10 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "telegram", help="Run the Telegram bot (long-poll; TELEGRAM_BOT_TOKEN in .env)"
     )
+    # v0.7 phase 00: the Signal channel (signal-cli JSON-RPC sidecar over a socket).
+    subparsers.add_parser(
+        "signal", help="Run the Signal channel (needs a signal-cli daemon; see docs/signal-setup.md)"
+    )
     # v0.6 phase 00: the live console channel (FastAPI + SSE, LAN no-auth).
     console_cmd = subparsers.add_parser(
         "console", help="Run the live console (streaming browser front; --extra console)"
@@ -126,6 +130,12 @@ def main(argv: list[str] | None = None) -> int:
         # friendly hint if it's missing.
         from ubongo.telegram import bot as telegram_bot
         return telegram_bot.run()
+
+    if args.command == "signal":
+        # Lazy import: the client is stdlib-only, but keep it out of core; it
+        # reports a friendly hint if the signal-cli daemon socket is unreachable.
+        from ubongo.signal import client as signal_client
+        return signal_client.run()
 
     if args.command == "console":
         # Lazy: FastAPI/uvicorn are the optional [console] extra; app.run reports
