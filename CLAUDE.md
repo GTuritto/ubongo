@@ -44,7 +44,7 @@ User communication preferences (also in `config/UBONGO.md`):
 
 ## Development Workflow: ForgeLoop
 
-The repo develops under the ForgeLoop standard (ADR-0023). The tool-agnostic operating spine is [AGENTS.md](AGENTS.md) — source-of-truth order, work classification, rigor modes, tool modes, the non-negotiables — and the documentation map is [docs/00-index.md](docs/00-index.md). Every new plan states its work classification and rigor mode in its header; trust-spine work is `Strict` minimum. "Rigor mode" is ForgeLoop's ceremony tier, not the WorkflowRunner's six execution modes (the rename is recorded in [CONTEXT.md](CONTEXT.md)).
+The repo develops under the ForgeLoop standard (ADR-FL-0001). The tool-agnostic operating spine is [AGENTS.md](AGENTS.md) — source-of-truth order, work classification, rigor modes, tool modes, the non-negotiables — and the documentation map is [docs/00-index.md](docs/00-index.md). Every new plan states its work classification and rigor mode in its header; trust-spine work is `Strict` minimum. "Rigor mode" is ForgeLoop's ceremony tier, not the WorkflowRunner's six execution modes (the rename is recorded in [CONTEXT.md](CONTEXT.md)).
 
 ## Architectural Rules
 

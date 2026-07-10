@@ -18,6 +18,34 @@ entry below records what that version added. Newest first.
 
 ---
 
+## v0.6.0 — the streaming seam (v0.6 live-console, phase 00)
+
+Date: 2026-06-20
+
+Opens the **v0.6 live-console** line — a browser front that shows a turn as it
+runs ([ADR-0023](docs/adr/0023-live-console-event-streaming.md)). This phase ships
+the one genuinely new primitive, per-turn event streaming, plus a bare event-log
+console; the rich panels (agent roster, activity, approval, sources) are later
+phases.
+
+- A sixth channel, additive over `channel.run_turn`. `web/console/stream_bridge.py`
+  (HTTP-free, unit-tested) runs the turn on a background thread and forwards the
+  named pipeline events (`after_classify`, `after_plan`, `agent_started/completed/
+  failed`, `after_govern`, `after_compose`, `after_send`) to the browser over SSE,
+  terminated by an `__end__` frame. A handler on the named events, not a pipeline
+  edit; the stream observes, never drives orchestration.
+- **Single-flight** (one active turn at a time) — no event-correlation plumbing
+  needed, and the console server runs no daemons so only the turn's own events fire.
+  A background-turn exception always emits a terminal frame and unregisters its
+  handlers, so the stream never hangs.
+- `web/console/app.py` (`GET /`, `POST /turn`, `GET /stream/{id}`) is the only
+  module importing FastAPI/uvicorn — the optional `[console]` extra, lazy. `ubongo
+  console` entrypoint; ctl + `start-ubongo-console.sh`. LAN no-auth posture.
+- Token-streaming the answer is deferred (this phase streams events, not tokens);
+  retiring the Streamlit channel is a later phase.
+- Additive; every existing channel + orchestration unchanged; no new core
+  dependency. 1057 tests green (`test_stream_bridge.py` included).
+
 ## v0.5.7 — the contract and identity (v0.5 trust-protocol, phase 07)
 
 Date: 2026-06-20

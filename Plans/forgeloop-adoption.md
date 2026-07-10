@@ -69,7 +69,7 @@ adaptation owns the rename.
    `STATUS.md`/`STATE.md`) marked as such.
 3. **`CONTEXT.md` — glossary additions.** `ForgeLoop`, `rigor mode` (with the collision note),
    `work classification`, `tool mode`, `execution report`. Small, additive.
-4. **ADR-0023 — adopt ForgeLoop as the development workflow standard.** Records: what was
+4. **ADR-FL-0001 — adopt ForgeLoop as the development workflow standard.** Records: what was
    adopted (spine, classification, rigor modes, index), what stayed native (plans, ADRs, QA
    shape, PR discipline — with the mapping table), the rename decision, the declared tier, and
    that the template pack is referenced at its source rather than vendored. Supersedes nothing.
@@ -99,7 +99,7 @@ Work classification: maintenance. Rigor mode: Docs-only (this plan eats its own 
       historical; every relative link in `AGENTS.md` and the index resolves.
 - [x] **AC-3** `CONTEXT.md` defines the adopted terms and the rigor-mode rename; the term
       "execution mode" remains unambiguous everywhere it appears.
-- [x] **AC-4** ADR-0023 is accepted, carries the full reconciliation map, and records what was
+- [x] **AC-4** ADR-FL-0001 is accepted, carries the full reconciliation map, and records what was
       deliberately *not* adopted.
 - [x] **AC-5** The cold-load test passes: an agent given only `AGENTS.md` → `CONTEXT.md` →
       `docs/00-index.md` can state the active plan line, the current phase, and the approval

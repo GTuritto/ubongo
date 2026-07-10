@@ -12,7 +12,7 @@ The navigation map for the repo's documentation. Default agent load order:
   core invariant.
 - [CLAUDE.md](../CLAUDE.md) — the repo rulebook: architectural rules, branch workflow, LOC
   budget, scope guardrails.
-- [AGENTS.md](../AGENTS.md) — the tool-agnostic operating spine (ForgeLoop, ADR-0023).
+- [AGENTS.md](../AGENTS.md) — the tool-agnostic operating spine (ForgeLoop, ADR-FL-0001).
 - [CONTEXT.md](../CONTEXT.md) — the domain glossary.
 - [README.md](../README.md) — the public entrypoint.
 
@@ -68,7 +68,7 @@ One doc per phase or line under [Plans/](../Plans/); the active line and positio
 
 ## The ForgeLoop Source
 
-The adopted workflow standard ([ADR-0023](adr/0023-adopt-forgeloop-workflow-standard.md)) comes
+The adopted workflow standard ([ADR-FL-0001](adr/FL-0001-adopt-forgeloop-workflow-standard.md)) comes
 from the ForgeLoop repo at `/Volumes/giuseppeM1mini-External/Coding/ForgeLoop`: the compact
 `FORGELOOP_CORE.md`, the full reference `AI-Assisted-Development-Workflow.md`, and the template
 pack at `docs/templates/`. Templates are referenced at the source, not vendored; Ubongo's own
