@@ -1,4 +1,8 @@
-# 0023 — Adopt ForgeLoop as the development workflow standard
+# FL-0001 — Adopt ForgeLoop as the development workflow standard
+
+> ForgeLoop workflow decisions use the **FL-** namespace, separate from the numeric
+> product/architecture ADRs (the numeric `0023` belongs to the live-console streaming ADR). See
+> the FL-series note in [README.md](README.md).
 
 Status: Accepted
 Date: 2026-07-09
